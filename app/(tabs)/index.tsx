@@ -464,14 +464,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.primary,
     paddingVertical: 14,
+    paddingHorizontal: 12,
     borderRadius: 12,
     alignItems: "center",
     marginRight: 8,
     flexDirection: "row",
     justifyContent: "center",
-  },
-  actionButtonIcon: {
-    marginRight: 8,
   },
   secondaryButton: {
     backgroundColor: "transparent",
@@ -480,10 +478,13 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     marginRight: 0,
   },
+  actionButtonIcon: {
+    marginRight: 6,
+  },
   actionButtonText: {
     color: "white",
     fontWeight: "600",
-    fontSize: 16,
+    fontSize: 14,
   },
   secondaryButtonText: {
     color: colors.primary,
