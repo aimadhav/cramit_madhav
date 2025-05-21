@@ -104,6 +104,7 @@ export default function DeckDetailScreen() {
       <Stack.Screen 
         options={{
           title: deck.name,
+          headerShown: false,
           headerRight: () => (
             <View style={styles.headerButtons}>
               <TouchableOpacity 
