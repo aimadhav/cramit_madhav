@@ -1,6 +1,7 @@
 import React from "react";
 import { Tabs } from "expo-router";
 import { Home, BookOpen, Settings, Search } from "lucide-react-native";
+import { Image, View, StyleSheet, Text } from "react-native";
 
 import colors from "@/constants/colors";
 
@@ -19,8 +20,25 @@ export default function TabLayout() {
           backgroundColor: colors.background,
         },
         headerTitleStyle: {
-          color: colors.textDark,
+          paddingTop: 8,
         },
+        headerTitleAlign: "right", 
+        headerTitleContainerStyle: {
+          right: 16,
+          left: null,
+          position: 'absolute',
+          paddingTop: 4,
+        },
+        headerLeftContainerStyle: {
+          left: 16,
+        },
+        headerLeft: () => (
+          <Image 
+            source={require("@/assets/images/finallogo.png")} 
+            style={styles.logo} 
+            resizeMode="contain"
+          />
+        ),
       }}
     >
       <Tabs.Screen
@@ -54,3 +72,10 @@ export default function TabLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  logo: {
+    width: 100,
+    height: 30,
+  },
+});

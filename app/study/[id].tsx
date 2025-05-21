@@ -380,20 +380,6 @@ export default function StudySessionScreen() {
     );
   }
   
-  if (!currentCard && !isDeleting) {
-    return (
-      <View style={styles.notFoundContainer}>
-        <Text style={styles.notFoundText}>No cards due for review</Text>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backButtonText}>Go Back</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-  
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Stack.Screen 
@@ -435,94 +421,106 @@ export default function StudySessionScreen() {
         </View>
       </View>
       
-      {currentCard && (
-        <GestureDetector gesture={gesture}>
-          <Animated.View style={[styles.cardContainer, cardStyle]}>
-            <TouchableOpacity 
-              style={styles.cardContent}
-              activeOpacity={0.9}
-              onPress={() => setShowBack(!showBack)}
-            >
-              <View style={styles.flipIconContainer}>
-                <RotateCw size={20} color={colors.gray[500]} />
-                <Text style={styles.flipText}>Tap to flip</Text>
-              </View>
-              
-              <ScrollView 
-                contentContainerStyle={styles.cardScrollContent}
-                showsVerticalScrollIndicator={false}
-              >
-                {!showBack ? (
-                  // Front of card
-                  <>
-                    <Text style={styles.cardSideLabel}>FRONT</Text>
-                    <View style={styles.contentContainer}>
-                      {frontContent.map((part, index) => (
-                        part.isLatex ? (
-                          <Text key={index} style={styles.latexText}>{part.text}</Text>
-                        ) : (
-                          <Text key={index} style={styles.cardText}>{part.text}</Text>
-                        )
-                      ))}
-                    </View>
-                    
-                    {currentCard.mediaUrls && currentCard.mediaUrls.length > 0 && (
-                      <View style={styles.imageContainer}>
-                        <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
-                          <Animated.Image 
-                            source={{ uri: currentCard.mediaUrls[0] }}
-                            style={[styles.cardImage, imageStyle]}
-                            resizeMode="contain"
-                          />
-                        </GestureDetector>
-                        <Text style={styles.imageHint}>Pinch to zoom • Drag to move • Double tap to reset</Text>
-                      </View>
-                    )}
-                  </>
-                ) : (
-                  // Back of card
-                  <>
-                    <Text style={styles.cardSideLabel}>BACK</Text>
-                    <View style={styles.contentContainer}>
-                      {backContent.map((part, index) => (
-                        part.isLatex ? (
-                          <Text key={index} style={styles.latexText}>{part.text}</Text>
-                        ) : (
-                          <Text key={index} style={styles.cardText}>{part.text}</Text>
-                        )
-                      ))}
-                    </View>
-                  </>
-                )}
-              </ScrollView>
-            </TouchableOpacity>
-          </Animated.View>
-        </GestureDetector>
-      )}
-      
-      <View style={styles.swipeHintContainer}>
-        {swipeDirection === 'left' && (
-          <Text style={[styles.swipeHint, styles.hardHint]}>Hard</Text>
-        )}
-        {swipeDirection === 'right' && (
-          <Text style={[styles.swipeHint, styles.easyHint]}>Easy</Text>
-        )}
-        {swipeDirection === 'up' && (
-          <Text style={[styles.swipeHint, styles.deleteHint]}>Delete</Text>
-        )}
-        {!swipeDirection && (
-          <Text style={[styles.swipeInstructions, { textAlign: 'center' }]}>
-            Swipe left for Hard, right for Easy, up to Delete
-          </Text>
-        )}
-      </View>
-      
-      <View style={styles.paginationContainer}>
-        <View style={styles.paginationDots}>
-          <View style={[styles.paginationDot, !showBack && styles.activeDot]} />
-          <View style={[styles.paginationDot, showBack && styles.activeDot]} />
+      {!currentCard && !isDeleting ? (
+        <View style={styles.notFoundContainer}>
+          <Text style={styles.notFoundText}>No cards due for review</Text>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
         </View>
-      </View>
+      ) : (
+        <>
+          <GestureDetector gesture={gesture}>
+            <Animated.View style={[styles.cardContainer, cardStyle]}>
+              <TouchableOpacity 
+                style={styles.cardContent}
+                activeOpacity={0.9}
+                onPress={() => setShowBack(!showBack)}
+              >
+                <View style={styles.flipIconContainer}>
+                  <RotateCw size={20} color={colors.gray[500]} />
+                  <Text style={styles.flipText}>Tap to flip</Text>
+                </View>
+                
+                <ScrollView 
+                  contentContainerStyle={styles.cardScrollContent}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {!showBack ? (
+                    // Front of card
+                    <>
+                      <Text style={styles.cardSideLabel}>FRONT</Text>
+                      <View style={styles.contentContainer}>
+                        {frontContent.map((part, index) => (
+                          part.isLatex ? (
+                            <Text key={index} style={styles.latexText}>{part.text}</Text>
+                          ) : (
+                            <Text key={index} style={styles.cardText}>{part.text}</Text>
+                          )
+                        ))}
+                      </View>
+                      
+                      {currentCard.mediaUrls && currentCard.mediaUrls.length > 0 && (
+                        <View style={styles.imageContainer}>
+                          <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
+                            <Animated.Image 
+                              source={{ uri: currentCard.mediaUrls[0] }}
+                              style={[styles.cardImage, imageStyle]}
+                              resizeMode="contain"
+                            />
+                          </GestureDetector>
+                          <Text style={styles.imageHint}>Pinch to zoom • Drag to move • Double tap to reset</Text>
+                        </View>
+                      )}
+                    </>
+                  ) : (
+                    // Back of card
+                    <>
+                      <Text style={styles.cardSideLabel}>BACK</Text>
+                      <View style={styles.contentContainer}>
+                        {backContent.map((part, index) => (
+                          part.isLatex ? (
+                            <Text key={index} style={styles.latexText}>{part.text}</Text>
+                          ) : (
+                            <Text key={index} style={styles.cardText}>{part.text}</Text>
+                          )
+                        ))}
+                      </View>
+                    </>
+                  )}
+                </ScrollView>
+              </TouchableOpacity>
+            </Animated.View>
+          </GestureDetector>
+          
+          <View style={styles.swipeHintContainer}>
+            {swipeDirection === 'left' && (
+              <Text style={[styles.swipeHint, styles.hardHint]}>Hard</Text>
+            )}
+            {swipeDirection === 'right' && (
+              <Text style={[styles.swipeHint, styles.easyHint]}>Easy</Text>
+            )}
+            {swipeDirection === 'up' && (
+              <Text style={[styles.swipeHint, styles.deleteHint]}>Delete</Text>
+            )}
+            {!swipeDirection && (
+              <Text style={[styles.swipeInstructions, { textAlign: 'center' }]}>
+                Swipe left for Hard, right for Easy, up to Delete
+              </Text>
+            )}
+          </View>
+          
+          <View style={styles.paginationContainer}>
+            <View style={styles.paginationDots}>
+              <View style={[styles.paginationDot, !showBack && styles.activeDot]} />
+              <View style={[styles.paginationDot, showBack && styles.activeDot]} />
+            </View>
+          </View>
+        </>
+      )}
     </SafeAreaView>
   );
 }
