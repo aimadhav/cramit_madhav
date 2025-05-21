@@ -385,6 +385,7 @@ export default function StudySessionScreen() {
       <Stack.Screen 
         options={{
           title: deck.name,
+          headerShown: false,
           headerRight: () => (
             <TouchableOpacity 
               style={styles.closeButton}
@@ -398,6 +399,30 @@ export default function StudySessionScreen() {
           ),
         }} 
       />
+      
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => {
+            endStudySession();
+            router.back();
+          }}
+        >
+          <ArrowLeft size={24} color={colors.textDark} />
+        </TouchableOpacity>
+        
+        <Text style={styles.headerTitle}>{deck.name}</Text>
+        
+        <TouchableOpacity 
+          style={styles.closeButton}
+          onPress={() => {
+            endStudySession();
+            router.back();
+          }}
+        >
+          <X size={24} color={colors.textDark} />
+        </TouchableOpacity>
+      </View>
       
       <View style={styles.progressContainer}>
         <View style={styles.progressBar}>
@@ -530,6 +555,22 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.textDark,
+  },
+  backButton: {
+    padding: 8,
+  },
   closeButton: {
     padding: 8,
   },
@@ -544,19 +585,9 @@ const styles = StyleSheet.create({
     color: colors.textDark,
     marginBottom: 16,
   },
-  backButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: colors.primary,
-    borderRadius: 8,
-  },
-  backButtonText: {
-    color: "white",
-    fontWeight: "600",
-  },
   progressContainer: {
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 8,
   },
   progressBar: {
     height: 8,
@@ -588,9 +619,9 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   cardContainer: {
-    height: SCREEN_HEIGHT * 0.65,
+    height: SCREEN_HEIGHT * 0.75,
     marginHorizontal: 20,
-    marginTop: 10,
+    marginTop: 4,
     marginBottom: 10,
     backgroundColor: "white",
     borderRadius: 16,
