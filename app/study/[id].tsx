@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   StyleSheet, 
   Text, 
@@ -37,6 +37,7 @@ const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
 
 export default function StudySessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  console.log('[StudySessionScreen] Component execution start. ID:', id, 'Initial isSessionFinished from useState.', 'Timestamp:', new Date().toISOString());
   const router = useRouter();
   
   const decks = useFlashcardStore(state => state.decks);
@@ -47,6 +48,9 @@ export default function StudySessionScreen() {
   const endStudySession = useFlashcardStore(state => state.endStudySession);
   const studyProgress = useFlashcardStore(state => state.studyProgress);
   const getDueFlashcardsForDeck = useFlashcardStore(state => state.getDueFlashcardsForDeck);
+  const markSessionAsCompleted = useFlashcardStore(state => state.markSessionAsCompleted);
+  const clearSessionJustCompleted = useFlashcardStore(state => state.clearSessionJustCompleted);
+  const sessionJustCompletedDeckId = useFlashcardStore(state => state.sessionJustCompletedDeckId);
   
   const updateStudyStats = useUserStore(state => state.updateStudyStats);
   
@@ -54,9 +58,9 @@ export default function StudySessionScreen() {
   const [studyTime, setStudyTime] = useState(0);
   const [sessionStartTime] = useState(Date.now());
   const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | 'up' | null>(null);
-  const [currentCardId, setCurrentCardId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [forceRefresh, setForceRefresh] = useState(0);
+  const [isSessionFinished, setIsSessionFinished] = useState(false);
   
   // Image manipulation states
   const [imageScale, setImageScale] = useState(1);
@@ -76,18 +80,90 @@ export default function StudySessionScreen() {
   const startX = useSharedValue(0);
   const startY = useSharedValue(0);
   
-  const deck = decks.find(d => d.id === id);
+  // Memoize deck
+  const deck = useMemo(() => decks.find(d => d.id === id), [decks, id]);
+  
   const currentCard = getCurrentCard();
   const dueCards = getDueFlashcardsForDeck(id);
+  const studyProgressFromStore = useFlashcardStore(state => state.studyProgress);
   
-  // Check if we have cards to study
+  // Memoize screenOptions
+  const screenOptions = useMemo(() => ({
+    title: deck?.name || 'Study',
+    headerShown: false,
+    headerRight: () => (
+      <TouchableOpacity 
+        style={styles.closeButton}
+        onPress={() => {
+          clearSessionJustCompleted();
+          endStudySession();
+          router.back();
+        }}
+      >
+        <X size={24} color={colors.textDark} />
+      </TouchableOpacity>
+    ),
+  }), [deck, endStudySession, router]);
+  
+  // useEffect for handling "No Cards Left" and logging problematic states
   useEffect(() => {
-    if (!isDeleting && dueCards.length === 0) {
-      handleNoCardsLeft();
-    } else if (currentCard) {
-      setCurrentCardId(currentCard.id);
+    // Reset session finished state if deck ID changes (new session)
+    runOnJS(setIsSessionFinished)(false);
+
+    if (!isDeleting) {
+      // Condition 1: getCurrentCard() returned null (session queue might be exhausted or no session active)
+      // AND the store's studyProgress itself is null or indicates completion (cardsLeft is 0).
+      // AND there are genuinely no more due cards for this deck right now.
+      if (!currentCard && 
+          (!studyProgressFromStore || studyProgressFromStore.cardsLeft === 0) && 
+          dueCards.length === 0) {
+        
+        console.log('[StudySessionScreen] handleNoCardsLeft triggered. Details:', {
+          deckId: id,
+          currentCardFromStore: currentCard, // Expected to be null
+          studyProgressAtTrigger: studyProgressFromStore, // Log what the store thinks about progress
+          dueCardsFromStoreLength: dueCards.length, // Expected to be 0
+          dueCardsFromStoreContent: JSON.stringify(dueCards.map(c => c.id)),
+          isDeletingState: isDeleting,
+          forceRefreshCount: forceRefresh, 
+          timestamp: new Date().toISOString(),
+        });
+        handleNoCardsLeft();
+      } else if (!currentCard && studyProgressFromStore && studyProgressFromStore.cardsLeft > 0 && dueCards.length > 0) {
+        // This state is unusual: No current card object, but studyProgress claims cards are left, and dueCards exist.
+        // This could happen if the card queue in the store got desynced or a card ID was bad.
+        console.warn('[StudySessionScreen] State: No current card object, but store progress/dueCards indicate cards should be available. Details:', {
+          deckId: id,
+          currentCardFromStore: currentCard, // Expected to be null
+          studyProgressAtTrigger: studyProgressFromStore,
+          dueCardsFromStoreLength: dueCards.length,
+          dueCardsFromStoreContent: JSON.stringify(dueCards.map(c => c.id)),
+          isDeletingState: isDeleting,
+          timestamp: new Date().toISOString(),
+        });
+         // Potentially force a session restart or a more graceful recovery if this state is hit.
+         // For now, just logging. Could also try to re-initiate study session after a delay.
+      }
     }
-  }, [dueCards.length, currentCard, isDeleting, forceRefresh]);
+  }, [id, isDeleting, dueCards, currentCard, studyProgressFromStore]);
+  
+  // This useEffect handles new session initialization regarding isSessionFinished
+  useEffect(() => {
+    console.log('[StudySessionScreen] Deck ID effect running. Current ID:', id, 'sessionJustCompletedDeckId from store:', sessionJustCompletedDeckId);
+    if (sessionJustCompletedDeckId === id) {
+      console.log('[StudySessionScreen] Deck ID effect: This deck was just completed. Setting isSessionFinished to true.');
+      setIsSessionFinished(true);
+    } else {
+      console.log('[StudySessionScreen] Deck ID effect: New/different session or no session just completed. Setting isSessionFinished to false.');
+      setIsSessionFinished(false);
+      // If the stored completed ID is for a *different* deck, clear it.
+      // If it was for *this* deck, it's already handled by setting isSessionFinished to true.
+      // If it was null, this does nothing.
+      if (sessionJustCompletedDeckId && sessionJustCompletedDeckId !== id) {
+        clearSessionJustCompleted();
+      }
+    }
+  }, [id, sessionJustCompletedDeckId, clearSessionJustCompleted]);
   
   // Timer for study session
   useEffect(() => {
@@ -109,44 +185,106 @@ export default function StudySessionScreen() {
     };
   }, []);
   
+  // Reset image zoom/pan state when card changes
+  useEffect(() => {
+    if (!currentCard) { // Added this guard
+      // If there's no current card, ensure image manipulation is reset/inactive
+      setIsImageManipulationActive(false);
+      setImageScale(1);
+      setImagePosition({ x: 0, y: 0 });
+      imgScale.value = 1;
+      imgTranslateX.value = 0;
+      imgTranslateY.value = 0;
+      return;
+    }
+    // If there is a current card, reset these for the new card
+    setIsImageManipulationActive(false);
+    setImageScale(1);
+    setImagePosition({ x: 0, y: 0 });
+    imgScale.value = 1;
+    imgTranslateX.value = 0;
+    imgTranslateY.value = 0;
+  }, [currentCard?.id, imgScale, imgTranslateX, imgTranslateY]); // Added img animated values to dep array
+  
   const handleNoCardsLeft = () => {
-    Alert.alert(
-      "No Cards Left",
-      "You've completed all cards in this deck!",
-      [
-        {
-          text: "OK",
-          onPress: () => {
-            endStudySession();
-            router.back();
-          }
-        }
-      ]
-    );
+    console.log('[StudySessionScreen] handleNoCardsLeft: All cards session complete or deck empty.');
+    // The primary UI for "No cards left" is handled by the conditional JSX.
+    // This function will ensure the study session state in the store is cleaned up.
+    // It will NOT navigate back here, allowing the JSX to show the message and "Go Back" button.
+    
+    // endStudySession(); // We might still want to call this to clear studyProgress in the store.
+                     // However, if currentCard is null, the UI is already in the "empty" state.
+                     // Let's evaluate if this is strictly needed or if the natural end of session (no current card) is enough.
+                     // For now, let's rely on the UI's back button to trigger router.back(), 
+                     // and the main component's unmount effect to call endStudySession.
+
+    // Alert.alert(
+    //   "No Cards Left",
+    //   "You've completed all cards in this deck!",
+    //   [
+    //     {
+    //       text: "OK",
+    //       onPress: () => {
+    //         // endStudySession(); // Already called or will be called on unmount
+    //         // router.back(); // Let the UI button handle this
+    //       }
+    //     }
+    //   ]
+    // );
   };
   
   const handleRateCard = (rating: DifficultyRating) => {
-    if (!currentCard) return;
-    
+    if (!currentCard) {
+      console.warn("[StudySessionScreen] handleRateCard called with no currentCard. This shouldn't happen.");
+      return;
+    }
+
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
+
+    const cardIdToRate = currentCard.id;
     
-    rateCard(currentCard.id, rating);
+    // Action 1: Rate the card in the store
+    rateCard(cardIdToRate, rating);
+    
+    // Action 2: Tell the store to advance its internal pointer/progress & get what it thinks is next.
+    const nextCardFromStoreAfterUpdate = getNextCard();
+
+    // Reset UI elements that are independent of card content
     setShowBack(false);
-    
-    // Reset image manipulation
+    setSwipeDirection(null);
     setImageScale(1);
     setImagePosition({ x: 0, y: 0 });
     imgScale.value = 1;
     imgTranslateX.value = 0;
     imgTranslateY.value = 0;
     
-    // Check if we've reached the end of the cards
-    if (!getNextCard()) {
-      setTimeout(() => {
-        handleNoCardsLeft();
-      }, 300);
+    // Action 3: Force a re-render of this component.
+    // In the next render, the main `currentCard` const will be updated via `getCurrentCard()`,
+    // and the useEffect will evaluate the end-of-session condition.
+
+    // Conditional reset of animated values:
+    if (nextCardFromStoreAfterUpdate) {
+      // If the store says there IS a next card, reset the swiped card's container to the center 
+      // so the new card appears correctly.
+      translateX.value = withSpring(0, { damping: 20, stiffness: 90 });
+      translateY.value = withSpring(0, { damping: 20, stiffness: 90 });
+      rotate.value = withTiming(0);
+      cardBorderColor.value = colors.gray[200];
+    } else {
+      // If the store says there is NO next card (session queue ended),
+      // then *do not* reset the translateX/Y. The card that was just swiped off should stay off.
+      // The re-render (due to forceRefresh) will result in the card container being hidden by JSX logic.
+      console.log('[StudySessionScreen] Last card in session swiped. Position not reset. UI will update to hide card area.');
+      // We might still want to reset rotation and border for visual consistency if it were to briefly appear.
+      rotate.value = withTiming(0); // Keep rotation reset
+      cardBorderColor.value = colors.gray[200]; // Keep border reset
+    }
+    
+    if (!nextCardFromStoreAfterUpdate) {
+      setIsSessionFinished(true);
+      markSessionAsCompleted(id);
     }
   };
   
@@ -168,21 +306,18 @@ export default function StudySessionScreen() {
             const cardId = currentCard.id;
             deleteFlashcard(cardId);
             
-            // Reset UI state
             setShowBack(false);
             translateX.value = 0;
             translateY.value = 0;
             rotate.value = 0;
             setSwipeDirection(null);
             
-            // Reset image manipulation
             setImageScale(1);
             setImagePosition({ x: 0, y: 0 });
             imgScale.value = 1;
             imgTranslateX.value = 0;
             imgTranslateY.value = 0;
             
-            // Check if there are any cards left after deletion
             setTimeout(() => {
               setForceRefresh(prev => prev + 1);
               
@@ -247,24 +382,37 @@ export default function StudySessionScreen() {
     })
     .onEnd((event) => {
       if (isImageManipulationActive) return;
-      
+
+      const swipeOffAnimationConfig = { duration: 200 }; // Animation for swiping card off-screen
+
       if (translateX.value > SWIPE_THRESHOLD) {
         // Swipe right - Easy
-        translateX.value = withTiming(SCREEN_WIDTH, { duration: 300 });
-        runOnJS(handleRateCard)('easy');
+        translateX.value = withTiming(SCREEN_WIDTH * 1.5, swipeOffAnimationConfig, (finished) => {
+          if (finished) {
+            runOnJS(handleRateCard)('easy');
+          }
+        });
       } else if (translateX.value < -SWIPE_THRESHOLD) {
         // Swipe left - Hard
-        translateX.value = withTiming(-SCREEN_WIDTH, { duration: 300 });
-        runOnJS(handleRateCard)('hard');
-      } else if (translateY.value < -SWIPE_THRESHOLD) {
-        // Swipe up - Delete
-        translateY.value = withTiming(-SCREEN_HEIGHT, { duration: 300 });
-        runOnJS(handleDeleteCard)();
+        translateX.value = withTiming(-SCREEN_WIDTH * 1.5, swipeOffAnimationConfig, (finished) => {
+          if (finished) {
+            runOnJS(handleRateCard)('hard');
+          }
+        });
+      } else if (translateY.value < -SWIPE_THRESHOLD && swipeDirection === 'up') {
+        // Swipe up - Delete (only if swipeDirection was 'up')
+        translateY.value = withTiming(-SCREEN_HEIGHT * 1.5, swipeOffAnimationConfig, (finished) => {
+          if (finished) {
+            runOnJS(handleDeleteCard)();
+          }
+        });
       } else {
-        // Reset position
+        // Not swiped far enough, or wrong direction for delete: spring back to center
         translateX.value = withSpring(0);
         translateY.value = withSpring(0);
         rotate.value = withTiming(0);
+        cardBorderColor.value = colors.gray[200]; // Reset border color
+        runOnJS(setSwipeDirection)(null);       // Reset swipe direction hint
       }
     });
   
@@ -366,6 +514,8 @@ export default function StudySessionScreen() {
   const frontContent = currentCard ? extractLatex(currentCard.front) : [];
   const backContent = currentCard ? extractLatex(currentCard.back) : [];
   
+  console.log('[StudySessionScreen] Rendering UI. currentCard:', currentCard ? `ID: ${currentCard.id}` : 'null', 'isDeleting:', isDeleting, 'Timestamp:', new Date().toISOString());
+
   if (!deck) {
     return (
       <View style={styles.notFoundContainer}>
@@ -383,27 +533,14 @@ export default function StudySessionScreen() {
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Stack.Screen 
-        options={{
-          title: deck.name,
-          headerShown: false,
-          headerRight: () => (
-            <TouchableOpacity 
-              style={styles.closeButton}
-              onPress={() => {
-                endStudySession();
-                router.back();
-              }}
-            >
-              <X size={24} color={colors.textDark} />
-            </TouchableOpacity>
-          ),
-        }} 
+        options={screenOptions} 
       />
       
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.backButton}
           onPress={() => {
+            clearSessionJustCompleted();
             endStudySession();
             router.back();
           }}
@@ -416,6 +553,7 @@ export default function StudySessionScreen() {
         <TouchableOpacity 
           style={styles.closeButton}
           onPress={() => {
+            clearSessionJustCompleted();
             endStudySession();
             router.back();
           }}
@@ -446,12 +584,32 @@ export default function StudySessionScreen() {
         </View>
       </View>
       
-      {!currentCard && !isDeleting ? (
+      {(() => {
+        const isCurrentCardNull = currentCard === null;
+        const isNotDeleting = isDeleting === false;
+        console.log('[StudySessionScreen] Evaluating conditional render for card area. isCurrentCardNull:', isCurrentCardNull, 'isNotDeleting:', isNotDeleting, 'Timestamp:', new Date().toISOString());
+        if (isCurrentCardNull && isNotDeleting) {
+          console.log('[StudySessionScreen] Will attempt to render NOT FOUND/NO CARDS UI.');
+        } else {
+          console.log('[StudySessionScreen] Will attempt to render CARD DISPLAY UI.');
+        }
+        return null; // This console.log structure doesn't render anything itself
+      })()}
+
+      {(() => {
+        console.log('[StudySessionScreen] Checking render conditions. isSessionFinished:', isSessionFinished, 'currentCard:', currentCard ? currentCard.id : 'null', 'isDeleting:', isDeleting, 'Timestamp:', new Date().toISOString());
+        return null;
+      })()}
+
+      {(isSessionFinished || !currentCard) && !isDeleting ? (
         <View style={styles.notFoundContainer}>
           <Text style={styles.notFoundText}>No cards due for review</Text>
           <TouchableOpacity 
             style={styles.backButton}
-            onPress={() => router.back()}
+            onPress={() => {
+              clearSessionJustCompleted();
+              router.back();
+            }}
           >
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
@@ -488,7 +646,7 @@ export default function StudySessionScreen() {
                         ))}
                       </View>
                       
-                      {currentCard.mediaUrls && currentCard.mediaUrls.length > 0 && (
+                      {currentCard && currentCard.mediaUrls && currentCard.mediaUrls.length > 0 && currentCard.mediaUrls[0] && (
                         <View style={styles.imageContainer}>
                           <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
                             <Animated.Image 
@@ -736,5 +894,10 @@ const styles = StyleSheet.create({
   activeDot: {
     backgroundColor: colors.primary,
     width: 24,
+  },
+  backButtonText: {
+    fontSize: 16,
+    color: colors.primary,
+    fontWeight: "500",
   },
 });

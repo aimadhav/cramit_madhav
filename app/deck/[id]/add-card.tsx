@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Image } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { X, Plus, Tag, Image as ImageIcon, FileText } from "lucide-react-native";
+import { X, Plus, Tag, Image as ImageIcon, FileText, ArrowLeft } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Platform } from "react-native";
 
@@ -31,10 +31,10 @@ export default function AddCardScreen() {
       <View style={styles.notFoundContainer}>
         <Text style={styles.notFoundText}>Deck not found</Text>
         <TouchableOpacity 
-          style={styles.backButton}
+          style={styles.notFoundBackButton}
           onPress={() => router.back()}
         >
-          <Text style={styles.backButtonText}>Go Back</Text>
+          <Text style={styles.notFoundBackButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -118,16 +118,27 @@ export default function AddCardScreen() {
       <Stack.Screen 
         options={{
           title: "Add Card",
-          headerRight: () => (
-            <TouchableOpacity 
-              style={styles.closeButton}
-              onPress={() => router.back()}
-            >
-              <X size={24} color={colors.textDark} />
-            </TouchableOpacity>
-          ),
+          headerShown: false,
         }} 
       />
+      
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => router.back()}
+        >
+          <ArrowLeft size={24} color={colors.textDark} />
+        </TouchableOpacity>
+        
+        <Text style={styles.headerTitle}>Add Card</Text>
+        
+        <TouchableOpacity 
+          style={styles.closeButton}
+          onPress={() => router.back()}
+        >
+          <X size={24} color={colors.textDark} />
+        </TouchableOpacity>
+      </View>
       
       <ScrollView 
         contentContainerStyle={styles.content}
@@ -307,6 +318,22 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.textDark,
+  },
+  backButton: {
+    padding: 8,
+  },
   closeButton: {
     padding: 8,
   },
@@ -321,13 +348,13 @@ const styles = StyleSheet.create({
     color: colors.textDark,
     marginBottom: 16,
   },
-  backButton: {
+  notFoundBackButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: colors.primary,
     borderRadius: 8,
   },
-  backButtonText: {
+  notFoundBackButtonText: {
     color: "white",
     fontWeight: "600",
   },

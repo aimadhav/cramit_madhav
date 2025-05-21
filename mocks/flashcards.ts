@@ -316,5 +316,82 @@ export const mockFlashcards: Flashcard[] = [
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
+  },
+
+  // Biomolecules - deck-7
+  {
+    id: 'card-bio-1',
+    front: "What are the four major types of biomolecules?",
+    back: "The four major types of biomolecules are: carbohydrates, lipids, proteins, and nucleic acids.",
+    contentType: 'text',
+    tags: ['biology', 'biomolecules', 'macromolecules'],
+    deckId: 'deck-7',
+    createdAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
+    updatedAt: Date.now(),
+    interval: 1,
+    easeFactor: 2.5,
+    repetitions: 0,
+    dueDate: Date.now(),
+    lastReviewed: null
+  },
+  {
+    id: 'card-bio-2',
+    front: "What is the basic monomer of a protein?",
+    back: "The basic monomer of a protein is an amino acid.",
+    contentType: 'text',
+    tags: ['biology', 'biomolecules', 'proteins', 'amino acids'],
+    deckId: 'deck-7',
+    createdAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
+    updatedAt: Date.now(),
+    interval: 1,
+    easeFactor: 2.5,
+    repetitions: 0,
+    dueDate: Date.now(),
+    lastReviewed: null
+  },
+  {
+    id: 'card-bio-3',
+    front: "Describe the primary structure of a protein.",
+    back: "The primary structure of a protein refers to the linear sequence of amino acids in the polypeptide chain.",
+    contentType: 'text',
+    tags: ['biology', 'biomolecules', 'proteins', 'protein structure'],
+    deckId: 'deck-7',
+    createdAt: Date.now() - 9 * 24 * 60 * 60 * 1000,
+    updatedAt: Date.now(),
+    interval: 1,
+    easeFactor: 2.5,
+    repetitions: 0,
+    dueDate: Date.now(),
+    lastReviewed: null
+  },
+  {
+    id: 'card-bio-4',
+    front: "What is the general formula for a carbohydrate?",
+    back: "The general formula for many carbohydrates is $C_m(H_2O)_n$, where m and n are integers. For monosaccharides, it is often $(CH_2O)_n$ where $n \\ge 3$.",
+    contentType: 'mixed',
+    tags: ['biology', 'biomolecules', 'carbohydrates'],
+    deckId: 'deck-7',
+    createdAt: Date.now() - 9 * 24 * 60 * 60 * 1000,
+    updatedAt: Date.now(),
+    interval: 1,
+    easeFactor: 2.5,
+    repetitions: 0,
+    dueDate: Date.now(),
+    lastReviewed: null
+  },
+  {
+    id: 'card-bio-5',
+    front: "Name two common monosaccharides.",
+    back: "Two common monosaccharides are glucose and fructose.",
+    contentType: 'text',
+    tags: ['biology', 'biomolecules', 'carbohydrates', 'sugars'],
+    deckId: 'deck-7',
+    createdAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
+    updatedAt: Date.now(),
+    interval: 1,
+    easeFactor: 2.5,
+    repetitions: 0,
+    dueDate: Date.now(),
+    lastReviewed: null
   }
 ];
