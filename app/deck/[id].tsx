@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Alert } from "react-native";
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Alert, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { 
@@ -99,19 +99,6 @@ export default function DeckDetailScreen() {
     );
   };
   
-  const renderCardItem = ({ item }: { item: Flashcard }) => (
-    <TouchableOpacity 
-      style={styles.cardItem}
-      onPress={() => router.push(`/card/${item.id}`)}
-    >
-      <View style={styles.cardContent}>
-        <Text style={styles.cardFront} numberOfLines={2}>{item.front}</Text>
-        <Text style={styles.cardBack} numberOfLines={1}>{item.back}</Text>
-      </View>
-      <ChevronRight size={20} color={colors.gray[400]} />
-    </TouchableOpacity>
-  );
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Stack.Screen 
@@ -136,108 +123,119 @@ export default function DeckDetailScreen() {
         }} 
       />
       
-      <View style={styles.coverImageContainer}>
-        <Image 
-          source={{ uri: deck.coverImage }} 
-          style={styles.coverImage}
-        />
-        <View style={styles.coverOverlay}>
-          <View style={styles.deckInfo}>
-            <Text style={styles.deckTitle}>{deck.name}</Text>
-            <Text style={styles.deckSubtitle}>{deck.cardCount} cards</Text>
-          </View>
-          {deck.isPremium && (
-            <View style={styles.premiumBadge}>
-              <Text style={styles.premiumText}>PRO</Text>
+      <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+        <View style={styles.coverImageContainer}>
+          <Image 
+            source={{ uri: deck.coverImage }} 
+            style={styles.coverImage}
+          />
+          <View style={styles.coverOverlay}>
+            <View style={styles.deckInfo}>
+              <Text style={styles.deckTitle}>{deck.name}</Text>
+              <Text style={styles.deckSubtitle}>{deck.cardCount} cards</Text>
             </View>
-          )}
-        </View>
-      </View>
-      
-      <View style={styles.content}>
-        <View style={styles.descriptionContainer}>
-          <Text style={styles.descriptionTitle}>Description</Text>
-          <Text style={styles.descriptionText}>{deck.description}</Text>
-        </View>
-        
-        <View style={styles.tagsContainer}>
-          <View style={styles.tagsHeader}>
-            <Tag size={16} color={colors.textLight} />
-            <Text style={styles.tagsTitle}>Tags</Text>
-          </View>
-          <View style={styles.tagsList}>
-            {deck.tags.map(tag => (
-              <View key={tag} style={styles.tagBadge}>
-                <Text style={styles.tagText}>{tag}</Text>
+            {deck.isPremium && (
+              <View style={styles.premiumBadge}>
+                <Text style={styles.premiumText}>PRO</Text>
               </View>
-            ))}
+            )}
           </View>
         </View>
         
-        <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
-            <Clock size={20} color={colors.primary} />
-            <Text style={styles.statValue}>{dueCards.length}</Text>
-            <Text style={styles.statLabel}>Due</Text>
+        <View style={styles.content}>
+          <View style={styles.descriptionContainer}>
+            <Text style={styles.descriptionTitle}>Description</Text>
+            <Text style={styles.descriptionText}>{deck.description}</Text>
           </View>
-          <View style={styles.statItem}>
-            <BookOpen size={20} color={colors.secondary} />
-            <Text style={styles.statValue}>{deck.cardCount}</Text>
-            <Text style={styles.statLabel}>Total</Text>
+          
+          <View style={styles.tagsContainer}>
+            <View style={styles.tagsHeader}>
+              <Tag size={16} color={colors.textLight} />
+              <Text style={styles.tagsTitle}>Tags</Text>
+            </View>
+            <View style={styles.tagsList}>
+              {deck.tags.map(tag => (
+                <View key={tag} style={styles.tagBadge}>
+                  <Text style={styles.tagText}>{tag}</Text>
+                </View>
+              ))}
+            </View>
           </View>
-        </View>
-        
-        <View style={styles.actionsContainer}>
-          <TouchableOpacity 
-            style={styles.primaryButton}
-            onPress={handleStartStudy}
-          >
-            <Text style={styles.primaryButtonText}>Start Studying</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.secondaryButton}
-            onPress={() => router.push(`/deck/${id}/add-card`)}
-          >
-            <Plus size={20} color={colors.primary} />
-            <Text style={styles.secondaryButtonText}>Add Card</Text>
-          </TouchableOpacity>
-        </View>
-        
-        <View style={styles.cardsSection}>
-          <View style={styles.cardsSectionHeader}>
-            <Text style={styles.cardsSectionTitle}>Flashcards</Text>
-            <TouchableOpacity onPress={() => setShowAll(!showAll)}>
-              <Text style={styles.viewAllText}>
-                {showAll ? "Show Less" : "View All"}
-              </Text>
+          
+          <View style={styles.statsContainer}>
+            <View style={styles.statItem}>
+              <Clock size={20} color={colors.primary} />
+              <Text style={styles.statValue}>{dueCards.length}</Text>
+              <Text style={styles.statLabel}>Due</Text>
+            </View>
+            <View style={styles.statItem}>
+              <BookOpen size={20} color={colors.secondary} />
+              <Text style={styles.statValue}>{deck.cardCount}</Text>
+              <Text style={styles.statLabel}>Total</Text>
+            </View>
+          </View>
+          
+          <View style={styles.actionsContainer}>
+            <TouchableOpacity 
+              style={styles.primaryButton}
+              onPress={handleStartStudy}
+            >
+              <Text style={styles.primaryButtonText}>Start Studying</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.secondaryButton}
+              onPress={() => router.push(`/deck/${id}/add-card`)}
+            >
+              <Plus size={20} color={colors.primary} />
+              <Text style={styles.secondaryButtonText}>Add Card</Text>
             </TouchableOpacity>
           </View>
           
-          {flashcards.length > 0 ? (
-            <FlatList
-              data={displayedCards}
-              renderItem={renderCardItem}
-              keyExtractor={item => item.id}
-              scrollEnabled={false}
-            />
-          ) : (
-            <View style={styles.emptyCardsContainer}>
-              <Text style={styles.emptyCardsText}>No cards in this deck</Text>
-              <TouchableOpacity 
-                style={styles.addCardButton}
-                onPress={() => router.push(`/deck/${id}/add-card`)}
-              >
-                <Text style={styles.addCardButtonText}>Add Card</Text>
+          <View style={styles.cardsSection}>
+            <View style={styles.cardsSectionHeader}>
+              <Text style={styles.cardsSectionTitle}>Flashcards</Text>
+              <TouchableOpacity onPress={() => setShowAll(!showAll)}>
+                <Text style={styles.viewAllText}>
+                  {showAll ? "Show Less" : "View All"}
+                </Text>
               </TouchableOpacity>
             </View>
-          )}
+            
+            {flashcards.length > 0 ? (
+              <View style={styles.flashcardsContainer}>
+                {displayedCards.map(card => (
+                  <TouchableOpacity 
+                    key={card.id}
+                    style={styles.cardItem}
+                    onPress={() => router.push(`/card/${card.id}`)}
+                  >
+                    <View style={styles.cardContent}>
+                      <Text style={styles.cardFront} numberOfLines={2}>{card.front}</Text>
+                      <Text style={styles.cardBack} numberOfLines={1}>{card.back}</Text>
+                    </View>
+                    <ChevronRight size={20} color={colors.gray[400]} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyCardsContainer}>
+                <Text style={styles.emptyCardsText}>No cards in this deck</Text>
+                <TouchableOpacity 
+                  style={styles.addCardButton}
+                  onPress={() => router.push(`/deck/${id}/add-card`)}
+                >
+                  <Text style={styles.addCardButtonText}>Add Card</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+          
+          <TouchableOpacity style={styles.shareButton}>
+            <Share size={20} color={colors.primary} />
+            <Text style={styles.shareButtonText}>Share Deck</Text>
+          </TouchableOpacity>
         </View>
-        
-        <TouchableOpacity style={styles.shareButton}>
-          <Share size={20} color={colors.primary} />
-          <Text style={styles.shareButtonText}>Share Deck</Text>
-        </TouchableOpacity>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -246,6 +244,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  scrollContainer: {
+    flex: 1,
   },
   headerButtons: {
     flexDirection: "row",
@@ -502,5 +503,8 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 16,
     marginLeft: 8,
+  },
+  flashcardsContainer: {
+    marginBottom: 10,
   },
 });

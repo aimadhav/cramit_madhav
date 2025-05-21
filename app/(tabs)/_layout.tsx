@@ -8,24 +8,29 @@ import colors from "@/constants/colors";
 export default function TabLayout() {
   return (
     <Tabs
-      screenOptions={{
+      screenOptions={({ route }) => ({
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.gray[500],
-        headerShown: true,
+        headerShown: route.name === "index",
         tabBarStyle: {
           backgroundColor: colors.background,
           borderTopColor: colors.border,
         },
         headerStyle: {
           backgroundColor: colors.background,
+          height: 60,
+        },
+        headerTitleStyle: {
+          fontWeight: 'bold',
+          fontSize: 20,
         },
         headerTitle: ({children}) => (
-          <View style={{position: 'absolute', left: 16}}>
+          <View style={{position: 'absolute', left: 16, bottom: 8}}>
             <Text style={styles.headerText}>{children}</Text>
           </View>
         ),
         headerRight: () => (
-          <View style={{paddingRight: 16}}>
+          <View style={{paddingRight: 16, paddingBottom: 8}}>
             <Image 
               source={require("@/assets/images/finallogo.png")} 
               style={styles.logo} 
@@ -34,7 +39,7 @@ export default function TabLayout() {
           </View>
         ),
         headerLeft: () => null,
-      }}
+      })}
     >
       <Tabs.Screen
         name="index"
@@ -75,8 +80,8 @@ const styles = StyleSheet.create({
   },
   headerText: {
     color: colors.textDark,
-    paddingTop: 8,
-    fontSize: 17,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: 'bold',
+    paddingBottom: 4,
   },
 });
