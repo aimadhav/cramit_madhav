@@ -1,0 +1,69 @@
+export type ContentType = 'text' | 'image' | 'latex' | 'audio' | 'mixed';
+
+export interface Flashcard {
+  id: string;
+  front: string;
+  back: string;
+  contentType: ContentType;
+  mediaUrls?: string[];
+  tags: string[];
+  deckId: string;
+  createdAt: number;
+  updatedAt: number;
+  // Spaced repetition data
+  interval: number; // Days until next review
+  easeFactor: number; // How easy the card is (higher = easier)
+  repetitions: number; // Number of times reviewed
+  dueDate: number; // Timestamp when card is due for review
+  lastReviewed: number | null; // Timestamp of last review
+}
+
+export interface Deck {
+  id: string;
+  name: string;
+  description: string;
+  cardCount: number;
+  tags: string[];
+  isPremium: boolean;
+  price?: number;
+  createdAt: number;
+  updatedAt: number;
+  coverImage?: string;
+  subject?: string;
+  chapter?: string;
+}
+
+export interface StudySession {
+  id: string;
+  deckId: string;
+  startTime: number;
+  endTime?: number;
+  cardsStudied: number;
+  cardsCorrect: number;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  isLoggedIn: boolean;
+  isPremium: boolean;
+  createdAt: number;
+  studyStats: {
+    totalCardsStudied: number;
+    totalTimeStudied: number; // in minutes
+    streakDays: number;
+    lastStudyDate: number | null;
+  };
+  ownedDecks: string[];
+}
+
+export type DifficultyRating = 'again' | 'hard' | 'good' | 'easy';
+
+export interface StudyProgress {
+  deckId: string;
+  cardsLeft: number;
+  cardsStudied: number;
+  currentCardIndex: number;
+}

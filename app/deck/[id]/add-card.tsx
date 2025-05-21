@@ -1,0 +1,492 @@
+import React, { useState } from "react";
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Image } from "react-native";
+import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { X, Plus, Tag, Image as ImageIcon, FileText } from "lucide-react-native";
+import * as ImagePicker from "expo-image-picker";
+import { Platform } from "react-native";
+
+import colors from "@/constants/colors";
+import { useFlashcardStore } from "@/store/flashcard-store";
+import { ContentType } from "@/types";
+
+export default function AddCardScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  
+  const decks = useFlashcardStore(state => state.decks);
+  const addFlashcard = useFlashcardStore(state => state.addFlashcard);
+  
+  const deck = decks.find(d => d.id === id);
+  
+  const [front, setFront] = useState("");
+  const [back, setBack] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [currentTag, setCurrentTag] = useState("");
+  const [contentType, setContentType] = useState<ContentType>("text");
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  
+  if (!deck) {
+    return (
+      <View style={styles.notFoundContainer}>
+        <Text style={styles.notFoundText}>Deck not found</Text>
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => router.back()}
+        >
+          <Text style={styles.backButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  
+  const handleAddTag = () => {
+    if (currentTag.trim() && !tags.includes(currentTag.trim())) {
+      setTags([...tags, currentTag.trim()]);
+      setCurrentTag("");
+    }
+  };
+  
+  const handleRemoveTag = (tagToRemove: string) => {
+    setTags(tags.filter(tag => tag !== tagToRemove));
+  };
+  
+  const handlePickImage = async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert("Not available", "This feature is not available on web");
+      return;
+    }
+    
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
+    
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setMediaUrl(result.assets[0].uri);
+      setContentType("image");
+    }
+  };
+  
+  const handleAddCard = () => {
+    if (!front.trim()) {
+      Alert.alert("Error", "Please enter front side content");
+      return;
+    }
+    
+    if (!back.trim()) {
+      Alert.alert("Error", "Please enter back side content");
+      return;
+    }
+    
+    const mediaUrls = mediaUrl ? [mediaUrl] : undefined;
+    
+    addFlashcard({
+      front: front.trim(),
+      back: back.trim(),
+      contentType,
+      tags: tags.length > 0 ? tags : deck.tags.slice(0, 1),
+      deckId: id,
+      mediaUrls
+    });
+    
+    Alert.alert(
+      "Success",
+      "Card added successfully!",
+      [
+        {
+          text: "Add Another",
+          onPress: () => {
+            setFront("");
+            setBack("");
+            setMediaUrl(null);
+            setContentType("text");
+          }
+        },
+        {
+          text: "Done",
+          onPress: () => router.back()
+        }
+      ]
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={["top"]}>
+      <Stack.Screen 
+        options={{
+          title: "Add Card",
+          headerRight: () => (
+            <TouchableOpacity 
+              style={styles.closeButton}
+              onPress={() => router.back()}
+            >
+              <X size={24} color={colors.textDark} />
+            </TouchableOpacity>
+          ),
+        }} 
+      />
+      
+      <ScrollView 
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.deckInfo}>
+          <Text style={styles.deckName}>Deck: {deck.name}</Text>
+        </View>
+        
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Front Side</Text>
+          <TextInput
+            style={[styles.input, styles.textArea]}
+            placeholder="Enter front side content"
+            value={front}
+            onChangeText={setFront}
+            multiline
+            numberOfLines={4}
+            placeholderTextColor={colors.gray[400]}
+          />
+          <Text style={styles.helperText}>
+            Tip: You can use LaTeX by wrapping it in $ symbols, e.g. $E = mc^2$
+          </Text>
+        </View>
+        
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Back Side</Text>
+          <TextInput
+            style={[styles.input, styles.textArea]}
+            placeholder="Enter back side content"
+            value={back}
+            onChangeText={setBack}
+            multiline
+            numberOfLines={4}
+            placeholderTextColor={colors.gray[400]}
+          />
+        </View>
+        
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Content Type</Text>
+          <View style={styles.contentTypeContainer}>
+            <TouchableOpacity 
+              style={[
+                styles.contentTypeButton,
+                contentType === "text" && styles.activeContentTypeButton
+              ]}
+              onPress={() => setContentType("text")}
+            >
+              <FileText size={20} color={contentType === "text" ? "white" : colors.textDark} />
+              <Text style={[
+                styles.contentTypeText,
+                contentType === "text" && styles.activeContentTypeText
+              ]}>Text</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[
+                styles.contentTypeButton,
+                contentType === "mixed" && styles.activeContentTypeButton
+              ]}
+              onPress={() => setContentType("mixed")}
+            >
+              <FileText size={20} color={contentType === "mixed" ? "white" : colors.textDark} />
+              <Text style={[
+                styles.contentTypeText,
+                contentType === "mixed" && styles.activeContentTypeText
+              ]}>Mixed</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[
+                styles.contentTypeButton,
+                contentType === "latex" && styles.activeContentTypeButton
+              ]}
+              onPress={() => setContentType("latex")}
+            >
+              <FileText size={20} color={contentType === "latex" ? "white" : colors.textDark} />
+              <Text style={[
+                styles.contentTypeText,
+                contentType === "latex" && styles.activeContentTypeText
+              ]}>LaTeX</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[
+                styles.contentTypeButton,
+                contentType === "image" && styles.activeContentTypeButton
+              ]}
+              onPress={() => setContentType("image")}
+            >
+              <ImageIcon size={20} color={contentType === "image" ? "white" : colors.textDark} />
+              <Text style={[
+                styles.contentTypeText,
+                contentType === "image" && styles.activeContentTypeText
+              ]}>Image</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        
+        {(contentType === "image" || contentType === "mixed") && (
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Add Image</Text>
+            <TouchableOpacity 
+              style={styles.imagePickerButton}
+              onPress={handlePickImage}
+            >
+              {mediaUrl ? (
+                <Image 
+                  source={{ uri: mediaUrl }}
+                  style={styles.imagePreview}
+                />
+              ) : (
+                <View style={styles.imagePickerContent}>
+                  <ImageIcon size={24} color={colors.primary} />
+                  <Text style={styles.imagePickerText}>Select Image</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            {Platform.OS === 'web' && (
+              <Text style={styles.webNote}>
+                Note: Image upload is not available on web.
+              </Text>
+            )}
+          </View>
+        )}
+        
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Tags</Text>
+          <View style={styles.tagInputContainer}>
+            <TextInput
+              style={styles.tagInput}
+              placeholder="Add tags"
+              value={currentTag}
+              onChangeText={setCurrentTag}
+              onSubmitEditing={handleAddTag}
+              placeholderTextColor={colors.gray[400]}
+            />
+            <TouchableOpacity 
+              style={styles.addTagButton}
+              onPress={handleAddTag}
+            >
+              <Plus size={20} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.tagsContainer}>
+            {tags.map(tag => (
+              <View key={tag} style={styles.tagBadge}>
+                <Text style={styles.tagText}>{tag}</Text>
+                <TouchableOpacity 
+                  style={styles.removeTagButton}
+                  onPress={() => handleRemoveTag(tag)}
+                >
+                  <X size={14} color={colors.textDark} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            {tags.length === 0 && (
+              <Text style={styles.noTagsText}>No tags added yet</Text>
+            )}
+          </View>
+        </View>
+        
+        <TouchableOpacity 
+          style={styles.addButton}
+          onPress={handleAddCard}
+        >
+          <Text style={styles.addButtonText}>Add Card</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  closeButton: {
+    padding: 8,
+  },
+  notFoundContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  notFoundText: {
+    fontSize: 18,
+    color: colors.textDark,
+    marginBottom: 16,
+  },
+  backButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+  },
+  backButtonText: {
+    color: "white",
+    fontWeight: "600",
+  },
+  content: {
+    padding: 20,
+  },
+  deckInfo: {
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: colors.gray[100],
+    borderRadius: 8,
+  },
+  deckName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: colors.textDark,
+  },
+  formGroup: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: colors.textDark,
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: colors.gray[50],
+    borderWidth: 1,
+    borderColor: colors.gray[200],
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: colors.textDark,
+  },
+  textArea: {
+    minHeight: 100,
+    textAlignVertical: "top",
+  },
+  helperText: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginTop: 4,
+    fontStyle: "italic",
+  },
+  contentTypeContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  contentTypeButton: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 12,
+    backgroundColor: colors.gray[100],
+    borderRadius: 8,
+    marginHorizontal: 4,
+  },
+  activeContentTypeButton: {
+    backgroundColor: colors.primary,
+  },
+  contentTypeText: {
+    fontSize: 14,
+    color: colors.textDark,
+    marginTop: 4,
+  },
+  activeContentTypeText: {
+    color: "white",
+  },
+  imagePickerButton: {
+    backgroundColor: colors.gray[50],
+    borderWidth: 1,
+    borderColor: colors.gray[200],
+    borderRadius: 8,
+    height: 160,
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+  },
+  imagePickerContent: {
+    alignItems: "center",
+  },
+  imagePickerText: {
+    fontSize: 16,
+    color: colors.primary,
+    marginTop: 8,
+  },
+  imagePreview: {
+    width: "100%",
+    height: "100%",
+  },
+  webNote: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginTop: 8,
+    fontStyle: "italic",
+  },
+  tagInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  tagInput: {
+    flex: 1,
+    backgroundColor: colors.gray[50],
+    borderWidth: 1,
+    borderColor: colors.gray[200],
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: colors.textDark,
+  },
+  addTagButton: {
+    width: 48,
+    height: 48,
+    backgroundColor: colors.gray[100],
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  tagsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 12,
+  },
+  tagBadge: {
+    backgroundColor: colors.gray[200],
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
+    marginBottom: 8,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  tagText: {
+    fontSize: 14,
+    color: colors.textDark,
+  },
+  removeTagButton: {
+    marginLeft: 6,
+  },
+  noTagsText: {
+    fontSize: 14,
+    color: colors.textLight,
+    fontStyle: "italic",
+  },
+  addButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    marginTop: 20,
+    marginBottom: 40,
+  },
+  addButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "white",
+  },
+});
