@@ -511,47 +511,9 @@ export default function StudySessionScreen() {
           <Text style={[styles.swipeHint, styles.deleteHint]}>Delete</Text>
         )}
         {!swipeDirection && (
-          <Text style={styles.swipeInstructions}>
+          <Text style={[styles.swipeInstructions, { textAlign: 'center' }]}>
             Swipe left for Hard, right for Easy, up to Delete
           </Text>
-        )}
-      </View>
-      
-      <View style={styles.actionsContainer}>
-        {!showBack ? (
-          <TouchableOpacity 
-            style={styles.revealButton}
-            onPress={() => setShowBack(true)}
-          >
-            <Text style={styles.revealButtonText}>Reveal Answer</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.ratingButtons}>
-            <TouchableOpacity 
-              style={[styles.ratingButton, styles.againButton]}
-              onPress={() => handleRateCard('again')}
-            >
-              <Text style={styles.ratingButtonText}>Again</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.ratingButton, styles.hardButton]}
-              onPress={() => handleRateCard('hard')}
-            >
-              <Text style={styles.ratingButtonText}>Hard</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.ratingButton, styles.goodButton]}
-              onPress={() => handleRateCard('good')}
-            >
-              <Text style={styles.ratingButtonText}>Good</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.ratingButton, styles.easyButton]}
-              onPress={() => handleRateCard('easy')}
-            >
-              <Text style={styles.ratingButtonText}>Easy</Text>
-            </TouchableOpacity>
-          </View>
         )}
       </View>
       
@@ -628,8 +590,10 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   cardContainer: {
-    height: SCREEN_HEIGHT * 0.5,
-    margin: 20,
+    height: SCREEN_HEIGHT * 0.65,
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 10,
     backgroundColor: "white",
     borderRadius: 16,
     borderWidth: 1,
@@ -703,8 +667,9 @@ const styles = StyleSheet.create({
   },
   swipeHintContainer: {
     alignItems: "center",
-    marginVertical: 16,
-    height: 24,
+    marginTop: 16,
+    marginBottom: 32,
+    height: 48,
   },
   swipeHint: {
     fontSize: 18,
@@ -722,49 +687,7 @@ const styles = StyleSheet.create({
   swipeInstructions: {
     fontSize: 14,
     color: colors.textLight,
-  },
-  actionsContainer: {
-    paddingHorizontal: 20,
-    marginBottom: 16,
-  },
-  revealButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  revealButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "white",
-  },
-  ratingButtons: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  ratingButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: "center",
-    marginHorizontal: 4,
-  },
-  againButton: {
-    backgroundColor: colors.error,
-  },
-  hardButton: {
-    backgroundColor: colors.warning,
-  },
-  goodButton: {
-    backgroundColor: colors.primary,
-  },
-  easyButton: {
-    backgroundColor: colors.success,
-  },
-  ratingButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "white",
+    textAlign: 'center',
   },
   paginationContainer: {
     alignItems: "center",
