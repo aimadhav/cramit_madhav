@@ -19,26 +19,21 @@ export default function TabLayout() {
         headerStyle: {
           backgroundColor: colors.background,
         },
-        headerTitleStyle: {
-          paddingTop: 8,
-        },
-        headerTitleAlign: "right", 
-        headerTitleContainerStyle: {
-          right: 16,
-          left: null,
-          position: 'absolute',
-          paddingTop: 4,
-        },
-        headerLeftContainerStyle: {
-          left: 16,
-        },
-        headerLeft: () => (
-          <Image 
-            source={require("@/assets/images/finallogo.png")} 
-            style={styles.logo} 
-            resizeMode="contain"
-          />
+        headerTitle: ({children}) => (
+          <View style={{position: 'absolute', left: 16}}>
+            <Text style={styles.headerText}>{children}</Text>
+          </View>
         ),
+        headerRight: () => (
+          <View style={{paddingRight: 16}}>
+            <Image 
+              source={require("@/assets/images/finallogo.png")} 
+              style={styles.logo} 
+              resizeMode="contain"
+            />
+          </View>
+        ),
+        headerLeft: () => null,
       }}
     >
       <Tabs.Screen
@@ -77,5 +72,11 @@ const styles = StyleSheet.create({
   logo: {
     width: 100,
     height: 30,
+  },
+  headerText: {
+    color: colors.textDark,
+    paddingTop: 8,
+    fontSize: 17,
+    fontWeight: '600',
   },
 });
