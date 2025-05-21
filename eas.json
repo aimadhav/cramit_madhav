@@ -13,8 +13,10 @@
     },
     "production": {
       "autoIncrement": true,
-      "env": {
-        "NPM_FLAGS": "--legacy-peer-deps"
+      "npm": {
+        "flags": [
+          "--legacy-peer-deps"
+        ]
       }
     }
   },
