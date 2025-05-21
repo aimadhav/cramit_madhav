@@ -21,7 +21,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.madhavgg12.expoapp"
+      "package": "com.new2.expoapp"
     },
     "plugins": [
       "expo-router"
@@ -32,7 +32,6 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "ae90ee72-95d1-4531-9a69-63ad50e11884"
       }
     }
   }
