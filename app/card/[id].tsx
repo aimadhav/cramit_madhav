@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert, Platform } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Edit, Trash2, Tag, ArrowLeft, ArrowRight, RotateCw } from "lucide-react-native";
+import { Edit, Trash2, Tag, ArrowLeft, ArrowRight, RotateCw, Newspaper } from "lucide-react-native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -14,6 +14,7 @@ import { Image } from 'expo-image';
 import colors from "@/constants/colors";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { extractLatex } from "@/utils/latex-renderer";
+import FlashcardContentModal from '@/components/FlashcardContentModal';
 
 export default function CardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,6 +28,7 @@ export default function CardDetailScreen() {
   const card = flashcards.find(c => c.id === id);
   
   const [showBack, setShowBack] = useState(false);
+  const [isModalVisible, setIsModalVisible] = useState(false);
   
   // Image manipulation states
   const [imageScale, setImageScale] = useState(1);
@@ -39,6 +41,23 @@ export default function CardDetailScreen() {
   const startScale = useSharedValue(1);
   const startX = useSharedValue(0);
   const startY = useSharedValue(0);
+
+  const headerRight = () => (
+    <View style={styles.headerButtons}>
+      <TouchableOpacity 
+        style={styles.headerButton}
+        onPress={() => router.push(`/card/edit/${id}`)}
+      >
+        <Edit size={20} color={colors.primary} />
+      </TouchableOpacity>
+      <TouchableOpacity 
+        style={styles.headerButton}
+        onPress={handleDeleteCard}
+      >
+        <Trash2 size={20} color={colors.error} />
+      </TouchableOpacity>
+    </View>
+  );
   
   if (!card) {
     return (
@@ -193,22 +212,7 @@ export default function CardDetailScreen() {
       <Stack.Screen 
         options={{
           title: deck?.name || "Flashcard",
-          headerRight: () => (
-            <View style={styles.headerButtons}>
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={() => router.push(`/card/edit/${id}`)}
-              >
-                <Edit size={20} color={colors.primary} />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={handleDeleteCard}
-              >
-                <Trash2 size={20} color={colors.error} />
-              </TouchableOpacity>
-            </View>
-          ),
+          headerRight: headerRight,
         }} 
       />
       
@@ -289,6 +293,15 @@ export default function CardDetailScreen() {
             </>
           )}
         </ScrollView>
+
+        {/* Button to open the modal */}
+        <TouchableOpacity 
+          style={styles.viewDetailsButton}
+          onPress={() => setIsModalVisible(true)}
+        >
+          <Newspaper size={18} color={colors.primary} style={styles.viewDetailsIcon} />
+          <Text style={styles.viewDetailsButtonText}>View Full Details</Text>
+        </TouchableOpacity>
       </TouchableOpacity>
       
       <View style={styles.tagsContainer}>
@@ -332,6 +345,7 @@ export default function CardDetailScreen() {
           <ArrowRight size={20} color={hasNext ? colors.primary : colors.gray[400]} />
         </TouchableOpacity>
       </View>
+      <FlashcardContentModal isVisible={isModalVisible} onClose={() => setIsModalVisible(false)} card={card!} />
     </SafeAreaView>
   );
 }
@@ -505,5 +519,22 @@ const styles = StyleSheet.create({
   },
   navButtonTextDisabled: {
     color: colors.gray[400],
+  },
+  viewDetailsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginTop: 16, // Space above the button
+    borderTopWidth: 1,
+    borderTopColor: colors.gray[200],
+  },
+  viewDetailsIcon: {
+    marginRight: 8,
+  },
+  viewDetailsButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.primary,
   },
 });

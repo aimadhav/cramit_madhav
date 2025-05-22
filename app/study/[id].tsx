@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { X, RotateCw, Clock, ArrowLeft, ArrowRight } from "lucide-react-native";
+import { X, RotateCw, Clock, ArrowLeft, ArrowRight, Maximize2 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useSharedValue,
@@ -621,60 +621,78 @@ export default function StudySessionScreen() {
               <TouchableOpacity 
                 style={styles.cardContent}
                 activeOpacity={0.9}
-                onPress={() => setShowBack(!showBack)}
               >
                 <View style={styles.flipIconContainer}>
                   <RotateCw size={20} color={colors.gray[500]} />
                   <Text style={styles.flipText}>Tap to flip</Text>
                 </View>
                 
-                <ScrollView 
-                  contentContainerStyle={styles.cardScrollContent}
-                  showsVerticalScrollIndicator={false}
+                <TouchableOpacity
+                  style={{ flex: 1 }} // Make the scrollable area tappable
+                  activeOpacity={0.9}
+                  onPress={() => setShowBack(!showBack)}
                 >
-                  {!showBack ? (
-                    // Front of card
-                    <>
-                      <Text style={styles.cardSideLabel}>FRONT</Text>
-                      <View style={styles.contentContainer}>
-                        {frontContent.map((part, index) => (
-                          part.isLatex ? (
-                            <Text key={index} style={styles.latexText}>{part.text}</Text>
-                          ) : (
-                            <Text key={index} style={styles.cardText}>{part.text}</Text>
-                          )
-                        ))}
-                      </View>
-                      
-                      {currentCard && currentCard.mediaUrls && currentCard.mediaUrls.length > 0 && currentCard.mediaUrls[0] && (
-                        <View style={styles.imageContainer}>
-                          <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
-                            <Animated.Image 
-                              source={{ uri: currentCard.mediaUrls[0] }}
-                              style={[styles.cardImage, imageStyle]}
-                              resizeMode="contain"
-                            />
-                          </GestureDetector>
-                          <Text style={styles.imageHint}>Pinch to zoom • Drag to move • Double tap to reset</Text>
+                  <ScrollView 
+                    contentContainerStyle={styles.cardScrollContent}
+                    showsVerticalScrollIndicator={false}
+                    scrollEnabled={!isImageManipulationActive} // Prevent ScrollView from capturing tap if image manipulation is active
+                  >
+                    {!showBack ? (
+                      // Front of card
+                      <>
+                        <Text style={styles.cardSideLabel}>FRONT</Text>
+                        <View style={styles.contentContainer}>
+                          {frontContent.map((part, index) => (
+                            part.isLatex ? (
+                              <Text key={index} style={styles.latexText}>{part.text}</Text>
+                            ) : (
+                              <Text key={index} style={styles.cardText}>{part.text}</Text>
+                            )
+                          ))}
                         </View>
-                      )}
-                    </>
-                  ) : (
-                    // Back of card
-                    <>
-                      <Text style={styles.cardSideLabel}>BACK</Text>
-                      <View style={styles.contentContainer}>
-                        {backContent.map((part, index) => (
-                          part.isLatex ? (
-                            <Text key={index} style={styles.latexText}>{part.text}</Text>
-                          ) : (
-                            <Text key={index} style={styles.cardText}>{part.text}</Text>
-                          )
-                        ))}
-                      </View>
-                    </>
-                  )}
-                </ScrollView>
+                        
+                        {currentCard && currentCard.mediaUrls && currentCard.mediaUrls.length > 0 && currentCard.mediaUrls[0] && (
+                          <View style={styles.imageContainer}>
+                            <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
+                              <Animated.Image 
+                                source={{ uri: currentCard.mediaUrls[0] }}
+                                style={[styles.cardImage, imageStyle]}
+                                resizeMode="contain"
+                              />
+                            </GestureDetector>
+                            <Text style={styles.imageHint}>Pinch to zoom • Drag to move • Double tap to reset</Text>
+                          </View>
+                        )}
+                      </>
+                    ) : (
+                      // Back of card
+                      <>
+                        <Text style={styles.cardSideLabel}>BACK</Text>
+                        <View style={styles.contentContainer}>
+                          {backContent.map((part, index) => (
+                            part.isLatex ? (
+                              <Text key={index} style={styles.latexText}>{part.text}</Text>
+                            ) : (
+                              <Text key={index} style={styles.cardText}>{part.text}</Text>
+                            )
+                          ))}
+                        </View>
+                      </>
+                    )}
+                  </ScrollView>
+                </TouchableOpacity>
+                
+                {/* Expand icon to view details */}
+                <TouchableOpacity 
+                  style={styles.expandButton}
+                  onPress={() => {
+                    if (currentCard) {
+                      router.push(`/study-card-detail/${currentCard.id}`);
+                    }
+                  }}
+                >
+                  <Maximize2 size={22} color={colors.primary} />
+                </TouchableOpacity>
               </TouchableOpacity>
             </Animated.View>
           </GestureDetector>
@@ -702,7 +720,7 @@ export default function StudySessionScreen() {
               <View style={[styles.paginationDot, showBack && styles.activeDot]} />
             </View>
           </View>
-        </>
+        </> 
       )}
     </SafeAreaView>
   );
@@ -899,5 +917,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.primary,
     fontWeight: "500",
+  },
+  expandButton: {
+    position: 'absolute',
+    top: 12,
+    left: '50%',
+    transform: [{ translateX: -11 }], // Half of the icon size to center
+    padding: 6,
+    zIndex: 20, // Ensure it's above flip icon if they overlap
   },
 });
