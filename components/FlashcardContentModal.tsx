@@ -6,6 +6,7 @@ import { X } from 'lucide-react-native';
 import { Flashcard } from '@/types';
 import colors from '@/constants/colors';
 import { extractLatex } from '@/utils/latex-renderer';
+import WebViewLatexBlock from './WebViewLatexBlock';
 
 interface FlashcardContentModalProps {
   isVisible: boolean;
@@ -20,13 +21,18 @@ const FlashcardContentModal: React.FC<FlashcardContentModalProps> = ({ isVisible
 
   const renderContent = (text: string) => {
     const contentParts = extractLatex(text);
-    return contentParts.map((part, index) => (
-      part.isLatex ? (
-        <Text key={index} style={styles.latexText}>{part.text}</Text>
-      ) : (
-        <Text key={index} style={styles.contentText}>{part.text}</Text>
-      )
-    ));
+    console.log("FlashcardContentModal: Extracted parts:", JSON.stringify(contentParts, null, 2)); // Log the whole array
+
+    return contentParts.map((part, index) => {
+      console.log(`FlashcardContentModal: Rendering part ${index}:`, JSON.stringify(part)); // Log each part
+      if (part.type === 'latex') {
+        console.log("FlashcardContentModal: Passing to WebViewLatexBlock:", JSON.stringify(part.content));
+        return <WebViewLatexBlock key={index} latex={part.content} />;
+      } else {
+        console.log("FlashcardContentModal: Rendering as Text:", JSON.stringify(part.content));
+        return <Text key={index} style={styles.contentText}>{part.content}</Text>;
+      }
+    });
   };
 
   return (

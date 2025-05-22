@@ -15,6 +15,7 @@ import * as Haptics from 'expo-haptics';
 import colors from "@/constants/colors";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { extractLatex } from "@/utils/latex-renderer";
+import WebViewLatexBlock from "../../components/WebViewLatexBlock";
 
 export default function StudyCardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -161,10 +162,10 @@ export default function StudyCardDetailScreen() {
               <Text style={styles.cardSideLabel}>FRONT</Text>
               <View style={styles.contentContainer}>
                 {frontContent.map((part, index) => (
-                  part.isLatex ? (
-                    <Text key={index} style={styles.latexText}>{part.text}</Text>
+                  part.type === 'latex' ? (
+                    <WebViewLatexBlock key={index} latex={part.content} />
                   ) : (
-                    <Text key={index} style={styles.cardText}>{part.text}</Text>
+                    <Text key={index} style={styles.cardText}>{part.content}</Text>
                   )
                 ))}
               </View>
@@ -190,10 +191,10 @@ export default function StudyCardDetailScreen() {
               <Text style={styles.cardSideLabel}>BACK</Text>
               <View style={styles.contentContainer}>
                 {backContent.map((part, index) => (
-                  part.isLatex ? (
-                    <Text key={index} style={styles.latexText}>{part.text}</Text>
+                  part.type === 'latex' ? (
+                    <WebViewLatexBlock key={index} latex={part.content} />
                   ) : (
-                    <Text key={index} style={styles.cardText}>{part.text}</Text>
+                    <Text key={index} style={styles.cardText}>{part.content}</Text>
                   )
                 ))}
               </View>

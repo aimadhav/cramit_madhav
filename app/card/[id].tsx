@@ -14,6 +14,7 @@ import { Image } from 'expo-image';
 import colors from "@/constants/colors";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { extractLatex } from "@/utils/latex-renderer";
+import WebViewLatexBlock from "../../components/WebViewLatexBlock";
 import FlashcardContentModal from '@/components/FlashcardContentModal';
 
 export default function CardDetailScreen() {
@@ -242,10 +243,10 @@ export default function CardDetailScreen() {
               <Text style={styles.cardSideLabel}>FRONT</Text>
               <View style={styles.contentContainer}>
                 {frontContent.map((part, index) => (
-                  part.isLatex ? (
-                    <Text key={index} style={styles.latexText}>{part.text}</Text>
+                  part.type === 'latex' ? (
+                    <WebViewLatexBlock key={index} latex={part.content} />
                   ) : (
-                    <Text key={index} style={styles.cardText}>{part.text}</Text>
+                    <Text key={index} style={styles.cardText}>{part.content}</Text>
                   )
                 ))}
               </View>
@@ -283,10 +284,10 @@ export default function CardDetailScreen() {
               <Text style={styles.cardSideLabel}>BACK</Text>
               <View style={styles.contentContainer}>
                 {backContent.map((part, index) => (
-                  part.isLatex ? (
-                    <Text key={index} style={styles.latexText}>{part.text}</Text>
+                  part.type === 'latex' ? (
+                    <WebViewLatexBlock key={index} latex={part.content} />
                   ) : (
-                    <Text key={index} style={styles.cardText}>{part.text}</Text>
+                    <Text key={index} style={styles.cardText}>{part.content}</Text>
                   )
                 ))}
               </View>

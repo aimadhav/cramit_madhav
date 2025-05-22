@@ -20,12 +20,12 @@ export function containsLatex(text: string): boolean {
 }
 
 // Extract LaTeX expressions from text
-export function extractLatex(text: string): { text: string, isLatex: boolean }[] {
+export function extractLatex(text: string): { content: string, type: 'string' | 'latex' }[] {
   if (!containsLatex(text)) {
-    return [{ text, isLatex: false }];
+    return [{ content: text, type: 'string' }];
   }
   
-  const parts: { text: string, isLatex: boolean }[] = [];
+  const parts: { content: string, type: 'string' | 'latex' }[] = [];
   let lastIndex = 0;
   
   // Find all LaTeX expressions (both $$ and $ delimiters)
@@ -36,15 +36,15 @@ export function extractLatex(text: string): { text: string, isLatex: boolean }[]
     // Add text before the LaTeX
     if (match.index > lastIndex) {
       parts.push({
-        text: text.substring(lastIndex, match.index),
-        isLatex: false
+        content: text.substring(lastIndex, match.index),
+        type: 'string'
       });
     }
     
     // Add the LaTeX expression
     parts.push({
-      text: match[2] || match[3] || match[1], // Extract the LaTeX content
-      isLatex: true
+      content: match[2] || match[3] || match[1], // Extract the LaTeX content
+      type: 'latex'
     });
     
     lastIndex = match.index + match[0].length;
@@ -53,8 +53,8 @@ export function extractLatex(text: string): { text: string, isLatex: boolean }[]
   // Add any remaining text
   if (lastIndex < text.length) {
     parts.push({
-      text: text.substring(lastIndex),
-      isLatex: false
+      content: text.substring(lastIndex),
+      type: 'string'
     });
   }
   
