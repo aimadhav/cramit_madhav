@@ -1,142 +1,167 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { WebView } from 'react-native-webview';
-import { useColorScheme, Platform, View, StyleSheet } from 'react-native';
+import React, { useRef, useState, useEffect } from 'react';
+import { View, StyleSheet, useColorScheme, Platform } from 'react-native';
+import WebView from 'react-native-webview';
 
 interface WebViewLatexBlockProps {
   latex: string;
-  backgroundColor?: string; // Optional: to override theme-based background
-  textColor?: string;       // Optional: to override theme-based text color
 }
 
-const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex, backgroundColor, textColor }) => {
-  const [webViewHeight, setWebViewHeight] = useState(50); // Initial height
-  const colorScheme = useColorScheme();
+const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
+  const [webViewHeight, setWebViewHeight] = useState(50); 
   const webViewRef = useRef<WebView>(null);
+  const [webViewKey, setWebViewKey] = useState(Date.now().toString());
+  const colorScheme = useColorScheme();
+  const theme = colorScheme === 'dark' ? 
+                { colors: { backgroundColor: '#121212', textColor: 'white' } } : 
+                { colors: { backgroundColor: 'white', textColor: 'black' } };
+  const { backgroundColor, textColor } = theme.colors;
 
-  const effectiveTextColor = textColor || (colorScheme === 'dark' ? 'white' : 'black');
-  const effectiveBackgroundColor = backgroundColor || (colorScheme === 'dark' ? '#121212' : 'white'); 
+  const contentForMathJaxDisplay = latex;
+  const scriptLatexStringLiteral = JSON.stringify(latex);
 
   const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-      <style>
-        body {
-          margin: 0;
-          padding: 5px; 
-          background-color: ${effectiveBackgroundColor};
-          color: ${effectiveTextColor};
-          display: flex; 
-          justify-content: flex-start; 
-          align-items: flex-start; 
-          min-height: 10px; 
-        }
-        #math-content {
-            font-size: 1.1em; 
-            overflow-wrap: break-word; 
-            width: 100%; 
-        }
-      </style>
-    </head>
-    <body>
-      <div id="math-content">$${latex}$$</div>
-      <script type="text/javascript">
-        // Function to send messages (can be kept for debugging if needed, or simplified)
-        function sendMessage(type, dataValue) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: type, data: dataValue, latex: ${JSON.stringify(latex)} }));
-        }
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: ${backgroundColor};
+        color: ${textColor};
+        display: flex;
+        justify-content: flex-start; 
+        align-items: flex-start; 
+        min-height: 1px;
+      }
+      #math-content {
+          overflow-wrap: break-word; 
+          width: 100%; 
+      }
+    </style>
+  </head>
+  <body>
+    <div id="math-content">$$${contentForMathJaxDisplay}$$</div>
+    <script type="text/javascript">
+      // This JS variable 'originalLatexPropValue' will hold the true value of the latex prop
+      const originalLatexPropValue = ${scriptLatexStringLiteral};
 
-        // Original updateHeight function
-        function updateHeight() {
-          setTimeout(function() {
-            var newHeight = document.body.scrollHeight;
-            newHeight = Math.max(newHeight, 20); 
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'rendered_height', // Keep original type for height updates
-              height: newHeight,
-              latex: ${JSON.stringify(latex)} 
-            }));
-          }, 350); // Slightly increased timeout
-        }
+      function sendMessage(type, data) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: type, latex: originalLatexPropValue, data }));
+      }
 
-        // Configure MathJax and define what to do when it's ready
-        window.MathJax = {
-          tex: {
-            inlineMath: [['$', '$'], ['\\(', '\\)']],
-            displayMath: [['$$', '$$'], ['\\[', '\\]']]
-          },
-          startup: {
-            ready: function () {
-              sendMessage('mathjax_status', 'MathJax startup.ready function called.');
-              MathJax.startup.defaultReady();
-              sendMessage('mathjax_status', 'MathJax defaultReady executed. Typesetting should be complete.');
-              updateHeight();
+      function updateHeight() {
+        setTimeout(function() {
+          var contentElement = document.getElementById('math-content');
+          var newHeight = contentElement ? contentElement.scrollHeight : document.body.scrollHeight;
+          newHeight = Math.max(newHeight, 20); 
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'rendered_height',
+            height: newHeight,
+            latex: originalLatexPropValue 
+          }));
+        }, 350); // Increased timeout slightly, was 350, can be tuned
+      }
+
+      // Initial message for debugging if script loads
+      try {
+        sendMessage('DEBUG_MSG', 'WebView script loaded. Latex prop for msg: ' + originalLatexPropValue);
+      } catch(e) {
+         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', data: 'Initial sendMessage failed: ' + e.toString()}));
+      }
+
+      document.addEventListener('DOMContentLoaded', function() {
+        sendMessage('dom_content_loaded', 'DOMContentLoaded event fired.');
+        updateHeight(); // updateHeight will be called after DOMContentLoaded
+      });
+
+      window.MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+          displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']]
+        },
+        svg: { 
+          fontCache: 'global' 
+        },
+        startup: {
+          ready: function () {
+            sendMessage('mathjax_status', 'MathJax startup.ready function called.');
+            MathJax.startup.defaultReady();
+            sendMessage('mathjax_status', 'MathJax defaultReady executed. Typesetting should be complete.');
+            try {
+              MathJax.typeset(); // Explicitly call typeset
+              sendMessage('mathjax_status', 'MathJax.typeset() called.');
+            } catch(e) {
+              sendMessage('mathjax_status', 'Error calling MathJax.typeset(): ' + e.toString());
             }
-          },
-          options: {
-            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
-            ignoreHtmlClass: 'tex2jax_ignore',
-            processHtmlClass: 'tex2jax_process'
+            updateHeight();
           }
-        };
+        },
+        options: {
+          skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+          ignoreHtmlClass: 'tex2jax_ignore',
+          processHtmlClass: 'tex2jax_process'
+        }
+      };
 
-        document.addEventListener('DOMContentLoaded', function() {
-            sendMessage('dom_content_loaded', 'DOMContentLoaded event fired.');
-        });
-
-        window.addEventListener('resize', updateHeight);
-      </script>
-      <!-- The MathJax script itself, loaded AFTER our configuration block -->
-      <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
-    </body>
-    </html>
-  `;
+      window.addEventListener('resize', updateHeight);
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+  </body>
+  </html>
+`;
 
   const handleMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       console.log('[WebView Message]', data); 
 
+      // Compare received latex (which is originalLatexPropValue from script) with the component's original latex prop
       if (data.type === 'rendered_height' && data.latex === latex) {
-        setWebViewHeight(data.height + 15);
-      } else if (data.type === 'mathjax_status' || data.type === 'dom_content_loaded') {
-        // Already logged
+        setWebViewHeight(data.height + 15); // Add some padding
+      } else if (data.type === 'ERROR') {
+        console.error('[WebView Error]', data.data);
       }
+      // Other message types are for logging/debugging
     } catch (error) {
-      console.error('Error parsing message from WebView:', error);
+      console.error('Error parsing message from WebView:', error, event.nativeEvent.data);
     }
   };
 
-  // Key change forces WebView to reload
-  const webViewKey = `${latex}-${colorScheme}`;
+  useEffect(() => {
+    setWebViewKey(Date.now().toString()); // Force re-render if latex prop changes
+    setWebViewHeight(50); // Reset height when latex changes
+  }, [latex]);
 
   return (
-    <View style={[styles.container, { height: webViewHeight, backgroundColor: effectiveBackgroundColor }]}>
+    <View style={[styles.container, { height: webViewHeight }]}>
       <WebView
+        key={webViewKey}
         ref={webViewRef}
-        key={webViewKey} 
         originWhitelist={['*']}
         source={{ html: htmlContent, baseUrl: '' }}
-        onMessage={handleMessage}
         style={styles.webView}
-        scrollEnabled={false} 
         javaScriptEnabled={true}
         domStorageEnabled={true}
         showsVerticalScrollIndicator={false}
         showsHorizontalScrollIndicator={false}
+        scrollEnabled={false}
+        onMessage={handleMessage}
         onError={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-          console.warn('WebView error:', nativeEvent);
+          const {nativeEvent} = syntheticEvent;
+          console.warn('WebView error: ', nativeEvent);
         }}
         onHttpError={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-          console.warn(
-            'WebView HTTP error: ',
-            nativeEvent.url,
-            nativeEvent.statusCode,
-            nativeEvent.description,
-          );
+          const {nativeEvent} = syntheticEvent;
+          console.warn('WebView HTTP error: ', nativeEvent.url, nativeEvent.statusCode, nativeEvent.description);
+        }}
+        onLoadProgress={({ nativeEvent }) => {
+          // console.log('WebView load progress: ', nativeEvent.progress);
+        }}
+        onShouldStartLoadWithRequest={(request) => {
+          // Intercept navigation
+          return true;
         }}
       />
     </View>
@@ -146,10 +171,11 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex, background
 const styles = StyleSheet.create({
   container: {
     width: '100%',
+    // height is dynamic
   },
   webView: {
     flex: 1,
-    backgroundColor: 'transparent', 
+    backgroundColor: 'transparent',
   },
 });
 
