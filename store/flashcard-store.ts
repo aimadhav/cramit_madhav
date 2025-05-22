@@ -29,6 +29,7 @@ interface FlashcardState {
   addFlashcard: (card: Omit<Flashcard, 'id' | 'createdAt' | 'updatedAt' | 'interval' | 'easeFactor' | 'repetitions' | 'dueDate' | 'lastReviewed'>) => string;
   updateFlashcard: (id: string, cardData: Partial<Flashcard>) => void;
   deleteFlashcard: (id: string) => void;
+  toggleBookmark: (cardId: string) => void;
   
   // Study session actions
   startStudySession: (deckId: string) => void;
@@ -67,8 +68,8 @@ export const useFlashcardStore = create<FlashcardState>()(
       initializeStoreWithMocks: () => {
         if (get().decks.length === 0 && get().flashcards.length === 0) {
           set({
-            decks: mockDecks,
-            flashcards: mockFlashcards,
+            decks: mockDecks.map(deck => ({...deck})), // Ensure clean copies
+            flashcards: mockFlashcards.map(card => ({...card, isBookmarked: card.isBookmarked || false })),
           });
           console.log('[FlashcardStore] Initialized with mock data.');
         }
@@ -117,7 +118,7 @@ export const useFlashcardStore = create<FlashcardState>()(
         set({ currentDeckId: deckId });
       },
       
-      addFlashcard: (cardData) => {
+      addFlashcard: (cardData: Omit<Flashcard, 'id' | 'createdAt' | 'updatedAt' | 'interval' | 'easeFactor' | 'repetitions' | 'dueDate' | 'lastReviewed'>) => {
         const id = `card-${Date.now()}`;
         const newCard: Flashcard = {
           ...cardData,
@@ -129,6 +130,7 @@ export const useFlashcardStore = create<FlashcardState>()(
           repetitions: 0,
           dueDate: Date.now(), // Due immediately
           lastReviewed: null,
+          isBookmarked: false, // Initialize isBookmarked
         };
         
         set(state => {
@@ -175,6 +177,15 @@ export const useFlashcardStore = create<FlashcardState>()(
             decks: updatedDecks
           };
         });
+      },
+      
+      toggleBookmark: (cardId: string) => {
+        set(produce((state: FlashcardState) => {
+          const card = state.flashcards.find(c => c.id === cardId);
+          if (card) {
+            card.isBookmarked = !card.isBookmarked;
+          }
+        }));
       },
       
       startStudySession: (deckId) => {
@@ -364,8 +375,16 @@ export const useFlashcardStore = create<FlashcardState>()(
   )
 );
 
-const unsub = useFlashcardStore.persist.onFinishHydration((state) => {
-  if (!state.decks || state.decks.length === 0) {
+const unsub = useFlashcardStore.persist.onFinishHydration((state: FlashcardState | undefined) => {
+  if (state) {
+    // Ensure all flashcards have isBookmarked initialized
+    const updatedFlashcards = state.flashcards.map(card => ({
+      ...card,
+      isBookmarked: card.isBookmarked || false,
+    }));
+    useFlashcardStore.setState({ flashcards: updatedFlashcards });
+  }
+  if (state && (!state.decks || state.decks.length === 0)) {
     console.log("[FlashcardStore] Persisted state is empty or has no decks. Initializing with mocks.");
     useFlashcardStore.getState().initializeStoreWithMocks();
   }

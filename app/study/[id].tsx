@@ -11,8 +11,9 @@ import {
   Platform
 } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import { useFlashcardStore } from "@/store/flashcard-store";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { X, RotateCw, Clock, ArrowLeft, ArrowRight, Maximize2 } from "lucide-react-native";
+import { X, RotateCw, Clock, ArrowLeft, ArrowRight, Maximize2, Bookmark } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useSharedValue,
@@ -26,7 +27,6 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import colors from "@/constants/colors";
-import { useFlashcardStore } from "@/store/flashcard-store";
 import { useUserStore } from "@/store/user-store";
 import { extractLatex } from "@/utils/latex-renderer";
 import { DifficultyRating } from "@/types";
@@ -36,9 +36,13 @@ const SCREEN_HEIGHT = Dimensions.get('window').height;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
 
 export default function StudySessionScreen() {
+  const toggleBookmark = useFlashcardStore(state => state.toggleBookmark);
   const { id } = useLocalSearchParams<{ id: string }>();
   console.log('[StudySessionScreen] Component execution start. ID:', id, 'Initial isSessionFinished from useState.', 'Timestamp:', new Date().toISOString());
   const router = useRouter();
+
+  // Subscribe to flashcards array to ensure re-render when a card's bookmark status changes
+  useFlashcardStore(state => state.flashcards);
   
   const decks = useFlashcardStore(state => state.decks);
   const getCurrentCard = useFlashcardStore(state => state.getCurrentCard);
@@ -184,6 +188,15 @@ export default function StudySessionScreen() {
       endStudySession();
     };
   }, []);
+
+  // Log current card's bookmark status when it changes
+  useEffect(() => {
+    if (currentCard) {
+      console.log(`[StudySessionScreen] Watched currentCard ID: ${currentCard.id}, isBookmarked: ${currentCard.isBookmarked}`);
+    } else {
+      console.log('[StudySessionScreen] Watched currentCard is null');
+    }
+  }, [currentCard?.isBookmarked, currentCard?.id]);
   
   // Reset image zoom/pan state when card changes
   useEffect(() => {
@@ -693,6 +706,19 @@ export default function StudySessionScreen() {
                 >
                   <Maximize2 size={22} color={colors.primary} />
                 </TouchableOpacity>
+
+                {/* Bookmark icon (placeholder) */}
+                <TouchableOpacity 
+                  style={styles.bookmarkButton}
+                  onPress={() => {
+                    if (currentCard) {
+                      toggleBookmark(currentCard.id);
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    }
+                  }}
+                >
+                  <Bookmark size={22} color={currentCard?.isBookmarked ? colors.primary : colors.gray[400]} fill={currentCard?.isBookmarked ? colors.primary : 'none'} />
+                </TouchableOpacity>
               </TouchableOpacity>
             </Animated.View>
           </GestureDetector>
@@ -921,9 +947,15 @@ const styles = StyleSheet.create({
   expandButton: {
     position: 'absolute',
     top: 12,
-    left: '50%',
-    transform: [{ translateX: -11 }], // Half of the icon size to center
+    left: 12, 
     padding: 6,
-    zIndex: 20, // Ensure it's above flip icon if they overlap
+    zIndex: 20,
+  },
+  bookmarkButton: {
+    position: 'absolute',
+    top: 12,
+    left: 46, // Positioned to the right of the expand icon (12 + 22 + 6 + 6)
+    padding: 6,
+    zIndex: 20,
   },
 });

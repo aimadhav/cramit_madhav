@@ -16,6 +16,7 @@ export interface Flashcard {
   repetitions: number; // Number of times reviewed
   dueDate: number; // Timestamp when card is due for review
   lastReviewed: number | null; // Timestamp of last review
+  isBookmarked?: boolean;
 }
 
 export interface Deck {

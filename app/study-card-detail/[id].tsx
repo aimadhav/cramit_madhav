@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Platform } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ArrowLeft, RotateCw } from "lucide-react-native";
+import { ArrowLeft, RotateCw, Bookmark } from "lucide-react-native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Image } from 'expo-image';
+import * as Haptics from 'expo-haptics';
 
 import colors from "@/constants/colors";
 import { useFlashcardStore } from "@/store/flashcard-store";
@@ -21,6 +22,7 @@ export default function StudyCardDetailScreen() {
   
   const flashcards = useFlashcardStore(state => state.flashcards);
   const card = flashcards.find(c => c.id === id);
+  const toggleBookmark = useFlashcardStore(state => state.toggleBookmark);
   
   const [showBack, setShowBack] = useState(false);
   
@@ -124,7 +126,23 @@ export default function StudyCardDetailScreen() {
               <ArrowLeft size={24} color={colors.primary} />
             </TouchableOpacity>
           ),
-          headerRight: () => null, // No edit/delete buttons
+          headerRight: () => (
+            <TouchableOpacity 
+              onPress={() => {
+                if (card) {
+                  toggleBookmark(card.id);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                }
+              }}
+              style={{ marginRight: Platform.OS === 'ios' ? 16 : 10 }}
+            >
+              <Bookmark 
+                size={24} 
+                color={card?.isBookmarked ? colors.primary : colors.gray[600]} 
+                fill={card?.isBookmarked ? colors.primary : 'none'} 
+              />
+            </TouchableOpacity>
+          ),
         }}
       />
       
