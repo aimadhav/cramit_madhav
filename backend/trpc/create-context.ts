@@ -1,7 +1,7 @@
 import { FetchCreateContextFnOptions } from "@trpc/server/adapters/fetch";
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, User as PrismaAppUser } from "@prisma/client";
 import { createClient, SupabaseClient, User as SupabaseUser } from "@supabase/supabase-js";
 
 // Initialize Prisma Client (global instance)
@@ -43,7 +43,8 @@ export type Context = {
   req: FetchCreateContextFnOptions["req"];
   prisma: PrismaClient;
   supabase: SupabaseClient;
-  user: SupabaseUser | null;
+  supabaseUser: SupabaseUser | null;
+  prismaUser: PrismaAppUser | null;
   timestamp: number;
 };
 
@@ -58,12 +59,25 @@ export const createContext = async (opts: FetchCreateContextFnOptions): Promise<
     },
   });
 
-  const user = await getUserFromHeader(opts.req, supabase);
+  const supabaseUser = await getUserFromHeader(opts.req, supabase);
   const timestamp = Date.now();
+
+  let prismaUser: PrismaAppUser | null = null;
+  if (supabaseUser) {
+    // If a Supabase user is authenticated, try to fetch the corresponding Prisma user
+    prismaUser = await prisma.user.findUnique({
+      where: { id: supabaseUser.id }, // Assuming Supabase user ID matches Prisma user ID
+                                    // If your email is the unique link, use:
+                                    // where: { email: supabaseUser.email },
+    });
+    // Optionally, handle case where Supabase user exists but Prisma user doesn't
+    // This might happen if user signed up via Supabase but local profile creation failed/pending
+    // For now, prismaUser will be null and protected routes might deny access if they expect a full prismaUser
+  }
 
   // Note: __manuallyParsedInput is added by the wrapper in [trpc]+api.ts
   // So the object returned here doesn't strictly need it, but the type Context does.
-  return { req: opts.req, prisma, supabase, user, timestamp };
+  return { req: opts.req, prisma, supabase, supabaseUser, prismaUser, timestamp };
 };
 
 // Initialize tRPC
@@ -92,17 +106,25 @@ export const publicProcedure = t.procedure;
 
 // Middleware for protected routes
 const isAuthenticated = t.middleware(async ({ ctx, next }) => {
-  if (!ctx.user) {
+  if (!ctx.supabaseUser) {
     throw new TRPCError({
       code: "UNAUTHORIZED",
-      message: "Not authenticated",
+      message: "Not authenticated with Supabase.",
     });
   }
+
+  if (!ctx.prismaUser) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "User profile not found in application database.",
+    });
+  }
+
   return next({
     ctx: {
-      // Pass down context, ensuring `user` is typed as non-null for protected procedures
       ...ctx,
-      user: ctx.user, // TypeScript now knows user is not null here
+      supabaseUser: ctx.supabaseUser,
+      prismaUser: ctx.prismaUser,
     },
   });
 });

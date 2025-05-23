@@ -5,7 +5,10 @@
   "scripts": {
     "start": "expo start --tunnel",
     "start-web": "expo start --web --tunnel",
-    "start-web-dev": "DEBUG=expo* expo start --web --tunnel"
+    "start-web-dev": "DEBUG=expo* expo start --web --tunnel",
+    "test": "NODE_ENV=test vitest run",
+    "test:watch": "NODE_ENV=test vitest",
+    "coverage": "NODE_ENV=test vitest run --coverage"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
@@ -59,9 +62,12 @@
     "@babel/core": "^7.25.2",
     "@expo/ngrok": "^4.1.0",
     "@types/react": "~19.0.10",
+    "@vitest/coverage-v8": "^3.1.4",
     "next": "^15.1.8",
     "prisma": "^6.8.2",
-    "typescript": "~5.8.3"
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.4"
   },
   "private": true
 }

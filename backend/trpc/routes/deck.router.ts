@@ -17,15 +17,26 @@ export const deckRouter = createTRPCRouter({
       const limit = input?.limit ?? 10;
       const { cursor, tags, subject } = input ?? {};
       
+      const whereClause: Prisma.DeckWhereInput = {
+        isPublic: true, // Ensure only public decks are listed
+        AND: [],
+      };
+
+      if (tags && tags.length > 0) {
+        (whereClause.AND as Prisma.DeckWhereInput[]).push({ tags: { hasSome: tags } });
+      }
+      if (subject) {
+        (whereClause.AND as Prisma.DeckWhereInput[]).push({ subject: { contains: subject, mode: 'insensitive' } });
+      }
+      // If AND array is empty, it can be omitted, Prisma handles it.
+      if ((whereClause.AND as Prisma.DeckWhereInput[]).length === 0) {
+        delete whereClause.AND;
+      }
+
       return ctx.prisma.deck.findMany({
         take: limit + 1, 
         cursor: cursor ? { id: cursor } : undefined,
-        where: {
-          AND: [
-            tags ? { tags: { hasSome: tags } } : {},
-            subject ? { subject: { contains: subject, mode: 'insensitive' } } : {},
-          ],
-        },
+        where: whereClause,
         orderBy: {
           createdAt: 'desc',
         },
@@ -166,5 +177,84 @@ export const deckRouter = createTRPCRouter({
         where: { id: input.id },
       });
       return { success: true, message: 'Deck deleted successfully' };
+    }),
+
+  studyPublicDeck: protectedProcedure
+    .input(z.object({ deckId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const { deckId } = input;
+
+      // 1. Find the public deck and include its flashcards
+      const publicDeck = await ctx.prisma.deck.findFirst({
+        where: {
+          id: deckId,
+          isPublic: true,
+        },
+        include: {
+          flashcards: { // Select only flashcard IDs to avoid overfetching
+            select: { id: true }
+          },
+        },
+      });
+
+      if (!publicDeck) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `Public deck with ID ${deckId} not found.`,
+        });
+      }
+
+      if (publicDeck.flashcards.length === 0) {
+        // Optional: Handle case where public deck has no flashcards
+        // Could return a specific message or just proceed (will result in 0 statuses created)
+        // For now, we just proceed.
+      }
+
+      // 2. Create UserFlashcardStatus entries for each flashcard in the public deck for the current user
+      //    Use upsert to avoid issues if the user already has a status for some of these cards
+      //    (e.g., if they are re-adding a deck or had partial progress).
+      //    The `create` part will use default SRS values.
+      //    The `update` part here is empty, meaning if they already have a status, we don't change it.
+      //    You could modify `update` to reset progress if desired when re-adding.
+      try {
+        await ctx.prisma.$transaction(
+          publicDeck.flashcards.map((flashcard) =>
+            ctx.prisma.userFlashcardStatus.upsert({
+              where: {
+                userId_flashcardId: {
+                  userId: userId,
+                  flashcardId: flashcard.id,
+                },
+              },
+              create: {
+                userId: userId,
+                flashcardId: flashcard.id,
+                // SRS fields like interval, dueDate, etc., will get their default values from the schema
+              },
+              update: { 
+                // If you want to reset progress when re-adding, you could set:
+                // isDeleted: false, // Un-delete if it was soft-deleted
+                // dueDate: new Date(), // Reset due date
+                // interval: 1, // Reset interval
+                // easeFactor: 2.5, // Reset ease factor
+                // repetitions: 0, // Reset repetitions
+                // isLearned: false, // Reset learned status
+                // lastReviewed: null // Reset last reviewed
+                // For now, we leave update empty to preserve existing progress if any.
+                isDeleted: false, // Ensure it's not marked as deleted if user is re-adding
+              },
+            })
+          )
+        );
+        return { success: true, message: `Deck "${publicDeck.name}" added to your study list.` };
+      } catch (error) {
+        console.error("Error adding public deck to user study list:", error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Could not add deck to your study list. Please try again.',
+          cause: error,
+        });
+      }
     }),
 });

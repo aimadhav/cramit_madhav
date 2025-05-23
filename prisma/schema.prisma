@@ -17,6 +17,7 @@ model User {
   name      String?  // Added from your types/index.ts
   phone     String?  // Added from your types/index.ts
   isPremium Boolean  @default(false) // Added from your types/index.ts
+  isAdmin   Boolean  @default(false) // For Admin Panel access control
   // studyStatsJson String? // For storing studyStats as a JSON string if not modeling separately. 
                           // Or create a separate StudyStats model linked to User.
   createdAt DateTime @default(now())
@@ -31,6 +32,7 @@ model Deck {
   description String?
   tags        String[]  @default([]) // Added from your types/index.ts
   isPremium   Boolean   @default(false) // Added from your types/index.ts
+  isPublic    Boolean   @default(false) // For sharing decks
   price       Float?    // Added from your types/index.ts
   coverImage  String?   // Added from your types/index.ts
   subject     String?   // Added from your types/index.ts
@@ -41,6 +43,8 @@ model Deck {
   userId      String    // Foreign key to link to the User
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   flashcards  Flashcard[]
+
+  @@index([isPublic]) // Index for isPublic field
 }
 
 model Flashcard {
