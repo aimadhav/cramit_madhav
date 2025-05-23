@@ -1,72 +1,97 @@
-import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { useFonts } from "expo-font";
-import { Stack } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
-import { Platform } from "react-native";
-import { ErrorBoundary } from "./error-boundary";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { trpc, trpcClient } from "@/lib/trpc";
+import { useFonts } from 'expo-font';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { useEffect, useState } from 'react';
+import 'react-native-reanimated';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
-  initialRouteName: "(tabs)",
-};
+// Ensure no useColorScheme references remain
+import { trpc, trpcClient } from '../utils/trpc';
+import { useUserStore } from '../store/user-store';
 
-// Create a client with default options
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 2,
-      staleTime: 5 * 60 * 1000, // 5 minutes
-    },
-  },
-});
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
+
+const queryClient = new QueryClient();
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
-    ...FontAwesome.font,
+    // SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'), // Commented out for now
+    // Add other fonts here if you have them
   });
+  const { checkAuthStatus } = useUserStore.getState();
+  const [isAuthChecked, setIsAuthChecked] = useState(false);
 
   useEffect(() => {
-    if (error) {
-      console.error(error);
-      throw error;
-    }
+    if (error) throw error;
   }, [error]);
 
   useEffect(() => {
-    if (loaded) {
+    async function prepareAuth() {
+      try {
+        await checkAuthStatus();
+      } catch (e) {
+        console.error("Auth check failed during prepareAuth:", e);
+      } finally {
+        setIsAuthChecked(true);
+      }
+    }
+    prepareAuth();
+  }, [checkAuthStatus]);
+
+  useEffect(() => {
+    // If SpaceMono or other critical fonts were loaded, 'loaded' would gate this.
+    // Since we commented out SpaceMono, we might need to adjust logic if no fonts are loaded.
+    // For now, assuming 'loaded' becomes true even with an empty fonts object or if other fonts exist.
+    // If 'useFonts' with an empty object makes 'loaded' false, this needs adjustment.
+    // However, typical behavior is 'loaded' becomes true quickly if the object is empty.
+    if (loaded && isAuthChecked) { 
       SplashScreen.hideAsync();
     }
-  }, [loaded]);
+  }, [loaded, isAuthChecked]);
 
-  if (!loaded) {
+  // If no fonts are being loaded, 'loaded' might be true immediately.
+  // So, the splash screen might hide very quickly or before auth check is done.
+  // Consider if !isAuthChecked should be enough to show null if no fonts are critical for initial render.
+  if (!isAuthChecked) { // Changed: primarily wait for auth check if fonts are not critical or empty
     return null;
   }
+  // If you add fonts back, revert to: if (!loaded || !isAuthChecked)
 
-  return (
-    <ErrorBoundary>
-      <trpc.Provider client={trpcClient} queryClient={queryClient}>
-        <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView style={{ flex: 1 }}>
-            <RootLayoutNav />
-          </GestureHandlerRootView>
-        </QueryClientProvider>
-      </trpc.Provider>
-    </ErrorBoundary>
-  );
+  return <RootLayoutNav />;
 }
 
 function RootLayoutNav() {
+  const segments = useSegments();
+  const router = useRouter();
+  const sessionToken = useUserStore((state) => state.sessionToken);
+  const isLoadingAuth = useUserStore((state) => state.isLoading);
+
+  useEffect(() => {
+    if (isLoadingAuth) {
+      return;
+    }
+
+    const inAuthGroup = segments[0] === '(auth)';
+
+    if (!sessionToken && !inAuthGroup) {
+      router.replace('/(auth)/login');
+    } else if (sessionToken && inAuthGroup) {
+      router.replace('/(tabs)');
+    }
+  }, [sessionToken, segments, router, isLoadingAuth]);
+
   return (
-    <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="modal" options={{ presentation: "modal" }} />
-    </Stack>
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <Stack>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+          </Stack>
+        </GestureHandlerRootView>
+      </QueryClientProvider>
+    </trpc.Provider>
   );
 }

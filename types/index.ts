@@ -51,6 +51,7 @@ export interface User {
   isLoggedIn: boolean;
   isPremium: boolean;
   createdAt: number;
+  updatedAt: number;
   studyStats: {
     totalCardsStudied: number;
     totalTimeStudied: number; // in minutes

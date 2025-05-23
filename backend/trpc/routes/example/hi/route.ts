@@ -7,9 +7,9 @@ export const hiProcedure = publicProcedure
       name: z.string().min(1).default("World"),
     })
   )
-  .query(({ input, ctx }) => {
+  .query(({ input, ctx }) => { 
     return {
-      greeting: `Hello ${input.name}!`,
+      greeting: `Hello ${input.name}!`, 
       date: new Date(),
       timestamp: ctx.timestamp,
     };
