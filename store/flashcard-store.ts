@@ -6,6 +6,7 @@ import { mockFlashcards } from '@/mocks/flashcards';
 import { mockDecks } from '@/mocks/decks';
 import { calculateNextReview, getDueCards } from '@/utils/spaced-repetition';
 import { produce } from 'immer';
+import { trpcClient } from '@/lib/trpc';
 
 // Temporary store for the current session's card queue (IDs)
 let currentSessionCardQueue: string[] = [];
@@ -20,7 +21,7 @@ interface FlashcardState {
   sessionJustCompletedDeckId: string | null; // New state
   
   // Deck actions
-  addDeck: (deck: Omit<Deck, 'id' | 'createdAt' | 'updatedAt' | 'cardCount'>) => string;
+  addDeck: (deck: Omit<Deck, 'id' | 'createdAt' | 'updatedAt' | 'cardCount' | 'userId' | 'isPublic'>) => Promise<string>;
   updateDeck: (id: string, deckData: Partial<Deck>) => void;
   deleteDeck: (id: string) => void;
   setCurrentDeck: (deckId: string | null) => void;
@@ -79,28 +80,58 @@ export const useFlashcardStore = create<FlashcardState>()(
         set({ decks, flashcards });
       },
       
-      addDeck: (deckData) => {
-        const id = `deck-${Date.now()}`;
-        const newDeck: Deck = {
-          ...deckData,
-          id,
-          cardCount: 0,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        
-        set(state => ({
-          decks: [...state.decks, newDeck]
-        }));
-        
-        return id;
+      addDeck: async (deckData: Omit<Deck, 'id' | 'createdAt' | 'updatedAt' | 'cardCount' | 'userId' | 'isPublic'>) => {
+        try {
+          set({ isLoading: true, error: null });
+
+          const payload = {
+            name: deckData.name,
+            description: deckData.description === null ? undefined : deckData.description,
+            tags: deckData.tags,
+            isPremium: deckData.isPremium,
+            price: deckData.price === null ? undefined : deckData.price,
+            coverImage: deckData.coverImage === null ? undefined : deckData.coverImage,
+            subject: deckData.subject === null ? undefined : deckData.subject,
+            chapter: deckData.chapter === null ? undefined : deckData.chapter,
+          };
+
+          const newDeckFromBackend = await trpcClient.deck.create.mutate(payload);
+          console.log('[FlashcardStore] addDeck - newDeckFromBackend received:', JSON.stringify(newDeckFromBackend));
+
+          // Backend returns dates as strings without superjson.
+          // Frontend Deck type expects dates as strings.
+          // cardCount is not returned by create, initialize to 0.
+          const newDeckWithType: Deck = {
+            ...(newDeckFromBackend as Omit<Deck, 'cardCount' | 'createdAt' | 'updatedAt'> & { createdAt: string; updatedAt: string }),
+            cardCount: 0,
+            // Ensure createdAt and updatedAt are strings, which they should be from the backend
+            createdAt: String(newDeckFromBackend.createdAt),
+            updatedAt: String(newDeckFromBackend.updatedAt),
+          };
+          console.log('[FlashcardStore] addDeck - newDeckWithType created:', JSON.stringify(newDeckWithType));
+
+          set(state => ({
+            decks: [...state.decks, newDeckWithType],
+            isLoading: false,
+          }));
+          console.log('[FlashcardStore] addDeck - Returning newDeck ID:', newDeckWithType.id);
+          return newDeckWithType.id;
+        } catch (err: any) {
+          console.error("Error adding deck:", err);
+          set({ isLoading: false, error: err.message || 'Failed to add deck' });
+          // Consider how you want to handle the return value in case of an error
+          // Returning an empty string or throwing the error are options.
+          // For now, let's indicate failure by returning a specific value or re-throwing.
+          // throw err; // Option 1: re-throw to be caught by UI
+          return ""; // Option 2: return an empty string to indicate failure
+        }
       },
       
       updateDeck: (id, deckData) => {
         set(state => ({
           decks: state.decks.map(deck => 
             deck.id === id 
-              ? { ...deck, ...deckData, updatedAt: Date.now() } 
+              ? { ...deck, ...deckData, updatedAt: new Date().toISOString() }
               : deck
           )
         }));
@@ -128,16 +159,15 @@ export const useFlashcardStore = create<FlashcardState>()(
           interval: 1,
           easeFactor: 2.5,
           repetitions: 0,
-          dueDate: Date.now(), // Due immediately
+          dueDate: Date.now(),
           lastReviewed: null,
-          isBookmarked: false, // Initialize isBookmarked
+          isBookmarked: false,
         };
         
         set(state => {
-          // Update the card count in the deck
           const updatedDecks = state.decks.map(deck => 
             deck.id === cardData.deckId 
-              ? { ...deck, cardCount: deck.cardCount + 1, updatedAt: Date.now() } 
+              ? { ...deck, cardCount: deck.cardCount + 1, updatedAt: new Date().toISOString() }
               : deck
           );
           
@@ -165,10 +195,9 @@ export const useFlashcardStore = create<FlashcardState>()(
           const cardToDelete = state.flashcards.find(card => card.id === id);
           if (!cardToDelete) return state;
           
-          // Update the card count in the deck
           const updatedDecks = state.decks.map(deck => 
             deck.id === cardToDelete.deckId 
-              ? { ...deck, cardCount: Math.max(0, deck.cardCount - 1), updatedAt: Date.now() } 
+              ? { ...deck, cardCount: Math.max(0, deck.cardCount - 1), updatedAt: new Date().toISOString() }
               : deck
           );
           

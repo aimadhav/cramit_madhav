@@ -5,7 +5,12 @@ export default defineConfig({
     globals: true, // Use Jest-compatible globals (describe, it, expect, etc.)
     environment: 'node', // Or 'jsdom' if you were testing frontend components
     include: ['**/*.test.ts'], // Pattern to find test files
-    // setupFiles: ['./path/to/your/test-setup.ts'], // We can add this later for Prisma client setup
+    setupFiles: ['./tests/vitest.setup.ts'], // We can add this later for Prisma client setup
+    poolOptions: { // Added for sequential execution
+      threads: {
+        singleThread: true,
+      },
+    },
     // reporters: ['default', 'html'], // Optional: for HTML reports
     coverage: {
       provider: 'v8', // or 'istanbul'

@@ -233,22 +233,19 @@ export const flashcardRouter = createTRPCRouter({
       }
 
       let userStatus: any | undefined = undefined; // Define userStatus outside
-      if (ctx.user && card) {
+      if (ctx.user) {
+        // If user is authenticated, try to fetch their specific status for this card
+        console.log(`[RouterLog] getById: Attempting to find UserFlashcardStatus for userId: ${ctx.user.id}, flashcardId: ${card.id}, isDeleted: false`);
         userStatus = await ctx.prisma.userFlashcardStatus.findUnique({
           where: {
-            userId_flashcardId: {
-              userId: ctx.user.id,
-              flashcardId: card.id,
-            },
-            isDeleted: false, // Only include non-deleted status
+            userId_flashcardId: { userId: ctx.user.id, flashcardId: card.id },
+            isDeleted: false, // Ensure we only get active statuses
           },
         });
+        console.log(`[RouterLog] getById: Found UserFlashcardStatus:`, JSON.stringify(userStatus));
       }
 
-      return {
-        ...card,
-        userStatus: userStatus, // Will be undefined if no status found or user not logged in
-      };
+      return { ...card, userStatus: userStatus || undefined };
     }),
 
   getDueFlashcardsForUser: protectedProcedure
@@ -328,24 +325,29 @@ export const flashcardRouter = createTRPCRouter({
       } else if (originalFlashcard.deck.isPublic) {
         // Card is from a public deck not owned by the user - trigger copy-on-edit
         
-        // 1. Get existing UserFlashcardStatus for the original card (to copy SRS data)
+        // 1. Get existing UserFlashcardStatus for the original card (to potentially copy SRS data)
         const existingStatus = await ctx.prisma.userFlashcardStatus.findUnique({
-          where: { userId_flashcardId: { userId, flashcardId } },
+          where: { userId_flashcardId: { userId, flashcardId }, isDeleted: false }, // Only consider active statuses
         });
 
-        if (!existingStatus || existingStatus.isDeleted) {
-          throw new TRPCError({
-            code: 'PRECONDITION_FAILED',
-            message: 'You must be actively studying this public flashcard to copy and edit it.',
+        // If targetDeckId is provided, verify ownership first, regardless of existingStatus
+        if (targetDeckId) {
+          const userOwnsTargetDeck = await ctx.prisma.deck.findFirst({
+            where: { id: targetDeckId, userId },
           });
+          if (!userOwnsTargetDeck) {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message: 'Target deck not found or not owned by user.', // Corrected message based on test
+            });
+          }
         }
 
         return ctx.prisma.$transaction(async (prisma) => {
           // 2. Determine target deck for the new copy
           let finalTargetDeckId = targetDeckId;
           if (!finalTargetDeckId) {
-            // Create a new deck "Original Deck Name (My Copy)"
-            const personalCopyDeckName = `${originalFlashcard.deck.name} (My Copy)`;
+            const personalCopyDeckName = `Personal Copy of ${originalFlashcard.deck.name}`;
             let personalDeck = await prisma.deck.findFirst({
               where: { userId, name: personalCopyDeckName },
             });
@@ -355,26 +357,14 @@ export const flashcardRouter = createTRPCRouter({
                   userId,
                   name: personalCopyDeckName,
                   description: `Personal copy of the public deck: ${originalFlashcard.deck.name}`,
-                  isPublic: false, // Personal copy is private by default
-                  // Copy other relevant fields from originalFlashcard.deck if desired
+                  isPublic: false,
                 },
               });
             }
             finalTargetDeckId = personalDeck.id;
-          } else {
-            // Verify user owns the explicitly provided targetDeckId
-            const userOwnsTargetDeck = await prisma.deck.findFirst({
-              where: { id: finalTargetDeckId, userId },
-            });
-            if (!userOwnsTargetDeck) {
-              throw new TRPCError({
-                code: 'FORBIDDEN',
-                message: 'You can only copy to a deck you own.',
-              });
-            }
-          }
+          } 
+          // No else needed here for targetDeckId ownership, already checked above
           
-          // 3. Create the new (copied) flashcard with updated content
           const newCopiedFlashcard = await prisma.flashcard.create({
             data: {
               front: updateData.front ?? originalFlashcard.front,
@@ -382,31 +372,38 @@ export const flashcardRouter = createTRPCRouter({
               contentType: updateData.contentType ?? originalFlashcard.contentType,
               mediaUrls: updateData.mediaUrls ?? originalFlashcard.mediaUrls,
               tags: updateData.tags ?? originalFlashcard.tags,
-              deckId: finalTargetDeckId,
+              deckId: finalTargetDeckId!,
             },
           });
 
-          // 4. Create new UserFlashcardStatus for the copied card, migrating SRS fields
-          const newStatus = await prisma.userFlashcardStatus.create({
-            data: {
-              userId,
-              flashcardId: newCopiedFlashcard.id,
-              interval: existingStatus.interval,
-              easeFactor: existingStatus.easeFactor,
-              repetitions: existingStatus.repetitions,
-              dueDate: existingStatus.dueDate, // Or new Date() if you want to reset due date
-              lastReviewed: existingStatus.lastReviewed,
-              isBookmarked: existingStatus.isBookmarked,
-              isLearned: existingStatus.isLearned, // Or false if you want to reset learning status
-              isDeleted: false, 
-            },
-          });
+          // 4. Create new UserFlashcardStatus for the copied card.
+          // If user was actively studying original, copy SRS data. Otherwise, new default status.
+          const newStatusData: any = {
+            userId,
+            flashcardId: newCopiedFlashcard.id,
+            isDeleted: false,
+          };
 
-          // 5. Soft delete the old UserFlashcardStatus for the original public card
-          await prisma.userFlashcardStatus.update({
-            where: { id: existingStatus.id },
-            data: { isDeleted: true }, 
-          });
+          if (existingStatus) { // User was actively studying the original card
+            newStatusData.interval = existingStatus.interval;
+            newStatusData.easeFactor = existingStatus.easeFactor;
+            newStatusData.repetitions = existingStatus.repetitions;
+            newStatusData.dueDate = existingStatus.dueDate; 
+            newStatusData.lastReviewed = existingStatus.lastReviewed;
+            newStatusData.isBookmarked = existingStatus.isBookmarked;
+            newStatusData.isLearned = existingStatus.isLearned;
+          }
+          // If no existingStatus, fields will take default values from Prisma schema.
+
+          const newStatus = await prisma.userFlashcardStatus.create({ data: newStatusData });
+
+          // 5. Soft delete the old UserFlashcardStatus for the original public card IF it existed
+          if (existingStatus) {
+            await prisma.userFlashcardStatus.update({
+              where: { id: existingStatus.id },
+              data: { isDeleted: true }, 
+            });
+          }
 
           return { ...newCopiedFlashcard, userStatus: newStatus };
         });

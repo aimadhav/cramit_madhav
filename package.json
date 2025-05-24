@@ -3,12 +3,20 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
-    "start": "expo start --tunnel",
+    "ts:check": "tsc",
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "test:watch": "cross-env NODE_ENV=test vitest",
+    "test": "cross-env NODE_ENV=test vitest run --no-file-parallelism",
+    "test:ui": "cross-env NODE_ENV=test vitest --ui",
     "start-web": "expo start --web --tunnel",
     "start-web-dev": "DEBUG=expo* expo start --web --tunnel",
-    "test": "NODE_ENV=test vitest run",
-    "test:watch": "NODE_ENV=test vitest",
-    "coverage": "NODE_ENV=test vitest run --coverage"
+    "coverage": "cross-env NODE_ENV=test vitest run --coverage"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
@@ -63,6 +71,8 @@
     "@expo/ngrok": "^4.1.0",
     "@types/react": "~19.0.10",
     "@vitest/coverage-v8": "^3.1.4",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.5.0",
     "next": "^15.1.8",
     "prisma": "^6.8.2",
     "typescript": "~5.8.3",

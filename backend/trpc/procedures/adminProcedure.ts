@@ -13,7 +13,7 @@ export const adminProcedure = protectedProcedure.use(async (opts) => {
   // We also know from schema changes that prismaUser has an `isAdmin` property.
   if (!ctx.prismaUser.isAdmin) {
     throw new TRPCError({
-      code: 'UNAUTHORIZED',
+      code: 'FORBIDDEN',
       message: 'Administrator access required. You do not have permission to perform this action.',
     });
   }

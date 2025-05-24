@@ -14,6 +14,13 @@ export const adminRouter = createTRPCRouter({
     return users;
   }),
 
+  /**
+   * Simple procedure to test adminProcedure authorization.
+   */
+  pingAdmin: adminProcedure.query(() => {
+    return "pong from admin";
+  }),
+
   // Deck Management
   adminCreateDeck: adminProcedure
     .input(

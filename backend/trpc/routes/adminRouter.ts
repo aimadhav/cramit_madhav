@@ -161,4 +161,115 @@ export const adminRouter = createTRPCRouter({
     }),
   
   // TODO: Add more admin procedures as needed
-}); 
+
+  /**
+   * Lists all users in the system.
+   * Supports pagination.
+   */
+  listUsers: adminProcedure
+    .input(z.object({
+      limit: z.number().min(1).max(100).nullish(),
+      cursor: z.string().nullish(), // Assuming User ID is a string
+      // Add other filters if needed, e.g., filter by email, name, isAdmin status
+      filterIsAdmin: z.boolean().optional(),
+    }).optional())
+    .query(async ({ ctx, input }) => {
+      const limit = input?.limit ?? 20;
+      const { cursor, filterIsAdmin } = input ?? {};
+
+      try {
+        const users = await ctx.prisma.user.findMany({
+          take: limit + 1,
+          cursor: cursor ? { id: cursor } : undefined,
+          where: {
+            ...(filterIsAdmin !== undefined && { isAdmin: filterIsAdmin }),
+          },
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            isAdmin: true,
+            createdAt: true,
+            updatedAt: true,
+            // Avoid selecting sensitive fields like passwordHash if it exists
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        let nextCursor: typeof cursor | undefined = undefined;
+        if (users.length > limit) {
+          const nextItem = users.pop();
+          nextCursor = nextItem!.id;
+        }
+        return {
+          users,
+          nextCursor,
+        };
+      } catch (error) {
+        console.error("Admin List Users Error:", error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Failed to list users.',
+          cause: error instanceof Error ? error : undefined,
+        });
+      }
+    }),
+
+  /**
+   * Sets the admin status for a specific user.
+   */
+  setUserAdminStatus: adminProcedure
+    .input(z.object({
+      userId: z.string(),
+      isAdmin: z.boolean(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { userId, isAdmin } = input;
+
+      // Basic check: Prevent admin from removing their own admin status if they are the one making the call.
+      // A more robust solution would check if they are the *only* admin.
+      if (ctx.prismaUser.id === userId && !isAdmin) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Admin cannot remove their own admin status through this endpoint.',
+        });
+      }
+
+      try {
+        const userToUpdate = await ctx.prisma.user.findUnique({
+          where: { id: userId },
+        });
+
+        if (!userToUpdate) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: `User with ID '${userId}' not found.`,
+          });
+        }
+
+        return await ctx.prisma.user.update({
+          where: { id: userId },
+          data: { isAdmin },
+          select: { // Return minimal, relevant data
+            id: true,
+            email: true,
+            isAdmin: true,
+          }
+        });
+      } catch (error) {
+        console.error("Admin Set User Admin Status Error:", error);
+        if (error instanceof TRPCError) throw error; // Re-throw TRPCError directly
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+             throw new TRPCError({
+                code: 'NOT_FOUND',
+                message: `User with ID '${userId}' not found (P2025).`,
+            });
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Failed to update user admin status.',
+          cause: error instanceof Error ? error : undefined,
+        });
+      }
+    }),
+});

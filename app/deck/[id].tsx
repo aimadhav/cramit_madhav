@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Alert, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -30,7 +30,19 @@ export default function DeckDetailScreen() {
   
   const user = useUserStore(state => state.user);
   
+  // Log initial values
+  console.log('[DeckDetailScreen] Component rendered. Received id via params:', id);
+  console.log('[DeckDetailScreen] Current decks array length from store:', decks.length);
+
   const deck = decks.find(d => d.id === id);
+  console.log('[DeckDetailScreen] Result of decks.find(d => d.id === id) initially:', deck ? deck.id : 'undefined');
+
+  // Optional: Add a useEffect to log if deck changes, to see if it populates later
+  useEffect(() => {
+    const foundDeck = decks.find(d => d.id === id);
+    console.log('[DeckDetailScreen] useEffect on [id, decks] triggered. Deck found in useEffect:', foundDeck ? foundDeck.id : 'undefined');
+  }, [id, decks]); // Rerun when id or decks array changes
+
   const flashcards = getFlashcardsForDeck(id);
   const dueCards = getDueFlashcardsForDeck(id);
   
@@ -127,7 +139,7 @@ export default function DeckDetailScreen() {
       <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
         <View style={styles.coverImageContainer}>
           <Image 
-            source={{ uri: deck.coverImage }} 
+            source={{ uri: deck.coverImage || undefined }}
             style={styles.coverImage}
           />
           <View style={styles.coverOverlay}>

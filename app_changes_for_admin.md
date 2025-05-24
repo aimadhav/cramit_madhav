@@ -128,6 +128,43 @@ These backend changes provide the necessary API endpoints and security model for
 
 After implementing these backend modifications, it is crucial to conduct thorough testing:
 - **Integration Tests:** Write integration tests for all new procedures in `adminRouter.ts` and for the `adminProcedure` itself. This involves setting up a test database, creating test data (admin users, non-admin users, sample decks/flashcards), and using a tRPC client to call the procedures and verify their behavior, including authorization checks and database interactions.
+    - **Status (2025-05-24):** Initial setup for integration testing using Vitest is complete. This includes a test database (`cramit_test`), Prisma client configuration for tests, and a test file (`backend/trpc/routers/adminRouter.test.ts`) with `beforeAll`/`beforeEach`/`afterAll` hooks for data seeding/cleanup and a `createCallerForTest` helper. Development of specific tests for `adminRouter` procedures is actively in progress.
 - **Manual Testing (Optional but Recommended):** Use a tool like Postman or a simple client script to manually call your new admin endpoints to verify they behave as expected with various inputs and authentication states.
 
 *Refer to Section 7 of `admin_panel_guide.md` for a detailed guide on testing the admin backend API.* 
+
+## Current Status of Admin Panel Backend
+
+*   **`User` Model:** `isAdmin` field added and migrated.
+*   **`Context`:** Updated to include `prismaUser` and properly fetch it.
+*   **`adminProcedure.ts`:** Created and functional, ensuring only admins can access.
+*   **`adminRouter.ts`:** All planned CRUD operations for Users, Decks, and Flashcards by admin are implemented.
+    *   `pingAdmin` (for testing auth)
+    *   `listUsers`
+    *   `adminCreateDeck`
+    *   `adminUpdateDeck`
+    *   `adminDeleteDeck`
+    *   `adminListDecks` (with pagination and filtering)
+    *   `adminCreateFlashcard`
+    *   `adminUpdateFlashcard`
+    *   `adminDeleteFlashcard`
+
+*   **Testing (`adminRouter.test.ts`):**
+    *   **Status: ALL PASSING (45/45 tests).**
+    *   Comprehensive tests cover:
+        *   Admin access success for all procedures.
+        *   Non-admin access denied (FORBIDDEN).
+        *   Unauthenticated access denied (UNAUTHORIZED).
+        *   Correct data manipulation and retrieval, including pagination and filtering for `adminListDecks`.
+        *   Proper error handling for operations on non-existent records.
+    *   The test setup utilizes a shared, lazy-initialized Prisma client with a reset mechanism (`_TEST_ONLY_disconnectAndResetPrismaClient`) for each test file (`beforeAll`/`afterAll`).
+    *   Data seeding and cleanup for test cases are handled in `beforeEach`/`afterEach` hooks.
+    *   Tests are run sequentially. This is now configured by default in `vitest.config.ts` (`poolOptions: { threads: { singleThread: true } }`), so no special CLI flags are needed for `npm run test`.
+    *   Supabase auth is mocked via `tests/testUtils.ts` to simulate admin and non-admin users.
+    *   Diagnostic console logs added during troubleshooting have been removed.
+
+## Next Steps for Admin Panel Backend
+
+*   The `adminRouter` and its testing setup are stable and complete.
+*   Focus shifts to completing test coverage for other user-facing routers like `flashcardRouter.ts` and `deckRouter.ts`.
+*   Ensure all shared testing utilities (`tests/testUtils.ts`, `backend/prisma/client.ts`) and configurations (`vitest.config.ts`) continue to support the broader test suite effectively. 

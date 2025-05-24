@@ -52,7 +52,7 @@ export default function CreateDeckScreen() {
     setTags(tags.filter(tag => tag !== tagToRemove));
   };
   
-  const handleCreateDeck = () => {
+  const handleCreateDeck = async () => {
     if (!name.trim()) {
       Alert.alert("Error", "Please enter a deck name");
       return;
@@ -99,7 +99,7 @@ export default function CreateDeckScreen() {
       defaultCoverImage = "https://images.unsplash.com/photo-1581093458791-9f3c3ae93ef1"; 
     }
     
-    const deckId = addDeck({
+    const newDeckId = await addDeck({
       name: name.trim(),
       description: description.trim() || "No description provided",
       tags: tags.length > 0 ? tags : ["uncategorized"],
@@ -109,16 +109,20 @@ export default function CreateDeckScreen() {
       chapter: chapter.trim(),
     });
     
-    Alert.alert(
-      "Success",
-      "Deck created successfully!",
-      [
-        {
-          text: "OK",
-          onPress: () => router.replace(`/deck/${deckId}`)
-        }
-      ]
-    );
+    if (newDeckId) {
+      Alert.alert(
+        "Success",
+        "Deck created successfully!",
+        [
+          {
+            text: "OK",
+            onPress: () => router.replace(`/deck/${newDeckId}`)
+          }
+        ]
+      );
+    } else {
+      Alert.alert("Error", "Could not create deck. Please try again.");
+    }
   };
 
   return (
