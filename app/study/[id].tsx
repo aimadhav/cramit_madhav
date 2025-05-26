@@ -13,7 +13,7 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { X, RotateCw, Clock, ArrowLeft, ArrowRight, Maximize2, Bookmark } from "lucide-react-native";
+import { X, RotateCw, Clock, ArrowLeft, ArrowRight, Maximize2, Bookmark, Trash2 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useSharedValue,
@@ -56,6 +56,7 @@ export default function StudySessionScreen() {
   const markSessionAsCompleted = useFlashcardStore(state => state.markSessionAsCompleted);
   const clearSessionJustCompleted = useFlashcardStore(state => state.clearSessionJustCompleted);
   const sessionJustCompletedDeckId = useFlashcardStore(state => state.sessionJustCompletedDeckId);
+  const pendingOperations = useFlashcardStore(state => state.pendingOperations);
   
   const updateStudyStats = useUserStore(state => state.updateStudyStats);
   
@@ -64,6 +65,8 @@ export default function StudySessionScreen() {
   const [sessionStartTime] = useState(Date.now());
   const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | 'up' | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRating, setIsRating] = useState(false);
+  const [isBookmarking, setIsBookmarking] = useState(false);
   const [forceRefresh, setForceRefresh] = useState(0);
   const [isSessionFinished, setIsSessionFinished] = useState(false);
   
@@ -91,6 +94,17 @@ export default function StudySessionScreen() {
   const currentCard = getCurrentCard();
   const dueCards = getDueFlashcardsForDeck(id);
   const studyProgressFromStore = useFlashcardStore(state => state.studyProgress);
+  
+  // Check if there are any pending operations for the current card
+  const isPending = useMemo(() => {
+    if (!currentCard) return false;
+    return Object.entries(pendingOperations).some(([key, op]) => {
+      if (op.type === 'add' && key === currentCard.id) return true;
+      if (op.type === 'update' && key === currentCard.id) return true;
+      if (op.type === 'delete' && key === currentCard.id) return true;
+      return false;
+    });
+  }, [currentCard, pendingOperations]);
   
   // Memoize screenOptions
   const screenOptions = useMemo(() => ({
@@ -247,64 +261,29 @@ export default function StudySessionScreen() {
     // );
   };
   
-  const handleRateCard = (rating: DifficultyRating) => {
-    if (!currentCard) {
-      console.warn("[StudySessionScreen] handleRateCard called with no currentCard. This shouldn't happen.");
-      return;
-    }
-
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-
-    const cardIdToRate = currentCard.id;
+  const handleRateCard = async (rating: DifficultyRating) => {
+    if (!currentCard || isRating || isPending) return;
     
-    // Action 1: Rate the card in the store
-    rateCard(cardIdToRate, rating);
-    
-    // Action 2: Tell the store to advance its internal pointer/progress & get what it thinks is next.
-    const nextCardFromStoreAfterUpdate = getNextCard();
-
-    // Reset UI elements that are independent of card content
-    setShowBack(false);
-    setSwipeDirection(null);
-    setImageScale(1);
-    setImagePosition({ x: 0, y: 0 });
-    imgScale.value = 1;
-    imgTranslateX.value = 0;
-    imgTranslateY.value = 0;
-    
-    // Action 3: Force a re-render of this component.
-    // In the next render, the main `currentCard` const will be updated via `getCurrentCard()`,
-    // and the useEffect will evaluate the end-of-session condition.
-
-    // Conditional reset of animated values:
-    if (nextCardFromStoreAfterUpdate) {
-      // If the store says there IS a next card, reset the swiped card's container to the center 
-      // so the new card appears correctly.
-      translateX.value = withSpring(0, { damping: 20, stiffness: 90 });
-      translateY.value = withSpring(0, { damping: 20, stiffness: 90 });
-      rotate.value = withTiming(0);
-      cardBorderColor.value = colors.gray[200];
-    } else {
-      // If the store says there is NO next card (session queue ended),
-      // then *do not* reset the translateX/Y. The card that was just swiped off should stay off.
-      // The re-render (due to forceRefresh) will result in the card container being hidden by JSX logic.
-      console.log('[StudySessionScreen] Last card in session swiped. Position not reset. UI will update to hide card area.');
-      // We might still want to reset rotation and border for visual consistency if it were to briefly appear.
-      rotate.value = withTiming(0); // Keep rotation reset
-      cardBorderColor.value = colors.gray[200]; // Keep border reset
-    }
-    
-    if (!nextCardFromStoreAfterUpdate) {
-      setIsSessionFinished(true);
-      markSessionAsCompleted(id);
+    try {
+      setIsRating(true);
+      await rateCard(currentCard.id, rating);
+      setShowBack(false);
+      setSwipeDirection(null);
+      setForceRefresh(prev => prev + 1);
+    } catch (error) {
+      Alert.alert(
+        "Error",
+        "Failed to rate card. Please try again.",
+        [{ text: "OK" }]
+      );
+    } finally {
+      setIsRating(false);
     }
   };
   
-  const handleDeleteCard = () => {
-    if (!currentCard) return;
-    
+  const handleDeleteCard = async () => {
+    if (!currentCard || isDeleting || isPending) return;
+
     Alert.alert(
       "Delete Card",
       "Are you sure you want to delete this card? This action cannot be undone.",
@@ -315,47 +294,42 @@ export default function StudySessionScreen() {
         },
         {
           text: "Delete",
-          onPress: () => {
-            setIsDeleting(true);
-            const cardId = currentCard.id;
-            deleteFlashcard(cardId);
-            
-            setShowBack(false);
-            translateX.value = 0;
-            translateY.value = 0;
-            rotate.value = 0;
-            setSwipeDirection(null);
-            
-            setImageScale(1);
-            setImagePosition({ x: 0, y: 0 });
-            imgScale.value = 1;
-            imgTranslateX.value = 0;
-            imgTranslateY.value = 0;
-            
-            setTimeout(() => {
+          onPress: async () => {
+            try {
+              setIsDeleting(true);
+              await deleteFlashcard(currentCard.id);
               setForceRefresh(prev => prev + 1);
-              
-              const remainingDueCards = getDueFlashcardsForDeck(id);
-              if (remainingDueCards.length === 0) {
-                Alert.alert(
-                  "No Cards Left",
-                  "You've completed all cards in this deck.",
-                  [
-                    {
-                      text: "OK",
-                      onPress: () => router.back()
-                    }
-                  ]
-                );
-              }
-              
+            } catch (error) {
+              Alert.alert(
+                "Error",
+                "Failed to delete card. Please try again.",
+                [{ text: "OK" }]
+              );
+            } finally {
               setIsDeleting(false);
-            }, 100);
+            }
           },
           style: "destructive"
         }
       ]
     );
+  };
+  
+  const handleToggleBookmark = async () => {
+    if (!currentCard || isBookmarking || isPending) return;
+
+    try {
+      setIsBookmarking(true);
+      await toggleBookmark(currentCard.id);
+    } catch (error) {
+      Alert.alert(
+        "Error",
+        "Failed to update bookmark. Please try again.",
+        [{ text: "OK" }]
+      );
+    } finally {
+      setIsBookmarking(false);
+    }
   };
   
   // Gesture handler for swipe
@@ -711,12 +685,7 @@ export default function StudySessionScreen() {
                 {/* Bookmark icon (placeholder) */}
                 <TouchableOpacity 
                   style={styles.bookmarkButton}
-                  onPress={() => {
-                    if (currentCard) {
-                      toggleBookmark(currentCard.id);
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    }
-                  }}
+                  onPress={handleToggleBookmark}
                 >
                   <Bookmark size={22} color={currentCard?.isBookmarked ? colors.primary : colors.gray[400]} fill={currentCard?.isBookmarked ? colors.primary : 'none'} />
                 </TouchableOpacity>
@@ -958,5 +927,8 @@ const styles = StyleSheet.create({
     left: 46, // Positioned to the right of the expand icon (12 + 22 + 6 + 6)
     padding: 6,
     zIndex: 20,
+  },
+  disabledButton: {
+    opacity: 0.5,
   },
 });

@@ -27,13 +27,15 @@ export default function DeckDetailScreen() {
   const getDueFlashcardsForDeck = useFlashcardStore(state => state.getDueFlashcardsForDeck);
   const startStudySession = useFlashcardStore(state => state.startStudySession);
   const deleteDeck = useFlashcardStore(state => state.deleteDeck);
+  const pendingOperations = useFlashcardStore(state => state.pendingOperations);
   
   const user = useUserStore(state => state.user);
+  const [isDeleting, setIsDeleting] = useState(false);
   
   // Log initial values
   console.log('[DeckDetailScreen] Component rendered. Received id via params:', id);
   console.log('[DeckDetailScreen] Current decks array length from store:', decks.length);
-
+  
   const deck = decks.find(d => d.id === id);
   console.log('[DeckDetailScreen] Result of decks.find(d => d.id === id) initially:', deck ? deck.id : 'undefined');
 
@@ -90,7 +92,7 @@ export default function DeckDetailScreen() {
     router.push(`/study/${id}`);
   };
   
-  const handleDeleteDeck = () => {
+  const handleDeleteDeck = async () => {
     Alert.alert(
       "Delete Deck",
       "Are you sure you want to delete this deck? This action cannot be undone.",
@@ -101,16 +103,35 @@ export default function DeckDetailScreen() {
         },
         {
           text: "Delete",
-          onPress: () => {
-            deleteDeck(id);
-            router.back();
+          onPress: async () => {
+            try {
+              setIsDeleting(true);
+              await deleteDeck(id);
+              router.back();
+            } catch (error) {
+              Alert.alert(
+                "Error",
+                "Failed to delete deck. Please try again.",
+                [{ text: "OK" }]
+              );
+            } finally {
+              setIsDeleting(false);
+            }
           },
           style: "destructive"
         }
       ]
     );
   };
-  
+
+  // Check if there are any pending operations for this deck
+  const isPending = Object.entries(pendingOperations).some(([key, op]) => {
+    if (op.type === 'add' && op.data.deckId === id) return true;
+    if (op.type === 'update' && key === id) return true;
+    if (op.type === 'delete' && key === id) return true;
+    return false;
+  });
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Stack.Screen 
@@ -122,12 +143,14 @@ export default function DeckDetailScreen() {
               <TouchableOpacity 
                 style={styles.headerButton}
                 onPress={() => router.push(`/deck/edit/${id}`)}
+                disabled={isDeleting || isPending}
               >
                 <Edit size={20} color={colors.primary} />
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.headerButton}
                 onPress={handleDeleteDeck}
+                disabled={isDeleting || isPending}
               >
                 <Trash2 size={20} color={colors.error} />
               </TouchableOpacity>
@@ -519,5 +542,8 @@ const styles = StyleSheet.create({
   },
   flashcardsContainer: {
     marginBottom: 10,
+  },
+  disabledButton: {
+    opacity: 0.5,
   },
 });
