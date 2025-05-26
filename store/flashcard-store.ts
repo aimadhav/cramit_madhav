@@ -8,6 +8,23 @@ import { calculateNextReview, getDueCards } from '@/utils/spaced-repetition';
 import { produce } from 'immer';
 import { trpcClient } from '@/lib/trpc';
 
+interface PendingOperation {
+  type: 'add' | 'update' | 'delete';
+  // status: 'optimistic' for an operation that is proceeding (backend call made or about to be made for its own item),
+  // 'pendingRealId' for an update/delete on an item that itself has a tempId and is waiting for that item's realId confirmation.
+  // 'pendingDependency' for an 'add' operation of a child item that is waiting for its parent's realId.
+  status: 'optimistic' | 'pendingRealId' | 'pendingDependency'; 
+  itemType: 'deck' | 'flashcard';
+  data: any; // For 'add', this is the creation DTO. For 'update', this is the optimistic object.
+  originalData?: any; // For rollback of updates/deletes
+  timestamp: number;
+  operationSubType?: 'rateCard' | 'updateContent' | 'toggleBookmark';
+  
+  // For operations dependent on another item's real ID (status: 'pendingDependency')
+  waitsForTempId?: string; 
+  waitsForItemType?: 'deck' | 'flashcard';
+}
+
 // Temporary store for the current session's card queue (IDs)
 let currentSessionCardQueue: string[] = [];
 
@@ -20,16 +37,12 @@ interface FlashcardState {
   error: string | null;
   sessionJustCompletedDeckId: string | null; // New state
   pendingOperations: {
-    [key: string]: {
-      type: 'add' | 'update' | 'delete';
-      data: any;
-      originalData?: any; // For delete/update rollback
-      timestamp: number;
-    };
+    [key: string]: PendingOperation;
   };
+  tempIdToRealIdMap?: { [tempId: string]: string }; // Made optional for initial state
   
   // Deck actions
-  addDeck: (deck: Omit<Deck, 'id' | 'createdAt' | 'updatedAt' | 'cardCount' | 'userId'>) => Promise<string>;
+  addDeck: (deck: Omit<Deck, 'id' | 'createdAt' | 'updatedAt' | 'cardCount' | 'userId'>, tempId: string) => Promise<string>;
   updateDeck: (id: string, deckData: Partial<Omit<Deck, 'id' | 'createdAt' | 'updatedAt' | 'cardCount' | 'userId'>>) => Promise<void>;
   deleteDeck: (id: string) => Promise<void>;
   setCurrentDeck: (deckId: string | null) => void;
@@ -61,779 +74,1034 @@ interface FlashcardState {
   initializeStoreWithMocks: () => void;
   markSessionAsCompleted: (deckId: string) => void;
   clearSessionJustCompleted: () => void;
+  _processPendingOperationsForItem: (tempParentId: string, realParentId: string, parentItemType: 'deck' | 'flashcard') => Promise<void>;
+  clearTempIdMapping: (tempId: string) => void;
 }
 
-export const useFlashcardStore = create<FlashcardState>()(
-  persist(
-    (set, get) => ({
-      decks: [],
-      flashcards: [],
-      currentDeckId: null,
-      studyProgress: null,
-      isLoading: false,
-      error: null,
-      sessionJustCompletedDeckId: null,
-      pendingOperations: {},
-      
-      initializeStoreWithMocks: () => {
-        if (get().decks.length === 0 && get().flashcards.length === 0) {
-          set({
-            decks: mockDecks.map(deck => ({...deck, createdAt: String(deck.createdAt), updatedAt: String(deck.updatedAt) })),
-            flashcards: mockFlashcards.map(card => ({
-                ...card, 
-                isBookmarked: card.isBookmarked || false, 
-                createdAt: Number(card.createdAt), 
-                updatedAt: Number(card.updatedAt), 
-                dueDate: Number(card.dueDate), 
-                lastReviewed: card.lastReviewed ? Number(card.lastReviewed) : null,
-                contentType: card.contentType as ContentType || 'text',
-            })),
-          });
-          console.log('[FlashcardStore] Initialized with mock data.');
-        }
-      },
+// Helper function to execute a pending operation's tRPC call
+// This will be defined outside or as a static part of the store if preferred,
+// but for now, let's assume it can access trpcClient and 'set'/'get' if needed for error handling.
+// For simplicity here, it's part of the store's context.
+async function executePendingUpdateOperation(pendingOp: any, storeMethods: { set: any, get: any, trpcClient: any }) {
+  const { data, originalData, type } = pendingOp;
+  const { set, get, trpcClient } = storeMethods;
 
-      loadInitialData: (decks, flashcards) => {
-        set({ 
-          decks: decks.map(d => ({...d, createdAt: String(d.createdAt), updatedAt: String(d.updatedAt) })), 
-          flashcards: flashcards.map(f => ({
-              ...f, 
-              createdAt: Number(f.createdAt), 
-              updatedAt: Number(f.updatedAt), 
-              dueDate: Number(f.dueDate), 
-              lastReviewed: f.lastReviewed ? Number(f.lastReviewed) : null,
-              isBookmarked: f.isBookmarked || false,
-              contentType: f.contentType as ContentType || 'text',
-            })) 
-        });
-      },
+  if (type === 'update' && pendingOp.itemType === 'flashcard' && pendingOp.operationSubType === 'rateCard') {
+    console.log(`[FlashcardStore] executePendingUpdateOperation: Processing deferred rating for ${data.id}`);
+    try {
+      const backendSrsData = {
+        flashcardId: data.id, // Should be realId now
+        interval: data.interval,
+        easeFactor: data.easeFactor,
+        repetitions: data.repetitions,
+        dueDate: new Date(data.dueDate).toISOString(),
+        lastReviewed: data.lastReviewed ? new Date(data.lastReviewed).toISOString() : undefined,
+      };
+      const updatedStatus = await trpcClient.flashcards.updateUserStatus.mutate(backendSrsData);
       
-      addDeck: async (deckData) => {
-        const tempId = `deck-temp-${Date.now()}`;
-        const optimisticDeck: Deck = {
-          ...deckData,
-          id: tempId,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          cardCount: 0,
-          userId: 'temp-user-id',
-          isPublic: deckData.isPublic || false, 
+      set(produce((state: FlashcardState) => {
+        const cardIndex = state.flashcards.findIndex((c: Flashcard) => c.id === data.id);
+        if (cardIndex !== -1) {
+            state.flashcards[cardIndex].updatedAt = updatedStatus.updatedAt ? new Date(updatedStatus.updatedAt).getTime() : data.updatedAt;
+        }
+      }));
+    } catch (error: any) {
+      console.error(`[FlashcardStore] Error in deferred rating for ${data.id}:`, error);
+      set(produce((state: FlashcardState) => {
+        const cardIndex = state.flashcards.findIndex((c: Flashcard) => c.id === data.id);
+        if (cardIndex !== -1 && originalData) {
+            state.flashcards[cardIndex] = originalData as Flashcard;
+        }
+        state.error = error.message || "Failed to sync deferred card rating";
+      }));
+    }
+  }
+}
+
+const storeImplementation = (set: any, get: any): FlashcardState => ({
+    decks: [],
+    flashcards: [],
+    currentDeckId: null,
+    studyProgress: null,
+    isLoading: false,
+    error: null,
+    pendingOperations: {},
+    sessionJustCompletedDeckId: null,
+    tempIdToRealIdMap: {},
+      
+    initializeStoreWithMocks: () => {
+      console.log("[FlashcardStore] initializeStoreWithMocks called.");
+      const now = Date.now();
+      const initializedDecks = mockDecks.map(deck => ({
+        ...deck,
+        createdAt: new Date(deck.createdAt).toISOString(), 
+        updatedAt: new Date(deck.updatedAt).toISOString(),
+        cardCount: mockFlashcards.filter((fc: Flashcard) => fc.deckId === deck.id).length,
+      }));
+      const initializedFlashcards = mockFlashcards.map(card => ({
+        ...card,
+        createdAt: new Date(card.createdAt).getTime(),
+        updatedAt: new Date(card.updatedAt).getTime(),
+        dueDate: new Date(card.dueDate).getTime(),
+        lastReviewed: card.lastReviewed ? new Date(card.lastReviewed).getTime() : null,
+      }));
+      set({
+        decks: initializedDecks,
+        flashcards: initializedFlashcards,
+        isLoading: false,
+        error: null,
+        pendingOperations: {},
+      });
+      console.log("[FlashcardStore] Store initialized with mock data.");
+    },
+
+    loadInitialData: (decks, flashcards) => {
+      const now = Date.now();
+      const normalizedDecks = decks.map(deck => ({
+          ...deck,
+          createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date(now).toISOString(),
+          updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date(now).toISOString(),
+          cardCount: flashcards.filter((fc: Flashcard) => fc.deckId === deck.id).length,
+      }));
+      const normalizedFlashcards = flashcards.map(card => ({
+          ...card,
+          createdAt: card.createdAt ? new Date(card.createdAt).getTime() : now,
+          updatedAt: card.updatedAt ? new Date(card.updatedAt).getTime() : now,
+          dueDate: card.dueDate ? new Date(card.dueDate).getTime() : now,
+          lastReviewed: card.lastReviewed ? new Date(card.lastReviewed).getTime() : null,
+          isBookmarked: card.isBookmarked ?? false,
+          contentType: card.contentType ?? 'text',
+          interval: card.interval ?? 1,
+          easeFactor: card.easeFactor ?? 2.5,
+          repetitions: card.repetitions ?? 0,
+      }));
+      set({
+        decks: normalizedDecks,
+        flashcards: normalizedFlashcards,
+        isLoading: false,
+        error: null,
+        pendingOperations: {},
+      });
+    },
+
+    addDeck: async (deckData, tempId) => {
+      const optimisticDeck: Deck = {
+        ...deckData,
+        id: tempId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        cardCount: 0,
+        userId: 'temp-user-id',
+      };
+
+      set(produce((state: FlashcardState) => {
+        state.decks.push(optimisticDeck);
+        state.isLoading = true;
+        state.error = null;
+        state.pendingOperations[tempId] = {
+          type: 'add',
+          status: 'optimistic',
+          itemType: 'deck',
+          data: optimisticDeck,
+          timestamp: Date.now(),
+          originalData: undefined,
+          operationSubType: undefined,
+          waitsForTempId: undefined,
+          waitsForItemType: undefined,
         };
-
-        set(produce((state: FlashcardState) => {
-          state.decks.push(optimisticDeck);
-          state.pendingOperations[tempId] = {
-            type: 'add',
-            data: optimisticDeck,
-            timestamp: Date.now(),
-          };
-          state.isLoading = true;
-          state.error = null;
-        }));
-
-        try {
-          const payload = {
-            name: deckData.name,
-            description: deckData.description === null ? undefined : deckData.description,
-            tags: deckData.tags || [],
-            isPublic: deckData.isPublic || false,
-            isPremium: deckData.isPremium || false,
-            price: deckData.price === null ? undefined : deckData.price,
-            coverImage: deckData.coverImage === null ? undefined : deckData.coverImage,
-            subject: deckData.subject === null ? undefined : deckData.subject,
-            chapter: deckData.chapter === null ? undefined : deckData.chapter,
-          };
-
-          const newDeckFromBackend = await trpcClient.deck.create.mutate(payload);
-          
-          set(produce((state: FlashcardState) => {
-            const deckIndex = state.decks.findIndex(d => d.id === tempId);
-            if (deckIndex !== -1) {
-              state.decks[deckIndex] = {
-                ...newDeckFromBackend,
-                cardCount: state.decks[deckIndex].cardCount, 
-                createdAt: String(newDeckFromBackend.createdAt),
-                updatedAt: String(newDeckFromBackend.updatedAt),
-              };
-            }
-            delete state.pendingOperations[tempId];
-            state.isLoading = false;
-          }));
-          return newDeckFromBackend.id;
-        } catch (error: any) {
-          set(produce((state: FlashcardState) => {
-            state.decks = state.decks.filter(deck => deck.id !== tempId);
-            delete state.pendingOperations[tempId];
-            state.isLoading = false;
-            state.error = error.message || 'Failed to add deck';
-          }));
-          console.error("Error adding deck:", error);
-          throw error;
-        }
-      },
+      })); 
       
-      updateDeck: async (id, deckData) => {
-        const originalDeck = get().decks.find(d => d.id === id);
-        if (!originalDeck) {
-          console.error('Deck not found for update:', id);
-          throw new Error('Deck not found');
-        }
+      try {
+        let finalCoverImageForBackend: string | undefined = undefined;
 
-        const optimisticUpdateTimestamp = new Date().toISOString();
-        const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, userId: _userId, cardCount: _cardCount, ...validDeckData } = deckData as any;
-        const optimisticDeck: Deck = { 
-            ...originalDeck, 
-            ...validDeckData, 
-            updatedAt: optimisticUpdateTimestamp 
-        };
-
-        set(produce((state: FlashcardState) => {
-          const deckIndex = state.decks.findIndex(d => d.id === id);
-          if (deckIndex !== -1) {
-            state.decks[deckIndex] = optimisticDeck;
-          }
-          state.pendingOperations[id] = {
-            type: 'update',
-            data: optimisticDeck, 
-            originalData: originalDeck, 
-            timestamp: Date.now(),
-          };
-           state.isLoading = true;
-           state.error = null;
-        }));
-
-        try {
-          const payload: Partial<Deck> & { id: string } = { id };
-          if (validDeckData.name !== undefined) payload.name = validDeckData.name;
-          if (validDeckData.description !== undefined) payload.description = validDeckData.description;
-          if (validDeckData.tags !== undefined) payload.tags = validDeckData.tags;
-          if (validDeckData.isPublic !== undefined) payload.isPublic = validDeckData.isPublic;
-          if (validDeckData.isPremium !== undefined) payload.isPremium = validDeckData.isPremium;
-          if (validDeckData.price !== undefined) payload.price = validDeckData.price;
-          if (validDeckData.coverImage !== undefined) payload.coverImage = validDeckData.coverImage;
-          if (validDeckData.subject !== undefined) payload.subject = validDeckData.subject;
-          if (validDeckData.chapter !== undefined) payload.chapter = validDeckData.chapter;
-
-          const updatedDeckFromBackend = await trpcClient.deck.update.mutate(payload as any);
-          
-          set(produce((state: FlashcardState) => {
-            const deckIndex = state.decks.findIndex(d => d.id === id);
-            if (deckIndex !== -1) {
-                 state.decks[deckIndex] = {
-                    ...state.decks[deckIndex], 
-                    ...updatedDeckFromBackend,
-                    createdAt: String(updatedDeckFromBackend.createdAt),
-                    updatedAt: String(updatedDeckFromBackend.updatedAt),
-                 };
-            }
-            delete state.pendingOperations[id];
-            state.isLoading = false;
-          }));
-        } catch (error: any) {
-          set(produce((state: FlashcardState) => {
-            const deckIndex = state.decks.findIndex(d => d.id === id);
-            if (deckIndex !== -1 && state.pendingOperations[id]?.originalData) {
-              state.decks[deckIndex] = state.pendingOperations[id].originalData as Deck;
-            } else if (deckIndex !== -1) { 
-                state.decks[deckIndex] = originalDeck;
-            }
-            delete state.pendingOperations[id];
-            state.isLoading = false;
-            state.error = error.message || 'Failed to update deck';
-          }));
-          console.error("Error updating deck:", error);
-          throw error;
-        }
-      },
-      
-      deleteDeck: async (id) => {
-        const deckToDelete = get().decks.find(d => d.id === id);
-        if (!deckToDelete) {
-          console.error('Deck not found for delete:', id);
-          throw new Error('Deck not found');
-        }
-        const associatedFlashcards = get().flashcards.filter(card => card.deckId === id);
-
-        set(produce((state: FlashcardState) => {
-          state.pendingOperations[id] = {
-            type: 'delete',
-            data: deckToDelete, 
-            originalData: { deck: deckToDelete, flashcards: associatedFlashcards }, 
-            timestamp: Date.now(),
-          };
-          state.decks = state.decks.filter(deck => deck.id !== id);
-          state.flashcards = state.flashcards.filter(card => card.deckId !== id);
-          state.isLoading = true;
-          state.error = null;
-        }));
-
-        try {
-          await trpcClient.deck.delete.mutate({ id });
-          
-          set(produce((state: FlashcardState) => {
-            delete state.pendingOperations[id];
-            state.isLoading = false;
-          }));
-        } catch (error: any) {
-          set(produce((state: FlashcardState) => {
-            const opData = state.pendingOperations[id]?.originalData;
-            if (opData && opData.deck) {
-                if (!state.decks.find(d => d.id === opData.deck.id)) {
-                    state.decks.push(opData.deck);
-                }
-                opData.flashcards.forEach((fc: Flashcard) => {
-                    if (!state.flashcards.find(f => f.id === fc.id)) {
-                        state.flashcards.push(fc);
-                    }
-                });
-            }
-            delete state.pendingOperations[id];
-            state.isLoading = false;
-            state.error = error.message || 'Failed to delete deck';
-          }));
-          console.error("Error deleting deck:", error);
-          throw error;
-        }
-      },
-      
-      setCurrentDeck: (deckId) => {
-        set({ currentDeckId: deckId });
-      },
-      
-      addFlashcard: async (cardData) => {
-        const tempId = `flashcard-temp-${Date.now()}`;
-        const currentTimestamp = Date.now();
-        const optimisticFlashcard: Flashcard = {
-          ...cardData,
-          id: tempId,
-          createdAt: currentTimestamp,
-          updatedAt: currentTimestamp,
-          interval: 1,
-          easeFactor: 2.5,
-          repetitions: 0,
-          dueDate: currentTimestamp,
-          lastReviewed: null,
-          isBookmarked: false,
-          contentType: cardData.contentType as ContentType || 'text',
-        };
-
-        set(produce((state: FlashcardState) => {
-          state.flashcards.push(optimisticFlashcard);
-          const deckIndex = state.decks.findIndex(d => d.id === cardData.deckId);
-          if (deckIndex !== -1) {
-            state.decks[deckIndex].cardCount += 1;
-            state.decks[deckIndex].updatedAt = new Date().toISOString();
-          }
-          state.pendingOperations[tempId] = {
-            type: 'add',
-            data: optimisticFlashcard,
-            timestamp: Date.now(),
-          };
-          state.isLoading = true;
-          state.error = null;
-        }));
-
-        try {
-          const payload = {
-            deckId: cardData.deckId,
-            front: cardData.front,
-            back: cardData.back,
-            contentType: cardData.contentType as string,
-            mediaUrls: cardData.mediaUrls || [],
-            tags: cardData.tags || [],
-          };
-          const newCardFromBackend = await trpcClient.flashcards.create.mutate(payload as any);
-          
-          set(produce((state: FlashcardState) => {
-            const cardIndex = state.flashcards.findIndex(c => c.id === tempId);
-            if (cardIndex !== -1) {
-              const existingOptimisticCard = state.flashcards[cardIndex];
-              state.flashcards[cardIndex] = {
-                ...existingOptimisticCard,
-                ...newCardFromBackend,
-                id: newCardFromBackend.id,
-                createdAt: newCardFromBackend.createdAt ? new Date(newCardFromBackend.createdAt).getTime() : existingOptimisticCard.createdAt,
-                updatedAt: newCardFromBackend.updatedAt ? new Date(newCardFromBackend.updatedAt).getTime() : existingOptimisticCard.updatedAt,
-                contentType: (newCardFromBackend as any).contentType as ContentType || existingOptimisticCard.contentType,
-                interval: (newCardFromBackend as any).userStatus?.interval ?? existingOptimisticCard.interval,
-                easeFactor: (newCardFromBackend as any).userStatus?.easeFactor ?? existingOptimisticCard.easeFactor,
-                repetitions: (newCardFromBackend as any).userStatus?.repetitions ?? existingOptimisticCard.repetitions,
-                dueDate: (newCardFromBackend as any).userStatus?.dueDate ? new Date((newCardFromBackend as any).userStatus.dueDate).getTime() : existingOptimisticCard.dueDate,
-                lastReviewed: (newCardFromBackend as any).userStatus?.lastReviewed ? new Date((newCardFromBackend as any).userStatus.lastReviewed).getTime() : existingOptimisticCard.lastReviewed,
-                isBookmarked: (newCardFromBackend as any).userStatus?.isBookmarked ?? existingOptimisticCard.isBookmarked,
-              };
-            }
-            delete state.pendingOperations[tempId];
-            state.isLoading = false;
-          }));
-          return newCardFromBackend.id;
-        } catch (error: any) {
-          set(produce((state: FlashcardState) => {
-            state.flashcards = state.flashcards.filter(card => card.id !== tempId);
-            const deckIndex = state.decks.findIndex(d => d.id === cardData.deckId);
-            if (deckIndex !== -1) {
-              state.decks[deckIndex].cardCount = Math.max(0, state.decks[deckIndex].cardCount - 1);
-            }
-            delete state.pendingOperations[tempId];
-            state.isLoading = false;
-            state.error = error.message || 'Failed to add flashcard';
-          }));
-          console.error("Error adding flashcard:", error);
-          throw error;
-        }
-      },
-      
-      updateFlashcard: async (id, cardData) => {
-        const originalCard = get().flashcards.find(c => c.id === id);
-        if (!originalCard) {
-            console.error('Flashcard not found for update:', id);
-            throw new Error('Flashcard not found');
-        }
-        
-        const optimisticUpdateTimestamp = Date.now();
-        const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, deckId: _deckId, ...validCardData } = cardData as any;
-
-        const optimisticFlashcard: Flashcard = { 
-            ...originalCard, 
-            ...validCardData, 
-            updatedAt: optimisticUpdateTimestamp,
-            isBookmarked: validCardData.isBookmarked !== undefined ? validCardData.isBookmarked : originalCard.isBookmarked,
-            contentType: validCardData.contentType !== undefined ? validCardData.contentType as ContentType : originalCard.contentType,
-        };
-
-        set(produce((state: FlashcardState) => {
-          const cardIndex = state.flashcards.findIndex(c => c.id === id);
-          if (cardIndex !== -1) {
-            state.flashcards[cardIndex] = optimisticFlashcard;
-          }
-          state.pendingOperations[id] = {
-            type: 'update',
-            data: optimisticFlashcard,
-            originalData: originalCard,
-            timestamp: Date.now(),
-          };
-          state.isLoading = true;
-          state.error = null;
-        }));
-
-        try {
-          let updatedCardFromBackend: any;
-
-          const isOnlyStatusUpdate = Object.keys(validCardData).every(key => 
-            ['isBookmarked', 'interval', 'easeFactor', 'repetitions', 'dueDate', 'lastReviewed'].includes(key)
-          );
-          const hasStatusFields = Object.keys(validCardData).some(key => 
-            ['isBookmarked', 'interval', 'easeFactor', 'repetitions', 'dueDate', 'lastReviewed'].includes(key)
-          );
-           const hasContentFields = Object.keys(validCardData).some(key => 
-            ['front', 'back', 'contentType', 'mediaUrls', 'tags'].includes(key)
-          );
-
-          if (hasStatusFields && !hasContentFields) {
-            const statusPayload: any = { flashcardId: id };
-            if (validCardData.isBookmarked !== undefined) statusPayload.isBookmarked = validCardData.isBookmarked;
-            if (validCardData.interval !== undefined) statusPayload.interval = validCardData.interval;
-            if (validCardData.easeFactor !== undefined) statusPayload.easeFactor = validCardData.easeFactor;
-            if (validCardData.repetitions !== undefined) statusPayload.repetitions = validCardData.repetitions;
-            if (validCardData.dueDate !== undefined) statusPayload.dueDate = new Date(validCardData.dueDate);
-            if (validCardData.lastReviewed !== undefined) statusPayload.lastReviewed = new Date(validCardData.lastReviewed);
-            
-            updatedCardFromBackend = await trpcClient.flashcards.updateUserStatus.mutate(statusPayload);
+        if (deckData.coverImage && typeof deckData.coverImage === 'string' && deckData.coverImage.trim() !== '') {
+          if (!deckData.coverImage.startsWith('http')) {
+            // It's a non-empty string, not a URL (local path) -> use placeholder
+            finalCoverImageForBackend = 'https://via.placeholder.com/300x200.png?text=CramItDeck'; 
           } else {
-            const contentPayload: any = { flashcardId: id }; 
-            if (validCardData.front !== undefined) contentPayload.front = validCardData.front;
-            if (validCardData.back !== undefined) contentPayload.back = validCardData.back;
-            if (validCardData.contentType !== undefined) contentPayload.contentType = validCardData.contentType as string;
-            if (validCardData.mediaUrls !== undefined) contentPayload.mediaUrls = validCardData.mediaUrls;
-            if (validCardData.tags !== undefined) contentPayload.tags = validCardData.tags;
-            updatedCardFromBackend = await trpcClient.flashcards.updateContent.mutate(contentPayload);
+            // It's a non-empty string that starts with http -> use it as is
+            finalCoverImageForBackend = deckData.coverImage;
           }
-          
-          set(produce((state: FlashcardState) => {
-            const cardIndex = state.flashcards.findIndex(c => c.id === id);
-            if (cardIndex !== -1) {
-              const existingCard = state.flashcards[cardIndex];
-              
-              let finalCardData: Partial<Flashcard> = {};
-              if (updatedCardFromBackend.flashcardId && !updatedCardFromBackend.front) {
-                finalCardData = {
-                    ...updatedCardFromBackend,
-                    isBookmarked: updatedCardFromBackend.isBookmarked,
-                };
-              } else {
-                finalCardData = {
-                    ...updatedCardFromBackend,
-                    contentType: updatedCardFromBackend.contentType as ContentType || existingCard.contentType,
-                    isBookmarked: updatedCardFromBackend.userStatus?.isBookmarked ?? existingCard.isBookmarked,
-                    interval: updatedCardFromBackend.userStatus?.interval ?? existingCard.interval,
-                    easeFactor: updatedCardFromBackend.userStatus?.easeFactor ?? existingCard.easeFactor,
-                    repetitions: updatedCardFromBackend.userStatus?.repetitions ?? existingCard.repetitions,
-                    dueDate: updatedCardFromBackend.userStatus?.dueDate ? new Date(updatedCardFromBackend.userStatus.dueDate).getTime() : existingCard.dueDate,
-                    lastReviewed: updatedCardFromBackend.userStatus?.lastReviewed ? new Date(updatedCardFromBackend.userStatus.lastReviewed).getTime() : existingCard.lastReviewed,
-                };
-              }
+        } // else, deckData.coverImage is null, undefined, empty string, or not a string -> finalCoverImageForBackend remains undefined
 
+        const payload = {
+          ...deckData,
+          description: deckData.description == null ? undefined : deckData.description,
+          price: deckData.price == null ? undefined : deckData.price,
+          coverImage: finalCoverImageForBackend,
+          subject: deckData.subject == null ? undefined : deckData.subject,
+          chapter: deckData.chapter == null ? undefined : deckData.chapter,
+        };
+        const newDeckFromBackend = await trpcClient.deck.create.mutate(payload);
+        set(produce((state: FlashcardState) => {
+          const deckIndex = state.decks.findIndex((d: Deck) => d.id === tempId);
+          if (deckIndex !== -1) {
+            state.decks[deckIndex] = {
+              ...newDeckFromBackend,
+              cardCount: 0,
+              createdAt: newDeckFromBackend.createdAt ? String(newDeckFromBackend.createdAt) : new Date().toISOString(), 
+              updatedAt: newDeckFromBackend.updatedAt ? String(newDeckFromBackend.updatedAt) : new Date().toISOString(),
+            };
+          }
+          if (!state.tempIdToRealIdMap) {
+            state.tempIdToRealIdMap = {};
+          }
+          state.tempIdToRealIdMap[tempId] = newDeckFromBackend.id;
+          
+          delete state.pendingOperations[tempId];
+          state.isLoading = false;
+        }));
+        await get()._processPendingOperationsForItem(tempId, newDeckFromBackend.id, 'deck');
+        return newDeckFromBackend.id;
+      } catch (error: any) {
+        console.error(`[FlashcardStore] Error during addDeck backend operation for tempId ${tempId}:`, error);
+        set(produce((state: FlashcardState) => {
+          // Keep the optimistic deck, but mark its pending operation as failed.
+          if (state.pendingOperations[tempId]) {
+            // @ts-ignore 
+            state.pendingOperations[tempId].status = 'creation_failed'; 
+            // @ts-ignore
+            state.pendingOperations[tempId].error = error.message || 'Unknown TRPC error';
+            console.warn(`[FlashcardStore] Deck ${tempId} remains optimistic due to backend failure.`);
+          } else {
+            state.decks = state.decks.filter((d: Deck) => d.id !== tempId);
+            console.error(`[FlashcardStore] Pending operation for ${tempId} not found during error handling. Rolling back optimistic add.`);
+          }
+          state.isLoading = false;
+          // Do not set global state.error here if we want the optimistic data to persist
+        }));
+        // Re-throw the error so the caller's .catch() block is triggered
+        throw error; 
+      }
+    },
+
+    updateDeck: async (id, deckUpdateData) => {
+      const originalDeck = get().decks.find((d: Deck) => d.id === id);
+      if (!originalDeck) {
+        throw new Error("Deck not found for update.");
+      }
+
+      const optimisticDeck: Deck = {
+        ...originalDeck,
+        ...deckUpdateData,
+        updatedAt: new Date().toISOString(),
+      };
+
+      set(produce((state: FlashcardState) => {
+        const deckIndex = state.decks.findIndex((d: Deck) => d.id === id);
+        if (deckIndex !== -1) {
+          state.decks[deckIndex] = optimisticDeck;
+        }
+        state.isLoading = true;
+        state.error = null;
+        state.pendingOperations[id] = {
+          type: 'update',
+          status: 'optimistic',
+          itemType: 'deck',
+          data: optimisticDeck,
+          originalData: originalDeck,
+          timestamp: Date.now(),
+          operationSubType: undefined,
+          waitsForTempId: undefined,
+          waitsForItemType: undefined,
+        };
+      }));
+
+      try {
+        const payload = {
+            ...deckUpdateData,
+            id,
+            description: deckUpdateData.description === null ? undefined : deckUpdateData.description,
+            coverImage: deckUpdateData.coverImage === null ? undefined : deckUpdateData.coverImage,
+            subject: deckUpdateData.subject === null ? undefined : deckUpdateData.subject,
+        };
+        const updatedDeckFromBackend = await trpcClient.deck.update.mutate(payload as any);
+        set(produce((state: FlashcardState) => {
+          const deckIndex = state.decks.findIndex((d: Deck) => d.id === id);
+          if (deckIndex !== -1) {
+             state.decks[deckIndex] = {
+              ...updatedDeckFromBackend,
+              cardCount: originalDeck.cardCount, 
+              createdAt: String(updatedDeckFromBackend.createdAt), 
+              updatedAt: String(updatedDeckFromBackend.updatedAt),
+            };
+          }
+          delete state.pendingOperations[id];
+          state.isLoading = false;
+        }));
+      } catch (error: any) {
+        set(produce((state: FlashcardState) => {
+          const deckIndex = state.decks.findIndex((d: Deck) => d.id === id);
+          if (deckIndex !== -1 && state.pendingOperations[id]?.originalData) {
+            state.decks[deckIndex] = state.pendingOperations[id].originalData as Deck;
+          }
+          delete state.pendingOperations[id];
+          state.isLoading = false;
+          state.error = error.message || "Failed to update deck";
+        }));
+        console.error("Error updating deck:", error);
+        throw error;
+      }
+    },
+
+    deleteDeck: async (id) => {
+      const originalDeck = get().decks.find((d: Deck) => d.id === id);
+      const originalFlashcards = get().flashcards.filter((f: Flashcard) => f.deckId === id);
+      if (!originalDeck) {
+        throw new Error("Deck not found for deletion.");
+      }
+
+      set(produce((state: FlashcardState) => {
+        state.decks = state.decks.filter((d: Deck) => d.id !== id);
+        state.flashcards = state.flashcards.filter((f: Flashcard) => f.deckId !== id);
+        state.isLoading = true;
+        state.error = null;
+        state.pendingOperations[id] = {
+          type: 'delete',
+          status: 'optimistic',
+          itemType: 'deck',
+          data: { id },
+          originalData: { deck: originalDeck, flashcards: originalFlashcards },
+          timestamp: Date.now(),
+          operationSubType: undefined,
+          waitsForTempId: undefined,
+          waitsForItemType: undefined,
+        };
+        if (state.currentDeckId === id) {
+          state.currentDeckId = null;
+          state.studyProgress = null;
+        }
+      }));
+
+      try {
+        await trpcClient.deck.delete.mutate({ id });
+        set(produce((state: FlashcardState) => {
+          delete state.pendingOperations[id];
+          state.isLoading = false;
+        }));
+      } catch (error: any) {
+        set(produce((state: FlashcardState) => {
+          const op = state.pendingOperations[id];
+          if (op && op.originalData) {
+            state.decks.push(op.originalData.deck);
+            state.flashcards.push(...op.originalData.flashcards);
+          }
+          delete state.pendingOperations[id];
+          state.isLoading = false;
+          state.error = error.message || "Failed to delete deck";
+        }));
+        console.error("Error deleting deck:", error);
+        throw error;
+      }
+    },
+      
+    setCurrentDeck: (deckId) => {
+      console.log("[FlashcardStore] setCurrentDeck called with deckId:", deckId);
+      set(produce((state: FlashcardState) => {
+          state.currentDeckId = deckId;
+          if (!deckId) {
+              state.studyProgress = null;
+              currentSessionCardQueue = [];
+          }
+      }));
+    },
+
+    addFlashcard: async (flashcardData) => {
+      let { deckId } = flashcardData;
+      const tempFlashcardId = `flashcard-temp-${Date.now()}`;
+      const now = Date.now();
+      
+      // Check if the provided deckId is temporary and if a realId mapping exists
+      const tempIdMap = get().tempIdToRealIdMap || {};
+      const isProvidedDeckIdTemporary = deckId.startsWith('deck-temp-');
+      let finalDeckId = deckId;
+
+      if (isProvidedDeckIdTemporary && tempIdMap[deckId]) {
+        console.log(`[FlashcardStore] addFlashcard: Deck ID ${deckId} is temporary, but real ID ${tempIdMap[deckId]} found in map. Using real ID.`);
+        finalDeckId = tempIdMap[deckId]; // Use the real deck ID
+      }
+      
+      const isFinalDeckIdTemporary = finalDeckId.startsWith('deck-temp-'); // Re-check after potential mapping
+
+      const optimisticFlashcard: Flashcard = {
+        ...flashcardData,
+        deckId: finalDeckId, // Use the finalDeckId (which might be the real one now)
+        id: tempFlashcardId,
+        createdAt: now,
+        updatedAt: now,
+        interval: 1,
+        easeFactor: 2.5,
+        repetitions: 0,
+        dueDate: now,
+        lastReviewed: null,
+        isBookmarked: false,
+        contentType: flashcardData.contentType || 'text',
+      };
+        
+      // Optimistic update to local state (always happens)
+      set(produce((state: FlashcardState) => {
+        state.flashcards.push(optimisticFlashcard);
+        // Use finalDeckId to find the deck for cardCount update
+        const deck = state.decks.find((d: Deck) => d.id === finalDeckId); 
+        if (deck) {
+          deck.cardCount = (deck.cardCount || 0) + 1;
+          deck.updatedAt = new Date().toISOString();
+        }
+        state.isLoading = true;
+        state.error = null;
+        // Pending operation details depend on whether the deckId is temporary
+      }));
+
+      if (isFinalDeckIdTemporary) { // Check based on finalDeckId
+        // Deck ID is still temporary, so this flashcard add must be deferred.
+        set(produce((state: FlashcardState) => {
+          state.pendingOperations[`deferred-add-${tempFlashcardId}`] = {
+            type: 'add',
+            status: 'pendingDependency',
+            itemType: 'flashcard',
+            data: optimisticFlashcard, 
+            originalData: undefined, 
+            timestamp: Date.now(),
+            operationSubType: undefined, 
+            waitsForTempId: finalDeckId, // It's waiting for this temp deck ID to become real   
+            waitsForItemType: 'deck',
+          };
+        }));
+        console.log(`[FlashcardStore] addFlashcard for temp deck ${finalDeckId} is deferred. Flashcard tempId: ${tempFlashcardId}`);
+        return tempFlashcardId; 
+      } else {
+        // Deck ID is real, proceed with fully optimistic add and background backend call.
+        set(produce((state: FlashcardState) => {
+          // Ensure pending op for the flashcard itself is added before backend call
+          state.pendingOperations[tempFlashcardId] = {
+            type: 'add',
+            status: 'optimistic',
+            itemType: 'flashcard',
+            data: optimisticFlashcard, // data is the optimistic card with temp ID
+            originalData: undefined, 
+            timestamp: Date.now(),
+            operationSubType: undefined, 
+            waitsForTempId: undefined, 
+            waitsForItemType: undefined,
+          };
+          state.isLoading = false; // isLoading was set true earlier, reset if not globally managed for this
+        }));
+
+        // Perform backend operation in the background, don't await it here
+        trpcClient.flashcards.create.mutate(
+          { ...flashcardData, deckId: finalDeckId } // Ensure payload uses finalDeckId
+        )
+        .then(async (newFlashcardFromBackend) => {
+          const realFlashcardId = newFlashcardFromBackend.id;
+          const nowForUpdate = Date.now(); // Consistent timestamp for updates
+          set(produce((state: FlashcardState) => {
+            const cardIndex = state.flashcards.findIndex((f: Flashcard) => f.id === tempFlashcardId);
+            if (cardIndex !== -1) {
+              const userStatus = (newFlashcardFromBackend as any).userStatus;
               state.flashcards[cardIndex] = {
-                ...existingCard, 
-                ...finalCardData,
-                id: (updatedCardFromBackend.id || (updatedCardFromBackend as any).flashcardId) || existingCard.id,
-                createdAt: finalCardData.createdAt ? new Date(finalCardData.createdAt).getTime() : existingCard.createdAt,
-                updatedAt: finalCardData.updatedAt ? new Date(finalCardData.updatedAt).getTime() : optimisticUpdateTimestamp,
+                id: realFlashcardId,
+                front: newFlashcardFromBackend.front,
+                back: newFlashcardFromBackend.back,
+                contentType: (newFlashcardFromBackend.contentType as ContentType) || 'text',
+                mediaUrls: newFlashcardFromBackend.mediaUrls || [],
+                tags: newFlashcardFromBackend.tags || [],
+                deckId: finalDeckId, // Should be the real deckId used in payload
+                createdAt: newFlashcardFromBackend.createdAt ? new Date(newFlashcardFromBackend.createdAt).getTime() : nowForUpdate,
+                updatedAt: newFlashcardFromBackend.updatedAt ? new Date(newFlashcardFromBackend.updatedAt).getTime() : nowForUpdate,
+                interval: userStatus?.interval ?? 1,
+                easeFactor: userStatus?.easeFactor ?? 2.5,
+                repetitions: userStatus?.repetitions ?? 0,
+                dueDate: userStatus?.dueDate ? new Date(userStatus.dueDate).getTime() : nowForUpdate,
+                lastReviewed: userStatus?.lastReviewed ? new Date(userStatus.lastReviewed).getTime() : null,
+                isBookmarked: userStatus?.isBookmarked ?? false,
               };
             }
-            delete state.pendingOperations[id];
-            state.isLoading = false;
-          }));
-        } catch (error: any) {
-          set(produce((state: FlashcardState) => {
-            const cardIndex = state.flashcards.findIndex(c => c.id === id);
-            if (cardIndex !== -1 && state.pendingOperations[id]?.originalData) {
-              state.flashcards[cardIndex] = state.pendingOperations[id].originalData as Flashcard;
-            } else if (cardIndex !== -1) { 
-                state.flashcards[cardIndex] = originalCard;
+            // Update currentSessionCardQueue if the tempId was in it
+            const queueIndex = currentSessionCardQueue.indexOf(tempFlashcardId);
+            if (queueIndex !== -1) {
+              currentSessionCardQueue[queueIndex] = realFlashcardId;
             }
-            delete state.pendingOperations[id];
-            state.isLoading = false;
-            state.error = error.message || 'Failed to update flashcard';
-          }));
-          console.error("Error updating flashcard:", error);
-          throw error;
-        }
-      },
-      
-      deleteFlashcard: async (id) => {
-        const cardToDelete = get().flashcards.find(c => c.id === id);
-        if (!cardToDelete) {
-            console.error('Flashcard not found for delete:', id);
-            throw new Error('Flashcard not found');
-        }
-
-        set(produce((state: FlashcardState) => {
-          state.pendingOperations[id] = {
-            type: 'delete',
-            data: cardToDelete,
-            originalData: cardToDelete, 
-            timestamp: Date.now(),
-          };
-          state.flashcards = state.flashcards.filter(card => card.id !== id);
-          const deckIndex = state.decks.findIndex(d => d.id === cardToDelete.deckId);
-          if (deckIndex !== -1) {
-            state.decks[deckIndex].cardCount = Math.max(0, state.decks[deckIndex].cardCount - 1);
-            state.decks[deckIndex].updatedAt = new Date().toISOString();
-          }
-           state.isLoading = true;
-           state.error = null;
-        }));
-
-        try {
-          await trpcClient.flashcards.delete.mutate({ flashcardId: id }); 
-          
-          set(produce((state: FlashcardState) => {
-            delete state.pendingOperations[id];
+            delete state.pendingOperations[tempFlashcardId];
             state.isLoading = false;
           }));
-        } catch (error: any) {
+          // Process operations dependent on this flashcard having its real ID
+          await get()._processPendingOperationsForItem(tempFlashcardId, realFlashcardId, 'flashcard');
+        })
+        .catch((error: any) => {
+          console.error(`[FlashcardStore] Error adding flashcard (real deckId ${finalDeckId}, tempFlashcardId ${tempFlashcardId}) in background:`, error);
           set(produce((state: FlashcardState) => {
-            const opData = state.pendingOperations[id]?.originalData as Flashcard | undefined;
-            if (opData) {
-                if(!state.flashcards.find(f => f.id === opData.id)) {
-                    state.flashcards.push(opData);
-                }
-                const deckIndex = state.decks.findIndex(d => d.id === opData.deckId);
-                if (deckIndex !== -1) {
-                    const currentDeckCardCount = state.flashcards.filter(f => f.deckId === opData.deckId).length;
-                    state.decks[deckIndex].cardCount = currentDeckCardCount; 
-                }
+            // Rollback optimistic add of flashcard
+            state.flashcards = state.flashcards.filter((f: Flashcard) => f.id !== tempFlashcardId);
+            const deck = state.decks.find((d: Deck) => d.id === finalDeckId);
+            if (deck) {
+              deck.cardCount = Math.max(0, (deck.cardCount || 0) - 1);
             }
-            delete state.pendingOperations[id];
+            // Update pending operation to reflect failure
+            if (state.pendingOperations[tempFlashcardId]) {
+              // @ts-ignore adding custom error field or changing status
+              state.pendingOperations[tempFlashcardId].status = 'creation_failed'; 
+               // @ts-ignore
+              state.pendingOperations[tempFlashcardId].error = error.message || 'Unknown TRPC error for flashcard creation';
+            } else {
+              // Fallback if pending op was somehow missed, though it should have been added.
+              delete state.pendingOperations[tempFlashcardId]; 
+            }
             state.isLoading = false;
-            state.error = error.message || 'Failed to delete flashcard';
+            // Consider if a global error state needs to be set or a specific callback invoked
+            // For now, error is logged, and optimistic data is rolled back.
           }));
-          console.error("Error deleting flashcard:", error);
-          throw error;
-        }
-      },
-      
-      toggleBookmark: async (cardId) => {
-        const originalCard = get().flashcards.find(c => c.id === cardId);
-        if (!originalCard) {
-            console.error('Flashcard not found for toggleBookmark:', cardId);
-            throw new Error('Flashcard not found');
-        }
+        });
 
-        const newBookmarkState = !originalCard.isBookmarked;
-        const optimisticUpdateTimestamp = Date.now();
-        const optimisticFlashcard: Flashcard = { 
-            ...originalCard, 
-            isBookmarked: newBookmarkState, 
-            updatedAt: optimisticUpdateTimestamp 
+        return tempFlashcardId; // Return tempId immediately for UI responsiveness
+      }
+    },
+
+    updateFlashcard: async (id, cardUpdateData) => {
+      const originalCard = get().flashcards.find((f: Flashcard) => f.id === id);
+      if (!originalCard) {
+        throw new Error("Flashcard not found for update.");
+      }
+
+      const optimisticTimestamp = Date.now();
+      const optimisticCard: Flashcard = {
+        ...originalCard,
+        ...cardUpdateData,
+        updatedAt: optimisticTimestamp,
+      };
+
+      set(produce((state: FlashcardState) => {
+        const cardIndex = state.flashcards.findIndex((f: Flashcard) => f.id === id);
+        if (cardIndex !== -1) {
+          state.flashcards[cardIndex] = optimisticCard;
+        }
+        state.isLoading = true;
+        state.error = null;
+        state.pendingOperations[id] = {
+          type: 'update',
+          status: 'optimistic',
+          itemType: 'flashcard',
+          data: optimisticCard,
+          originalData: originalCard,
+          timestamp: Date.now(),
+          operationSubType: 'updateContent',
+          waitsForTempId: undefined,
+          waitsForItemType: undefined,
         };
+      }));
+
+      try {
+        let updatedFlashcardReponse: any; 
+        if (cardUpdateData.hasOwnProperty('isBookmarked') && Object.keys(cardUpdateData).length === 1) {
+          updatedFlashcardReponse = await trpcClient.flashcards.updateUserStatus.mutate({
+            flashcardId: id,
+            isBookmarked: cardUpdateData.isBookmarked,
+          });
+        } else {
+           updatedFlashcardReponse = await trpcClient.flashcards.updateContent.mutate({
+            flashcardId: id,
+            front: cardUpdateData.front,
+            back: cardUpdateData.back,
+            contentType: cardUpdateData.contentType as ContentType | undefined,
+            mediaUrls: cardUpdateData.mediaUrls,
+            tags: cardUpdateData.tags,
+          });
+        }
 
         set(produce((state: FlashcardState) => {
-          const cardIndex = state.flashcards.findIndex(c => c.id === cardId);
+          const cardIndex = state.flashcards.findIndex((f: Flashcard) => f.id === id);
           if (cardIndex !== -1) {
-            state.flashcards[cardIndex] = optimisticFlashcard;
+            const cardInState = state.flashcards[cardIndex];
+            if (updatedFlashcardReponse.hasOwnProperty('isBookmarked') && !updatedFlashcardReponse.hasOwnProperty('front')) { 
+              cardInState.isBookmarked = updatedFlashcardReponse.isBookmarked ?? cardInState.isBookmarked;
+              cardInState.updatedAt = updatedFlashcardReponse.updatedAt ? new Date(updatedFlashcardReponse.updatedAt).getTime() : optimisticTimestamp;
+              if (updatedFlashcardReponse.interval !== undefined) cardInState.interval = updatedFlashcardReponse.interval;
+              if (updatedFlashcardReponse.easeFactor !== undefined) cardInState.easeFactor = updatedFlashcardReponse.easeFactor;
+              if (updatedFlashcardReponse.repetitions !== undefined) cardInState.repetitions = updatedFlashcardReponse.repetitions;
+              if (updatedFlashcardReponse.dueDate !== undefined) cardInState.dueDate = new Date(updatedFlashcardReponse.dueDate).getTime();
+              if (updatedFlashcardReponse.lastReviewed !== undefined) cardInState.lastReviewed = updatedFlashcardReponse.lastReviewed ? new Date(updatedFlashcardReponse.lastReviewed).getTime() : null;
+            } else { 
+              cardInState.front = updatedFlashcardReponse.front ?? cardInState.front;
+              cardInState.back = updatedFlashcardReponse.back ?? cardInState.back;
+              cardInState.contentType = (updatedFlashcardReponse.contentType as ContentType) ?? cardInState.contentType;
+              cardInState.mediaUrls = updatedFlashcardReponse.mediaUrls ?? cardInState.mediaUrls;
+              cardInState.tags = updatedFlashcardReponse.tags ?? cardInState.tags;
+              cardInState.updatedAt = updatedFlashcardReponse.updatedAt ? new Date(updatedFlashcardReponse.updatedAt).getTime() : optimisticTimestamp;
+              if (updatedFlashcardReponse.userStatus) {
+                  cardInState.isBookmarked = updatedFlashcardReponse.userStatus.isBookmarked ?? cardInState.isBookmarked;
+                  cardInState.interval = updatedFlashcardReponse.userStatus.interval ?? cardInState.interval;
+                  cardInState.easeFactor = updatedFlashcardReponse.userStatus.easeFactor ?? cardInState.easeFactor;
+                  cardInState.repetitions = updatedFlashcardReponse.userStatus.repetitions ?? cardInState.repetitions;
+                  cardInState.dueDate = updatedFlashcardReponse.userStatus.dueDate ? new Date(updatedFlashcardReponse.userStatus.dueDate).getTime() : cardInState.dueDate;
+                  cardInState.lastReviewed = updatedFlashcardReponse.userStatus.lastReviewed ? new Date(updatedFlashcardReponse.userStatus.lastReviewed).getTime() : null;
+              }
+            }
           }
-          state.pendingOperations[cardId] = {
-            type: 'update',
-            data: optimisticFlashcard,
-            originalData: originalCard,
-            timestamp: Date.now(),
-          };
-           state.isLoading = true;
-           state.error = null;
+          delete state.pendingOperations[id];
+          state.isLoading = false;
         }));
+      } catch (error: any) {
+        set(produce((state: FlashcardState) => {
+          const cardIndex = state.flashcards.findIndex((f: Flashcard) => f.id === id);
+          if (cardIndex !== -1 && state.pendingOperations[id]?.originalData) {
+            state.flashcards[cardIndex] = state.pendingOperations[id].originalData as Flashcard;
+          }
+          delete state.pendingOperations[id];
+          state.isLoading = false;
+          state.error = error.message || "Failed to update flashcard";
+        }));
+        console.error("Error updating flashcard:", error);
+        throw error;
+      }
+    },
 
-        try {
-          const updatedStatus = await trpcClient.flashcards.updateUserStatus.mutate({ 
-            flashcardId: cardId, 
-            isBookmarked: newBookmarkState 
-          });
-          
-          set(produce((state: FlashcardState) => {
-            const cardIndex = state.flashcards.findIndex(c => c.id === cardId);
-            if (cardIndex !== -1) {
-                 const existingCard = state.flashcards[cardIndex];
-                 state.flashcards[cardIndex] = {
-                    ...existingCard, 
-                    isBookmarked: updatedStatus.isBookmarked,
-                    updatedAt: updatedStatus.updatedAt ? new Date(updatedStatus.updatedAt).getTime() : optimisticUpdateTimestamp,
-                    interval: updatedStatus.interval ?? existingCard.interval,
-                    easeFactor: updatedStatus.easeFactor ?? existingCard.easeFactor,
-                    repetitions: updatedStatus.repetitions ?? existingCard.repetitions,
-                    dueDate: updatedStatus.dueDate ? new Date(updatedStatus.dueDate).getTime() : existingCard.dueDate,
-                    lastReviewed: updatedStatus.lastReviewed ? new Date(updatedStatus.lastReviewed).getTime() : existingCard.lastReviewed,
-                 };
-            }
-            delete state.pendingOperations[cardId];
-            state.isLoading = false;
-          }));
-        } catch (error: any) {
-          set(produce((state: FlashcardState) => {
-            const cardIndex = state.flashcards.findIndex(c => c.id === cardId);
-             if (cardIndex !== -1 && state.pendingOperations[cardId]?.originalData) {
-              state.flashcards[cardIndex] = state.pendingOperations[cardId].originalData as Flashcard;
-            } else if (cardIndex !== -1) { 
-                state.flashcards[cardIndex] = originalCard;
-            }
-            delete state.pendingOperations[cardId];
-            state.isLoading = false;
-            state.error = error.message || 'Failed to toggle bookmark';
-          }));
-          console.error("Error toggling bookmark:", error);
-          throw error;
-        }
-      },
-      
-      startStudySession: (deckId) => {
-        if (get().sessionJustCompletedDeckId && get().sessionJustCompletedDeckId !== deckId) {
-          get().clearSessionJustCompleted();
-        }
-        if (get().sessionJustCompletedDeckId === deckId) {
-            get().clearSessionJustCompleted();
-        }
+    deleteFlashcard: async (id) => {
+      const originalCard = get().flashcards.find((f: Flashcard) => f.id === id);
+      if (!originalCard) {
+        throw new Error("Flashcard not found for deletion.");
+      }
+      const { deckId } = originalCard;
 
-        const dueCards = get().getDueFlashcardsForDeck(deckId);
-        
-        if (dueCards.length === 0) {
-          console.warn(`[FlashcardStore] startStudySession: No cards due for deck ${deckId}.`);
-          currentSessionCardQueue = []; 
+      set(produce((state: FlashcardState) => {
+        state.flashcards = state.flashcards.filter((f: Flashcard) => f.id !== id);
+        const deck = state.decks.find((d: Deck) => d.id === deckId);
+        if (deck) {
+          deck.cardCount = Math.max(0, (deck.cardCount || 0) - 1);
+          deck.updatedAt = new Date().toISOString();
+        }
+        state.isLoading = true;
+        state.error = null;
+        state.pendingOperations[id] = {
+          type: 'delete',
+          status: 'optimistic',
+          itemType: 'flashcard',
+          data: { id },
+          originalData: originalCard,
+          timestamp: Date.now(),
+          operationSubType: undefined,
+          waitsForTempId: undefined,
+          waitsForItemType: undefined,
+        };
+      }));
+
+      try {
+        await trpcClient.flashcards.delete.mutate({ flashcardId: id });
+        set(produce((state: FlashcardState) => {
+          delete state.pendingOperations[id];
+          state.isLoading = false;
+        }));
+      } catch (error: any) {
+        set(produce((state: FlashcardState) => {
+          const op = state.pendingOperations[id];
+          if (op && op.originalData) {
+            state.flashcards.push(op.originalData as Flashcard);
+            const deck = state.decks.find((d: Deck) => d.id === (op.originalData as Flashcard).deckId);
+            if (deck) {
+              deck.cardCount = (deck.cardCount || 0) + 1;
+            }
+          }
+          delete state.pendingOperations[id];
+          state.isLoading = false;
+          state.error = error.message || "Failed to delete flashcard";
+        }));
+        console.error("Error deleting flashcard:", error);
+        throw error;
+      }
+    },
+    
+    toggleBookmark: async (cardId: string) => {
+      const card = get().flashcards.find((c: Flashcard) => c.id === cardId);
+      if (!card) throw new Error("Card not found");
+      return get().updateFlashcard(cardId, { isBookmarked: !card.isBookmarked });
+    },
+
+    startStudySession: (deckId) => {
+      console.log("[FlashcardStore] startStudySession for deckId:", deckId);
+      const allCardsForDeck = get().flashcards.filter((f: Flashcard) => f.deckId === deckId);
+      const dueCards = getDueCards(allCardsForDeck).sort((a:Flashcard,b:Flashcard) => {
+          if(a.dueDate !== b.dueDate) return a.dueDate - b.dueDate;
+          return a.createdAt - b.createdAt;
+      }); 
+
+      currentSessionCardQueue = dueCards.map(c => c.id);
+      console.log("[FlashcardStore] currentSessionCardQueue set:", currentSessionCardQueue);
+
+      if (currentSessionCardQueue.length > 0) {
           set({ 
             currentDeckId: deckId,
-            studyProgress: null, 
-            error: "No cards due for review." 
+              studyProgress: {
+                  deckId: deckId,
+                  cardsLeft: currentSessionCardQueue.length,
+                  cardsStudied: 0,
+                  currentCardIndex: 0,
+              },
+              sessionJustCompletedDeckId: null, 
           });
-          return;
-        }
-        
-        currentSessionCardQueue = dueCards.map(card => card.id);
-        console.log(`[FlashcardStore] startStudySession: Deck ${deckId}, ${dueCards.length} due cards. Queue: [${currentSessionCardQueue.join(', ')}]`);
+          console.log("[FlashcardStore] Study session started with progress:", get().studyProgress);
+      } else {
+          console.log("[FlashcardStore] No due cards to study in deck:", deckId);
         set({
           currentDeckId: deckId,
           studyProgress: {
-            deckId,
+                  deckId: deckId,
+                  cardsLeft: 0,
+                  cardsStudied: allCardsForDeck.length, 
             currentCardIndex: 0,
-            cardsStudied: 0,
-            cardsLeft: currentSessionCardQueue.length,
-          },
-          error: null
-        });
-      },
+              },
+              sessionJustCompletedDeckId: deckId, 
+          });
+      }
+    },
+    
+    rateCard: async (cardId, rating) => {
+      const originalCard = get().flashcards.find((c: Flashcard) => c.id === cardId);
+      if(!originalCard) {
+          console.error("[FlashcardStore] Card not found for rating:", cardId);
+          throw new Error("Card not found for rating.");
+      }
+
+      const updatedSrsData = calculateNextReview(originalCard, rating);
+      const optimisticTimestamp = Date.now();
+      const optimisticallyRatedCard: Flashcard = {
+          ...originalCard,
+          ...updatedSrsData,
+          updatedAt: optimisticTimestamp,
+          lastReviewed: optimisticTimestamp 
+      };
       
-      rateCard: async (cardId, rating) => {
-        const originalCard = get().flashcards.find(c => c.id === cardId);
-        if(!originalCard) {
-            console.error("Card not found for rating:", cardId);
-            throw new Error("Card not found for rating.");
-        }
+      const tempOpId = `rate-${cardId}-${Date.now()}`;
 
-        const updatedSrsData = calculateNextReview(originalCard, rating);
-        const optimisticTimestamp = Date.now();
-        const optimisticallyRatedCard: Flashcard = {
-            ...originalCard,
-            ...updatedSrsData,
-            updatedAt: optimisticTimestamp,
-            lastReviewed: optimisticTimestamp 
-        };
-        
-        const tempOpId = `rate-${cardId}-${Date.now()}`;
-
-        set(produce((state: FlashcardState) => {
-            const cardIndex = state.flashcards.findIndex(card => card.id === cardId);
-            if (cardIndex !== -1) {
-                state.flashcards[cardIndex] = optimisticallyRatedCard;
-            }
-            state.pendingOperations[tempOpId] = {
-                type: 'update',
-                data: optimisticallyRatedCard,
-                originalData: originalCard,
-                timestamp: Date.now(),
-            };
-            console.log(`[FlashcardStore] Card ${cardId} rated (optimistically).`);
-        }));
-
-        try {
-          const backendSrsData = {
-            flashcardId: cardId,
-            interval: optimisticallyRatedCard.interval,
-            easeFactor: optimisticallyRatedCard.easeFactor,
-            repetitions: optimisticallyRatedCard.repetitions,
-            dueDate: new Date(optimisticallyRatedCard.dueDate),
-            lastReviewed: new Date(optimisticallyRatedCard.lastReviewed!),
+      set(produce((state: FlashcardState) => {
+          const cardIndex = state.flashcards.findIndex((card: Flashcard) => card.id === cardId);
+          if (cardIndex !== -1) {
+              state.flashcards[cardIndex] = optimisticallyRatedCard;
+          }
+          state.pendingOperations[tempOpId] = {
+              type: 'update',
+              status: cardId.startsWith('flashcard-temp-') ? 'pendingRealId' : 'optimistic',
+              itemType: 'flashcard',
+              data: optimisticallyRatedCard,
+              originalData: originalCard,
+              timestamp: Date.now(),
+              operationSubType: 'rateCard',
+              waitsForTempId: undefined,
+              waitsForItemType: undefined,
           };
-          const updatedStatus = await trpcClient.flashcards.updateUserStatus.mutate(backendSrsData);
-          
-          set(produce((state: FlashcardState) => {
-            const cardIndex = state.flashcards.findIndex(c => c.id === cardId);
-            if (cardIndex !== -1) {
-                state.flashcards[cardIndex].updatedAt = updatedStatus.updatedAt ? new Date(updatedStatus.updatedAt).getTime() : optimisticTimestamp;
-                state.flashcards[cardIndex].interval = updatedStatus.interval ?? state.flashcards[cardIndex].interval;
-                state.flashcards[cardIndex].easeFactor = updatedStatus.easeFactor ?? state.flashcards[cardIndex].easeFactor;
-                state.flashcards[cardIndex].repetitions = updatedStatus.repetitions ?? state.flashcards[cardIndex].repetitions;
-                state.flashcards[cardIndex].dueDate = updatedStatus.dueDate ? new Date(updatedStatus.dueDate).getTime() : state.flashcards[cardIndex].dueDate;
-                state.flashcards[cardIndex].lastReviewed = updatedStatus.lastReviewed ? new Date(updatedStatus.lastReviewed).getTime() : state.flashcards[cardIndex].lastReviewed;
+          console.log(`[FlashcardStore] Card ${cardId} rated (optimistically).`);
+      }));
+
+      try {
+        const isTempCardId = cardId.startsWith('flashcard-temp-');
+        if (isTempCardId) {
+          console.log(`[FlashcardStore] Rating for temporary card ${cardId} will be deferred until card is confirmed by its addFlashcard operation.`);
+        } else {
+          const pendingOp = get().pendingOperations[tempOpId];
+          if (pendingOp) {
+            await executePendingUpdateOperation(pendingOp, { set, get, trpcClient });
+            set(produce((state: FlashcardState) => {
+                delete state.pendingOperations[tempOpId]; 
+            }));
+          } else {
+            console.warn(`[FlashcardStore] rateCard: Could not find pending operation for ${tempOpId} to execute immediately for real card ID ${cardId}. This shouldn't happen.`);
+          }
+        }
+      } catch (error: any) {
+        set(produce((state: FlashcardState) => {
+            const cardIndex = state.flashcards.findIndex((card: Flashcard) => card.id === cardId);
+            if (cardIndex !== -1 && originalCard) {
+                state.flashcards[cardIndex] = originalCard; 
             }
-            delete state.pendingOperations[tempOpId];
-          }));
-        } catch (error: any) {
-          set(produce((state: FlashcardState) => {
-            const cardIndex = state.flashcards.findIndex(c => c.id === cardId);
-            if (cardIndex !== -1) state.flashcards[cardIndex] = originalCard; 
-            delete state.pendingOperations[tempOpId];
+            delete state.pendingOperations[tempOpId]; 
             state.error = error.message || "Failed to sync card rating";
-          }));
-          console.error("Error syncing card rating:", error);
-          throw error;
+        }));
+        console.error("[FlashcardStore] Error syncing card rating:", error);
+        throw error; 
+      }
+    },
+    
+    endStudySession: () => {
+      console.log("[FlashcardStore] endStudySession called.");
+      currentSessionCardQueue = [];
+      get().clearSessionJustCompleted(); 
+      set({
+        currentDeckId: null,
+        studyProgress: null
+      });
+    },
+    
+    getFlashcardsForDeck: (deckId) => {
+      return get().flashcards.filter((card: Flashcard) => card.deckId === deckId);
+    },
+    
+    getDueFlashcardsForDeck: (deckId) => {
+      const cardsInDeck = get().flashcards.filter((f: Flashcard) => f.deckId === deckId);
+      return getDueCards(cardsInDeck);
+    },
+    
+    getCurrentCard: () => {
+      const { studyProgress, flashcards, currentDeckId, sessionJustCompletedDeckId } = get();
+      console.log('[FlashcardStore] getCurrentCard called. studyProgress:', JSON.stringify(studyProgress), 'queueLength:', currentSessionCardQueue.length);
+
+      if (!studyProgress || currentSessionCardQueue.length === 0 || studyProgress.currentCardIndex >= currentSessionCardQueue.length) {
+        console.log('[FlashcardStore] getCurrentCard: Condition met to return null. Index:', studyProgress?.currentCardIndex, 'Queue length:', currentSessionCardQueue.length);
+        if (studyProgress && studyProgress.cardsStudied > 0 && studyProgress.cardsLeft === 0 && studyProgress.deckId) {
+          if (sessionJustCompletedDeckId !== studyProgress.deckId) { 
+            console.log('[FlashcardStore] getCurrentCard: Marking session as completed because no current card and session was finished.');
+            get().markSessionAsCompleted(studyProgress.deckId);
+          }
         }
-      },
+        return null;
+      }
+      const currentCardId = currentSessionCardQueue[studyProgress.currentCardIndex];
+      console.log('[FlashcardStore] getCurrentCard: Returning cardId:', currentCardId);
+      return flashcards.find((f: Flashcard) => f.id === currentCardId) || null;
+    },
+    
+    getNextCard: () => {
+      const { studyProgress, currentDeckId } = get();
+      console.log('[FlashcardStore] getNextCard called. studyProgress before update:', JSON.stringify(studyProgress), 'queueLength:', currentSessionCardQueue.length);
+
+      if (!studyProgress || !currentDeckId) {
+        console.log("[FlashcardStore] getNextCard: No study progress or currentDeckId.");
+        return null;
+      }
       
-      endStudySession: () => {
-        console.log("[FlashcardStore] endStudySession called.");
-        currentSessionCardQueue = [];
-        get().clearSessionJustCompleted(); 
-        set({
-          currentDeckId: null,
-          studyProgress: null
-        });
-      },
-      
-      getFlashcardsForDeck: (deckId) => {
-        return get().flashcards.filter(card => card.deckId === deckId);
-      },
-      
-      getDueFlashcardsForDeck: (deckId) => {
-        const cardsInDeck = get().flashcards.filter(f => f.deckId === deckId);
-        return getDueCards(cardsInDeck);
-      },
-      
-      getCurrentCard: () => {
-        const { studyProgress, flashcards } = get();
-        if (!studyProgress || currentSessionCardQueue.length === 0 || studyProgress.currentCardIndex >= currentSessionCardQueue.length) {
-          return null;
-        }
-        const currentCardId = currentSessionCardQueue[studyProgress.currentCardIndex];
-        return flashcards.find(f => f.id === currentCardId) || null;
-      },
-      
-      getNextCard: () => {
-        const { studyProgress } = get(); 
-        if (!studyProgress || currentSessionCardQueue.length === 0) {
-          console.log("[FlashcardStore] getNextCard: No study progress or empty session queue.");
-          return null;
-        }
-        
-        const newIndex = studyProgress.currentCardIndex + 1;
-        
-        if (newIndex >= currentSessionCardQueue.length) {
-          console.log("[FlashcardStore] getNextCard: Reached end of session queue.");
-          set(produce((state: FlashcardState) => {
-            if (state.studyProgress) {
-              state.studyProgress.cardsStudied = state.studyProgress.cardsStudied + (currentSessionCardQueue.length - state.studyProgress.currentCardIndex) -1;
-              state.studyProgress.cardsLeft = 0;
-              state.studyProgress.currentCardIndex = currentSessionCardQueue.length;
-            }
-          }));
-          return null; 
-        }
-        
+      const currentIdx = studyProgress.currentCardIndex;
+      const queueLength = currentSessionCardQueue.length;
+
+      if (currentIdx < queueLength - 1) {
+        const newIndex = currentIdx + 1;
+        console.log(`[FlashcardStore] getNextCard: Advancing to index ${newIndex} in queue of length ${queueLength}`);
         set(produce((state: FlashcardState) => {
           if (state.studyProgress) {
             state.studyProgress.currentCardIndex = newIndex;
             state.studyProgress.cardsStudied += 1;
             state.studyProgress.cardsLeft -=1;
+            console.log('[FlashcardStore] getNextCard: studyProgress after update (advancing):', JSON.stringify(state.studyProgress));
           }
         }));
-        
         const nextCardId = currentSessionCardQueue[newIndex];
-        return get().flashcards.find(f => f.id === nextCardId) || null;
-      },
-      
-      getTotalCardsStudied: () => {
-        return get().flashcards.reduce((sum, card) => sum + card.repetitions, 0);
-      },
-      
-      getAverageEaseFactor: () => {
-        const reviewedCards = get().flashcards.filter(f => f.lastReviewed !== null);
-        if (reviewedCards.length === 0) return 2.5; 
-        const sumEase = reviewedCards.reduce((sum, card) => sum + card.easeFactor, 0);
-        return sumEase / reviewedCards.length;
-      },
-      
-      getDeckCompletionRate: (deckId) => {
-        const deckCards = get().flashcards.filter(f => f.deckId === deckId);
-        if (deckCards.length === 0) return 0;
-        const completedCards = deckCards.filter(f => f.interval > 21); 
-        return (completedCards.length / deckCards.length) * 100;
-      },
-      
-      getStreak: () => {
-        return 0;
-      },
-      
-      resetAllProgress: () => {
-        const currentTimestamp = Date.now();
+        return get().flashcards.find((f: Flashcard) => f.id === nextCardId) || null;
+      } else {
+        console.log(`[FlashcardStore] getNextCard: Reached end of queue. Current index: ${currentIdx}, Queue length: ${queueLength}`);
         set(produce((state: FlashcardState) => {
-          state.flashcards.forEach(card => {
-            card.interval = 1;
-            card.easeFactor = 2.5;
-            card.repetitions = 0;
-            card.dueDate = currentTimestamp; 
-            card.lastReviewed = null;
-            card.updatedAt = currentTimestamp; 
-          });
+          if (state.studyProgress) {
+            state.studyProgress.cardsStudied += 1;
+            state.studyProgress.cardsLeft = 0;
+            state.studyProgress.currentCardIndex = queueLength; 
+            console.log('[FlashcardStore] getNextCard: studyProgress after update (end of queue):', JSON.stringify(state.studyProgress));
+          }
         }));
-      },
+        if (currentDeckId) {
+          console.log('[FlashcardStore] getNextCard: Marking session as completed because end of queue reached.');
+          get().markSessionAsCompleted(currentDeckId!);
+        }
+        return null;
+      }
+    },
       
-      markSessionAsCompleted: (deckId: string) => {
-        console.log(`[FlashcardStore] markSessionAsCompleted for deck: ${deckId}`);
-        set({ sessionJustCompletedDeckId: deckId });
-      },
+    getTotalCardsStudied: () => {
+      return get().flashcards.filter((card: Flashcard) => card.repetitions > 0).length;
+    },
+      
+    getAverageEaseFactor: () => {
+      const reviewedCards = get().flashcards.filter((card: Flashcard) => card.repetitions > 0);
+      if (reviewedCards.length === 0) return 2.5;
+      const totalEase = reviewedCards.reduce((sum: number, card: Flashcard) => sum + card.easeFactor, 0);
+      return totalEase / reviewedCards.length;
+    },
+      
+    getDeckCompletionRate: (deckId) => {
+      const deckCards = get().flashcards.filter((f: Flashcard) => f.deckId === deckId);
+      if (deckCards.length === 0) return 0;
+      const completedCards = deckCards.filter((f: Flashcard) => f.interval > 21); 
+      return (completedCards.length / deckCards.length) * 100;
+    },
+      
+    getStreak: () => {
+      return 0;
+    },
+      
+    resetAllProgress: () => {
+      const currentTimestamp = Date.now();
+      set(produce((state: FlashcardState) => {
+      state.flashcards.forEach((card: Flashcard) => {
+          card.interval = 1;
+          card.easeFactor = 2.5;
+          card.repetitions = 0;
+        card.dueDate = currentTimestamp; 
+          card.lastReviewed = null;
+        card.updatedAt = currentTimestamp; 
+        });
+      state.studyProgress = null;
+      state.currentDeckId = null;
+      currentSessionCardQueue = [];
+      state.sessionJustCompletedDeckId = null;
+      }));
+      console.log("[FlashcardStore] All flashcard progress has been reset.");
+    },
+      
+    markSessionAsCompleted: (deckId: string) => {
+      console.log(`[FlashcardStore] markSessionAsCompleted for deck: ${deckId}`);
+      set({ sessionJustCompletedDeckId: deckId });
+    },
 
-      clearSessionJustCompleted: () => {
-        console.log('[FlashcardStore] clearSessionJustCompleted');
-        set({ sessionJustCompletedDeckId: null });
-      },
-    }),
+    clearSessionJustCompleted: () => {
+      console.log('[FlashcardStore] clearSessionJustCompleted');
+      set({ sessionJustCompletedDeckId: null });
+    },
+
+    clearTempIdMapping: (tempId: string) => {
+      set(produce((state: FlashcardState) => {
+        if (state.tempIdToRealIdMap && state.tempIdToRealIdMap[tempId]) {
+          delete state.tempIdToRealIdMap[tempId];
+          console.log(`[FlashcardStore] Cleared tempId mapping for ${tempId}`);
+        } else {
+          console.warn(`[FlashcardStore] clearTempIdMapping: No mapping found for tempId ${tempId}`);
+        }
+      }));
+    },
+
+    _processPendingOperationsForItem: async (tempParentId, realParentId, parentItemType) => {
+      console.log(`[FlashcardStore] _processPendingOperationsForItem called for parent ${parentItemType}: ${tempParentId} -> ${realParentId}`);
+      const pendingOps = { ...get().pendingOperations }; // Shallow copy to iterate safely
+      let processedOpKeys: string[] = []; // Keep track of ops processed in this run to avoid issues if recursive calls modify pendingOps
+
+      for (const opKey in pendingOps) {
+        if (processedOpKeys.includes(opKey)) continue; // Skip if already handled in this run (e.g. by a recursive call)
+
+        const op = pendingOps[opKey];
+
+        // Case 1: An 'update' or 'delete' operation was on an item that now has its real ID confirmed.
+        // Example: A flashcard was rated (update) while its own ID was temp, and now its real ID is known.
+        if ((op.type === 'update' || op.type === 'delete') && op.status === 'pendingRealId' && 
+            op.data?.id === tempParentId && op.itemType === parentItemType) {
+          
+          console.log(`[FlashcardStore] Processing '${op.type}' (pendingRealId) operation ${opKey} for item ${realParentId}`);
+          const operationDataWithRealId = { ...op.data, id: realParentId };
+          const operationToExecute = { ...op, data: operationDataWithRealId };
+
+          try {
+            if (op.type === 'update' && op.itemType === 'flashcard' && op.operationSubType === 'rateCard') {
+              // Specific handling for deferred rating
+              await executePendingUpdateOperation(operationToExecute, { set, get, trpcClient });
+            } else if (op.type === 'update' && op.itemType === 'flashcard') {
+              // Generic flashcard content update (if we add such deferred updates)
+              // await executePendingFlashcardContentUpdate(operationToExecute, { set, get, trpcClient });
+               console.warn("[FlashcardStore] Generic deferred flashcard content update not yet implemented in _processPendingOperationsForItem");
+            } else if (op.type === 'update' && op.itemType === 'deck') {
+              // Generic deck update (if we add such deferred updates)
+               console.warn("[FlashcardStore] Generic deferred deck update not yet implemented in _processPendingOperationsForItem");
+            }
+            // Add handlers for other deferred update/delete types as needed
+
+            set(produce((state: FlashcardState) => {
+              delete state.pendingOperations[opKey];
+            }));
+            processedOpKeys.push(opKey);
+          } catch (error) {
+            console.error(`[FlashcardStore] Error executing deferred ${op.type} op ${opKey} for ${realParentId}:`, error);
+            // Rollback or error handling for this specific failed deferred op might be needed here
+            // For now, it's logged, and the op might remain if executePending... doesn't clean up on its own errors.
+          }
+        }
+        // Case 2: A child 'add' operation was waiting for this parent's real ID.
+        // Example: A flashcard add was deferred because its deckId was temporary.
+        else if (op.type === 'add' && op.status === 'pendingDependency' && 
+                 op.waitsForTempId === tempParentId && op.waitsForItemType === parentItemType) {
+          
+          console.log(`[FlashcardStore] Processing deferred dependent 'add' operation ${opKey} (itemType: ${op.itemType}) for parent ${realParentId}`);
+          
+          // This is the optimistic child data that was stored, its own ID is temporary.
+          const optimisticChildDataWithTempId = op.data;
+          const tempChildId = optimisticChildDataWithTempId.id;
+
+          // Prepare the payload for the backend, updating the parent foreign key.
+          let backendPayload;
+          if (op.itemType === 'flashcard') {
+            backendPayload = { ...optimisticChildDataWithTempId, deckId: realParentId };
+            delete backendPayload.id; // Backend create doesn't want the temp child ID
+          } else {
+            // Handle other child types if necessary (e.g., a sub-deck, though not in our current model)
+            console.error("[FlashcardStore] Deferred add for unexpected itemType:", op.itemType);
+            continue; // Skip this operation
+          }
+
+          try {
+            let newChildFromBackend: any;
+            if (op.itemType === 'flashcard') {
+              newChildFromBackend = await trpcClient.flashcards.create.mutate(backendPayload as any);
+            }
+            // Add else if for other types like sub-decks if they become dependent adds
+
+            if (newChildFromBackend) {
+              const realChildId = newChildFromBackend.id;
+              console.log(`[FlashcardStore] Dependent ${op.itemType} ${tempChildId} created successfully with real ID ${realChildId}`);
+
+              set(produce((state: FlashcardState) => {
+                if (op.itemType === 'flashcard') {
+                  const cardIndex = state.flashcards.findIndex((f: Flashcard) => f.id === tempChildId);
+                  if (cardIndex !== -1) {
+                    const userStatus = (newChildFromBackend as any).userStatus;
+                    state.flashcards[cardIndex] = {
+                      id: realChildId,
+                      front: newChildFromBackend.front,
+                      back: newChildFromBackend.back,
+                      contentType: (newChildFromBackend.contentType as ContentType) || 'text',
+                      mediaUrls: newChildFromBackend.mediaUrls || [],
+                      tags: newChildFromBackend.tags || [],
+                      deckId: realParentId, // Ensure it has the real parent ID
+                      createdAt: newChildFromBackend.createdAt ? new Date(newChildFromBackend.createdAt).getTime() : Date.now(),
+                      updatedAt: newChildFromBackend.updatedAt ? new Date(newChildFromBackend.updatedAt).getTime() : Date.now(),
+                      interval: userStatus?.interval ?? 1,
+                      easeFactor: userStatus?.easeFactor ?? 2.5,
+                      repetitions: userStatus?.repetitions ?? 0,
+                      dueDate: userStatus?.dueDate ? new Date(userStatus.dueDate).getTime() : Date.now(),
+                      lastReviewed: userStatus?.lastReviewed ? new Date(userStatus.lastReviewed).getTime() : null,
+                      isBookmarked: userStatus?.isBookmarked ?? false,
+                    };
+                  }
+                  const queueIndex = currentSessionCardQueue.indexOf(tempChildId);
+                  if (queueIndex !== -1) currentSessionCardQueue[queueIndex] = realChildId;
+                }
+                // Add similar update logic for other item types if needed
+                delete state.pendingOperations[opKey]; // Remove this processed deferred add
+              }));
+              processedOpKeys.push(opKey);
+
+              // RECURSIVE CALL: Now that this child item has its real ID, 
+              // process any operations that might have been dependent on IT.
+              await get()._processPendingOperationsForItem(tempChildId, realChildId, op.itemType);
+
+            } else {
+              throw new Error(`Backend creation for deferred ${op.itemType} did not return an object.`);
+            }
+
+          } catch (error) {
+            console.error(`[FlashcardStore] Error processing deferred 'add' for ${op.itemType} ${tempChildId} (opKey: ${opKey}):`, error);
+            set(produce((state: FlashcardState) => {
+              if (op.itemType === 'flashcard') {
+                state.flashcards = state.flashcards.filter(f => f.id !== tempChildId);
+                const parentDeck = state.decks.find(d => d.id === realParentId); // Parent ID is real now
+                if (parentDeck) parentDeck.cardCount = Math.max(0, (parentDeck.cardCount || 0) - 1);
+              }
+              // Add rollback for other item types if needed
+              delete state.pendingOperations[opKey];
+              state.error = `Failed to add dependent ${op.itemType}`;
+            }));
+            processedOpKeys.push(opKey); // Ensure it's marked as processed even on failure to prevent re-runs
+          }
+        }
+      }
+      // Final cleanup of any operations that might have been added by recursive calls and processed.
+      // This is a bit tricky; the simple processedOpKeys might not be enough if new ops are added with keys that were already iterated over.
+      // A more robust solution might involve re-fetching pendingOps if the map changes significantly during iteration.
+      // For now, this handles the direct items in the initial pendingOps snapshot.
+    },
+});
+
+export const useFlashcardStore = create<FlashcardState>()(
+  persist(
+    storeImplementation,
     {
       name: 'flashcard-storage',
       storage: createJSONStorage(() => AsyncStorage),
@@ -841,105 +1109,6 @@ export const useFlashcardStore = create<FlashcardState>()(
         decks: state.decks,
         flashcards: state.flashcards,
       }),
-      onRehydrateStorage: () => {
-        console.log('[FlashcardStore] Hydration process starting.');
-        return (hydratedState, error) => {
-          if (error) {
-            console.error('[FlashcardStore] Hydration error:', error);
-            useFlashcardStore.setState({ isLoading: false, error: "Failed to load saved data.", pendingOperations: {} });
-          } else if (hydratedState) {
-            console.log('[FlashcardStore] Hydration successful.');
-            useFlashcardStore.setState(produce((draft: FlashcardState) => {
-                draft.isLoading = false;
-                draft.error = null;
-                draft.pendingOperations = {};
-                draft.currentDeckId = null;
-                draft.studyProgress = null;
-                draft.sessionJustCompletedDeckId = null;
-
-                draft.decks = (hydratedState.decks || []).map(d => ({...d, createdAt: String(d.createdAt), updatedAt: String(d.updatedAt)}));
-                draft.flashcards = (hydratedState.flashcards || []).map(f => ({
-                    ...f, 
-                    createdAt: Number(f.createdAt), 
-                    updatedAt: Number(f.updatedAt), 
-                    dueDate: Number(f.dueDate),
-                    lastReviewed: f.lastReviewed ? Number(f.lastReviewed) : null,
-                    isBookmarked: f.isBookmarked || false,
-                    contentType: f.contentType as ContentType || 'text',
-                }));
-            }));
-          } else {
-             console.log('[FlashcardStore] Hydration complete, but no persisted state found. Initializing defaults.');
-             useFlashcardStore.setState({
-                isLoading: false, 
-                error: null, 
-                pendingOperations: {}, 
-                currentDeckId: null, 
-                studyProgress: null, 
-                sessionJustCompletedDeckId: null,
-                decks: [], 
-                flashcards: [] 
-            });
-          }
-        };
-      },
     }
   )
 );
-
-let hydrationDone = false;
-const unsubHydration = useFlashcardStore.persist.onFinishHydration(() => {
-  if (!hydrationDone) {
-    hydrationDone = true; 
-    const state = useFlashcardStore.getState();
-    
-    console.log('[FlashcardStore] onFinishHydration triggered.');
-
-    const flashcardsNeedNormalization = state.flashcards.some(
-        (card: Flashcard) => typeof card.isBookmarked === 'undefined' || 
-                             typeof card.createdAt !== 'number' || 
-                             typeof card.updatedAt !== 'number' ||
-                             typeof card.dueDate !== 'number' ||
-                             (card.lastReviewed !== null && typeof card.lastReviewed !== 'number') ||
-                             !['text', 'image', 'audio', 'video', 'mixed', 'equation'].includes(card.contentType)
-    );
-    const decksNeedNormalization = state.decks.some(
-        (deck: Deck) => typeof deck.createdAt !== 'string' || typeof deck.updatedAt !== 'string'
-    );
-
-    if (flashcardsNeedNormalization || decksNeedNormalization) {
-        useFlashcardStore.setState(produce((draft: FlashcardState) => {
-            draft.flashcards.forEach(card => {
-                card.isBookmarked = card.isBookmarked || false;
-                card.createdAt = Number(card.createdAt);
-                card.updatedAt = Number(card.updatedAt);
-                card.dueDate = Number(card.dueDate);
-                card.lastReviewed = card.lastReviewed ? Number(card.lastReviewed) : null;
-                if (!['text', 'image', 'audio', 'video', 'mixed', 'equation'].includes(card.contentType)) {
-                    card.contentType = 'text';
-                }
-            });
-            draft.decks.forEach(deck => {
-                deck.createdAt = String(deck.createdAt);
-                deck.updatedAt = String(deck.updatedAt);
-            });
-        }), true); 
-        console.log('[FlashcardStore] Post-hydration data normalization applied via onFinishHydration.');
-    }
-
-    if ((!state.decks || state.decks.length === 0) && (!state.flashcards || state.flashcards.length === 0)) {
-      console.log("[FlashcardStore] Persisted state is empty post-hydration. Initializing with mocks.");
-      useFlashcardStore.getState().initializeStoreWithMocks();
-    }
-    unsubHydration(); 
-  }
-});
-
-useFlashcardStore.setState({
-    isLoading: false, 
-    error: null, 
-    pendingOperations: {}, 
-    currentDeckId: null,
-    studyProgress: null,
-    sessionJustCompletedDeckId: null,
-});

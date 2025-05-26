@@ -234,6 +234,20 @@ export default function StudySessionScreen() {
     imgTranslateY.value = 0;
   }, [currentCard?.id, imgScale, imgTranslateX, imgTranslateY]); // Added img animated values to dep array
   
+  useEffect(() => {
+    // This effect runs when currentCard (specifically its id) changes,
+    // or when the component mounts with an initial card.
+    if (currentCard) { 
+        console.log(`[StudySessionScreen] New card detected (ID: ${currentCard.id}), resetting card position and style.`);
+        translateX.value = withSpring(0); 
+        translateY.value = withSpring(0);
+        rotate.value = withTiming(0); // Rotation usually better withTiming for a direct reset
+        cardBorderColor.value = withTiming(colors.gray[200]); // Reset border color for new card
+    }
+    // Ensure the front of the card is shown when a new card loads
+    setShowBack(false); 
+  }, [currentCard?.id]); // Key dependency
+  
   const handleNoCardsLeft = () => {
     console.log('[StudySessionScreen] handleNoCardsLeft: All cards session complete or deck empty.');
     // The primary UI for "No cards left" is handled by the conditional JSX.
@@ -263,25 +277,31 @@ export default function StudySessionScreen() {
   
   const handleRateCard = async (rating: DifficultyRating) => {
     if (!currentCard || isRating || isPending) return;
+
+    setIsRating(true);
+    const cardIdToRate = currentCard.id; // Capture ID before potential optimistic changes
+
+    // Initiate store action but don't await here for UI speed.
+    // Handle promise for error logging/potential non-blocking UI feedback.
+    rateCard(cardIdToRate, rating)
+      .catch((error) => {
+        console.error("Error in handleRateCard (background sync):", error);
+        // Optionally: Show a non-blocking toast message here if sync fails
+        // Alert.alert("Sync Error", "Failed to sync rating with server.");
+      });
+
+    // Optimistically get the next card immediately
+    const nextCard = getNextCard(); 
     
-    try {
-      setIsRating(true);
-      await rateCard(currentCard.id, rating);
-      setShowBack(false);
-      setSwipeDirection(null);
-      setForceRefresh(prev => prev + 1);
-    } catch (error) {
-      Alert.alert(
-        "Error",
-        "Failed to rate card. Please try again.",
-        [{ text: "OK" }]
-      );
-    } finally {
-      setIsRating(false);
-    }
+    setShowBack(false); // Reset flip state for the new card (if any)
+    setSwipeDirection(null); // Reset swipe direction hint
+    // Note: setIsRating(false) will be called in the finally block if we re-introduce it,
+    // or can be called here if we are sure the critical path is done.
+    // For now, let's ensure it's reset.
+    setIsRating(false);
   };
   
-  const handleDeleteCard = async () => {
+  const handleDeleteCard = async () => { // Keep async for Alert pattern if needed, but core logic changes
     if (!currentCard || isDeleting || isPending) return;
 
     Alert.alert(
@@ -290,24 +310,34 @@ export default function StudySessionScreen() {
       [
         {
           text: "Cancel",
-          style: "cancel"
+          style: "cancel",
+          onPress: () => setIsDeleting(false), // Ensure isDeleting is reset if cancelled
         },
         {
           text: "Delete",
-          onPress: async () => {
-            try {
-              setIsDeleting(true);
-              await deleteFlashcard(currentCard.id);
-              setForceRefresh(prev => prev + 1);
-            } catch (error) {
-              Alert.alert(
-                "Error",
-                "Failed to delete card. Please try again.",
-                [{ text: "OK" }]
-              );
-            } finally {
-              setIsDeleting(false);
+          onPress: () => { // onPress is synchronous here
+            if (!currentCard) { // Re-check in case currentCard became null
+                setIsDeleting(false);
+                return;
             }
+            setIsDeleting(true);
+            const cardIdToDelete = currentCard.id;
+
+            deleteFlashcard(cardIdToDelete)
+              .catch((error) => {
+                console.error("Error in handleDeleteCard (background sync):", error);
+                // Optionally: Show a non-blocking toast
+                // Alert.alert("Sync Error", "Failed to sync deletion with server.");
+              });
+            
+            // Optimistically get the next card immediately
+            const nextCardAfterDelete = getNextCard();
+
+            setShowBack(false); // Reset flip state
+            // setIsDeleting(false) should be called after the optimistic UI update is stable.
+            // The useEffect for currentCard.id change will handle card position reset.
+            // Let's ensure isDeleting is reset.
+            setIsDeleting(false); 
           },
           style: "destructive"
         }

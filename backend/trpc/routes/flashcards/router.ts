@@ -16,8 +16,8 @@ const updateUserFlashcardStatusInput = z.object({
   interval: z.number().int().positive().optional(),
   easeFactor: z.number().positive().optional(),
   repetitions: z.number().int().nonnegative().optional(),
-  dueDate: z.date().optional(),
-  lastReviewed: z.date().optional(),
+  dueDate: z.string().datetime({ offset: true, precision: 3 }).optional(),
+  lastReviewed: z.string().datetime({ offset: true, precision: 3 }).optional(),
   isBookmarked: z.boolean().optional(),
   isLearned: z.boolean().optional(),
 });
@@ -101,10 +101,24 @@ export const flashcardRouter = createTRPCRouter({
     .input(updateUserFlashcardStatusInput)
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
-      const { flashcardId, ...updateData } = input;
+      const { flashcardId, ...updateDataRest } = input;
 
-      // Check if there's anything to update
-      if (Object.keys(updateData).length === 0) {
+      // Manual date string to Date object conversion for Prisma
+      const updateDataForPrisma: any = { ...updateDataRest };
+      if (updateDataRest.dueDate) {
+        updateDataForPrisma.dueDate = new Date(updateDataRest.dueDate);
+      }
+      if (updateDataRest.lastReviewed) {
+        updateDataForPrisma.lastReviewed = new Date(updateDataRest.lastReviewed);
+      }
+      // Remove original string dates if they exist to avoid passing them to Prisma if not converted
+      // (though spread syntax above should handle it if keys match)
+      // delete updateDataForPrisma.dueDate; 
+      // delete updateDataForPrisma.lastReviewed;
+
+      // Check if there's anything to update after potential date conversions
+      // This check might need refinement if only dates were present and converted
+      if (Object.keys(updateDataForPrisma).length === 0) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'No update data provided.',
@@ -132,7 +146,7 @@ export const flashcardRouter = createTRPCRouter({
           where: {
             id: existingStatus.id,
           },
-          data: updateData,
+          data: updateDataForPrisma, // Use the data with Date objects
         });
         return updatedStatus;
       } catch (error) {

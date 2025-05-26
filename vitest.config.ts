@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import path from 'path'; // Import path module
 
 export default defineConfig({
   test: {
@@ -29,5 +30,16 @@ export default defineConfig({
         'vitest.config.ts',
       ],
     },
+  },
+  resolve: { // Add resolve configuration
+    alias: {
+      '@': path.resolve(__dirname, './'), // Map @ to the project root
+    },
+  },
+  ssr: {
+    noExternal: ['react-native'],
+  },
+  optimizeDeps: {
+    include: ['react-native'],
   },
 }); 

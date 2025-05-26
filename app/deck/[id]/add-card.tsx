@@ -11,13 +11,22 @@ import { useFlashcardStore } from "@/store/flashcard-store";
 import { ContentType } from "@/types";
 
 export default function AddCardScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: routeDeckId } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   
   const decks = useFlashcardStore(state => state.decks);
+  const tempIdToRealIdMap = useFlashcardStore(state => state.tempIdToRealIdMap);
   const addFlashcard = useFlashcardStore(state => state.addFlashcard);
   
-  const deck = decks.find(d => d.id === id);
+  let deck = decks.find(d => d.id === routeDeckId);
+
+  if (!deck && routeDeckId && routeDeckId.startsWith('deck-temp-')) {
+    const realId = tempIdToRealIdMap && tempIdToRealIdMap[routeDeckId];
+    if (realId) {
+      console.log(`[AddCardScreen] Deck not found with tempId ${routeDeckId}, but realId ${realId} found in map. Attempting to find with realId.`);
+      deck = decks.find(d => d.id === realId);
+    }
+  }
   
   const [front, setFront] = useState("");
   const [back, setBack] = useState("");
@@ -70,7 +79,7 @@ export default function AddCardScreen() {
     }
   };
   
-  const handleAddCard = () => {
+  const handleAddCard = async () => {
     if (!front.trim()) {
       Alert.alert("Error", "Please enter front side content");
       return;
@@ -83,34 +92,44 @@ export default function AddCardScreen() {
     
     const mediaUrls = mediaUrl ? [mediaUrl] : undefined;
     
-    addFlashcard({
-      front: front.trim(),
-      back: back.trim(),
-      contentType,
-      tags: tags.length > 0 ? tags : deck.tags.slice(0, 1),
-      deckId: id,
-      mediaUrls
-    });
-    
-    Alert.alert(
-      "Success",
-      "Card added successfully!",
-      [
-        {
-          text: "Add Another",
-          onPress: () => {
-            setFront("");
-            setBack("");
-            setMediaUrl(null);
-            setContentType("text");
+    try {
+      const newCardIdOrTempId = await addFlashcard({
+        front: front.trim(),
+        back: back.trim(),
+        contentType,
+        tags: tags.length > 0 ? tags : (deck.tags?.slice(0, 1) || []),
+        deckId: deck.id,
+        mediaUrls
+      });
+      
+      console.log(`[AddCardScreen] addFlashcard call completed. Returned ID/TempID: ${newCardIdOrTempId}`);
+
+      Alert.alert(
+        "Success",
+        "Card added successfully!",
+        [
+          {
+            text: "Add Another",
+            onPress: () => {
+              setFront("");
+              setBack("");
+              setMediaUrl(null);
+              setContentType("text");
+            }
+          },
+          {
+            text: "Done",
+            onPress: () => router.back()
           }
-        },
-        {
-          text: "Done",
-          onPress: () => router.back()
-        }
-      ]
-    );
+        ]
+      );
+    } catch (error: any) {
+      console.error("[AddCardScreen] Error adding flashcard:", error);
+      Alert.alert(
+        "Error Adding Card",
+        error.message || "An unexpected error occurred while adding the card. Please try again."
+      );
+    }
   };
 
   return (

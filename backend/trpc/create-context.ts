@@ -3,6 +3,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import type { PrismaClient, User as PrismaAppUser } from "@prisma/client";
 import { getPrismaClient } from '../prisma/client';
 import { createClient, SupabaseClient, User as SupabaseUser } from "@supabase/supabase-js";
+import superjson from 'superjson';
 
 // Initialize Supabase Client options (from .env)
 console.log("[Backend Context] Raw EXPO_PUBLIC_SUPABASE_URL from process.env:", process.env.EXPO_PUBLIC_SUPABASE_URL);
@@ -22,17 +23,29 @@ const getUserFromHeader = async (
 ): Promise<SupabaseUser | null> => {
   const authHeader = req.headers.get("authorization");
   if (!authHeader) {
+    console.log("[Backend Context] getUserFromHeader: No authorization header found.");
     return null;
   }
   const token = authHeader.split("Bearer ")[1];
   if (!token) {
+    console.log("[Backend Context] getUserFromHeader: Authorization header found, but no token after 'Bearer '.");
     return null;
   }
+  // TEMPORARY LOG: Output the received token for debugging.
+  // REMOVE THIS IN PRODUCTION OR AFTER DEBUGGING - TOKENS ARE SENSITIVE.
+  console.log("[Backend Context] getUserFromHeader: Received token:", token ? token.substring(0, 20) + '...' : 'EMPTY_TOKEN'); 
+
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error) {
-    // console.error("Error getting user from token:", error.message); // Optional: log error
+    console.error("[Backend Context] getUserFromHeader: Error getting user from Supabase token:", error.message);
+    console.error("[Backend Context] getUserFromHeader: Supabase auth error object:", JSON.stringify(error, null, 2)); // Log the full error object
     return null;
   }
+  if (!user) {
+    console.log("[Backend Context] getUserFromHeader: Supabase returned no error, but no user object was found for the token.");
+    return null;
+  }
+  console.log("[Backend Context] getUserFromHeader: Successfully retrieved user from token. User ID:", user.id);
   return user;
 };
 
@@ -77,7 +90,7 @@ export const createContext = async (opts: FetchCreateContextFnOptions): Promise<
 // Initialize tRPC
 // The context type is now explicitly defined for initTRPC
 const t = initTRPC.context<Context>().create({
-  // transformer: superjson, // REMOVED superjson transformer
+  // transformer: superjson, // Commented out superjson transformer
   errorFormatter({ shape, error }) {
     return {
       ...shape,

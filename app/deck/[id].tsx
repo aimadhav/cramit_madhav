@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Alert, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import { useIsFocused } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { 
   BookOpen, 
@@ -16,54 +17,84 @@ import {
 import colors from "@/constants/colors";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { useUserStore } from "@/store/user-store";
-import { Flashcard } from "@/types";
 
 export default function DeckDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { id: idFromParams } = useLocalSearchParams<{ id: string }>();
+  const routeId = Array.isArray(idFromParams) ? idFromParams[0] : idFromParams;
+  const isFocused = useIsFocused();
   
-  const decks = useFlashcardStore(state => state.decks);
+  const deck = useFlashcardStore(state => 
+    routeId ? state.decks.find(d => d.id === routeId) : undefined
+  );
+  
   const getFlashcardsForDeck = useFlashcardStore(state => state.getFlashcardsForDeck);
   const getDueFlashcardsForDeck = useFlashcardStore(state => state.getDueFlashcardsForDeck);
   const startStudySession = useFlashcardStore(state => state.startStudySession);
   const deleteDeck = useFlashcardStore(state => state.deleteDeck);
   const pendingOperations = useFlashcardStore(state => state.pendingOperations);
+  const tempIdToRealIdMap = useFlashcardStore(state => state.tempIdToRealIdMap);
+  const clearTempIdMapping = useFlashcardStore(state => state.clearTempIdMapping);
   
   const user = useUserStore(state => state.user);
   const [isDeleting, setIsDeleting] = useState(false);
-  
-  // Log initial values
-  console.log('[DeckDetailScreen] Component rendered. Received id via params:', id);
-  console.log('[DeckDetailScreen] Current decks array length from store:', decks.length);
-  
-  const deck = decks.find(d => d.id === id);
-  console.log('[DeckDetailScreen] Result of decks.find(d => d.id === id) initially:', deck ? deck.id : 'undefined');
-
-  // Optional: Add a useEffect to log if deck changes, to see if it populates later
-  useEffect(() => {
-    const foundDeck = decks.find(d => d.id === id);
-    console.log('[DeckDetailScreen] useEffect on [id, decks] triggered. Deck found in useEffect:', foundDeck ? foundDeck.id : 'undefined');
-  }, [id, decks]); // Rerun when id or decks array changes
-
-  const flashcards = getFlashcardsForDeck(id);
-  const dueCards = getDueFlashcardsForDeck(id);
-  
   const [showAll, setShowAll] = useState(false);
   
-  if (!deck) {
+  console.log('[DeckDetailScreen] Component rendered. Received routeId:', routeId);
+
+  useEffect(() => {
+    const currentDeckInStore = routeId ? useFlashcardStore.getState().decks.find(d => d.id === routeId) : undefined;
+    console.log('[DeckDetailScreen] useEffect [routeId, store] triggered. Deck for routeId:', 
+                currentDeckInStore ? currentDeckInStore.id : 'undefined');
+  }, [routeId]); 
+
+  useEffect(() => {
+    if (isFocused && routeId && routeId.startsWith('deck-temp-') && tempIdToRealIdMap && tempIdToRealIdMap[routeId]) {
+      const realId = tempIdToRealIdMap[routeId];
+      console.log(`DeckDetailScreen: [Focused] Temp ID ${routeId} confirmed to Real ID ${realId}. Scheduling route update.`);
+      
+      requestAnimationFrame(() => {
+        console.log(`DeckDetailScreen: [Focused] Executing route update for temp ID ${routeId} to real ID ${realId}.`);
+        router.replace(`/deck/${realId}`);
+        clearTempIdMapping(routeId);
+      });
+    } else if (!isFocused && routeId && routeId.startsWith('deck-temp-') && tempIdToRealIdMap && tempIdToRealIdMap[routeId]) {
+      console.log(`DeckDetailScreen: [Not Focused] Temp ID ${routeId} confirmed to Real ID ${tempIdToRealIdMap[routeId]}. Route update deferred.`);
+    }
+  }, [routeId, tempIdToRealIdMap, router, clearTempIdMapping, isFocused]);
+  
+  if (!routeId) {
     return (
-      <View style={styles.notFoundContainer}>
-        <Text style={styles.notFoundText}>Deck not found</Text>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backButtonText}>Go Back</Text>
-        </TouchableOpacity>
-      </View>
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <Stack.Screen options={{ title: "Error", headerShown: false }} />
+        <View style={styles.notFoundContainer}>
+          <Text style={styles.notFoundText}>Deck ID not provided in route.</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
   
+  if (!deck) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <Stack.Screen options={{ title: "Loading Deck...", headerShown: false }} />
+        <View style={styles.notFoundContainer}>
+          <Text style={styles.notFoundText}>Deck not found or still loading...</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+  
+  console.log('[DeckDetailScreen] Deck is defined, proceeding to render details for:', deck.id);
+
+  const flashcards = getFlashcardsForDeck(deck.id);
+  const dueCards = getDueFlashcardsForDeck(deck.id);
   const displayedCards = showAll ? flashcards : flashcards.slice(0, 5);
   
   const handleStartStudy = () => {
@@ -79,8 +110,8 @@ export default function DeckDetailScreen() {
           {
             text: "Study All",
             onPress: () => {
-              startStudySession(id);
-              router.push(`/study/${id}`);
+              startStudySession(deck.id);
+              router.push(`/study/${deck.id}`);
             }
           }
         ]
@@ -88,8 +119,8 @@ export default function DeckDetailScreen() {
       return;
     }
     
-    startStudySession(id);
-    router.push(`/study/${id}`);
+    startStudySession(deck.id);
+    router.push(`/study/${deck.id}`);
   };
   
   const handleDeleteDeck = async () => {
@@ -106,7 +137,7 @@ export default function DeckDetailScreen() {
           onPress: async () => {
             try {
               setIsDeleting(true);
-              await deleteDeck(id);
+              await deleteDeck(deck.id);
               router.back();
             } catch (error) {
               Alert.alert(
@@ -124,11 +155,10 @@ export default function DeckDetailScreen() {
     );
   };
 
-  // Check if there are any pending operations for this deck
   const isPending = Object.entries(pendingOperations).some(([key, op]) => {
-    if (op.type === 'add' && op.data.deckId === id) return true;
-    if (op.type === 'update' && key === id) return true;
-    if (op.type === 'delete' && key === id) return true;
+    if (routeId && routeId.startsWith('deck-temp-') && op.type === 'add' && op.data.id === routeId) return true;
+    if (op.type === 'update' && key === deck.id) return true;
+    if (op.type === 'delete' && key === deck.id) return true;
     return false;
   });
 
@@ -142,7 +172,7 @@ export default function DeckDetailScreen() {
             <View style={styles.headerButtons}>
               <TouchableOpacity 
                 style={styles.headerButton}
-                onPress={() => router.push(`/deck/edit/${id}`)}
+                onPress={() => router.push(`/deck/edit/${deck.id}`)}
                 disabled={isDeleting || isPending}
               >
                 <Edit size={20} color={colors.primary} />
@@ -220,7 +250,7 @@ export default function DeckDetailScreen() {
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.secondaryButton}
-              onPress={() => router.push(`/deck/${id}/add-card`)}
+              onPress={() => router.push(`/deck/${deck.id}/add-card`)}
             >
               <Plus size={20} color={colors.primary} />
               <Text style={styles.secondaryButtonText}>Add Card</Text>
@@ -258,7 +288,7 @@ export default function DeckDetailScreen() {
                 <Text style={styles.emptyCardsText}>No cards in this deck</Text>
                 <TouchableOpacity 
                   style={styles.addCardButton}
-                  onPress={() => router.push(`/deck/${id}/add-card`)}
+                  onPress={() => router.push(`/deck/${deck.id}/add-card`)}
                 >
                   <Text style={styles.addCardButtonText}>Add Card</Text>
                 </TouchableOpacity>
