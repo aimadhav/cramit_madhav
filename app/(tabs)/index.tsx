@@ -1,41 +1,149 @@
-import React, { useEffect } from "react";
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Image } from "react-native";
+import React, { useEffect, useCallback, useState } from "react";
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Image, FlatList, ActivityIndicator, RefreshControl, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Award, BookOpen, Clock, Plus, ChevronRight, History } from "lucide-react-native";
+import { Award, BookOpen, Clock, Plus, ChevronRight, History, AlertCircle, DownloadCloud } from "lucide-react-native";
 
 import colors from "@/constants/colors";
 import { useUserStore } from "@/store/user-store";
 import { useFlashcardStore } from "@/store/flashcard-store";
+import { Deck } from '@/types';
 
 export default function HomeScreen() {
   const router = useRouter();
   const user = useUserStore(state => state.user);
-  const decks = useFlashcardStore(state => state.decks);
-  const startStudySession = useFlashcardStore(state => state.startStudySession);
+  const {
+    decks,
+    flashcards,
+    isLoading: isLoadingFlashcardStore,
+    error: flashcardStoreError,
+    loadInitialData,
+    getDueFlashcardsForDeck,
+    startStudySession,
+    fetchFlashcardsForDeck,
+    loadingFlashcardsForDeckId,
+  } = useFlashcardStore();
+  
+  const [refreshing, setRefreshing] = useState(false);
+  const [activelyDownloadingDeckId, setActivelyDownloadingDeckId] = useState<string | null>(null);
+  
+  useEffect(() => {
+    console.log("[HomeScreen] Mounted. User:", user?.email, "Decks loaded:", decks.length);
+  }, []);
   
   // Get featured decks (first 3)
   const featuredDecks = decks.slice(0, 3);
   
   // Get recent decks (sort by updatedAt)
   const recentDecks = [...decks]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .sort((a, b) => {
+      const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return dateB - dateA; // Sort descending (newest first)
+    })
     .slice(0, 3);
   
   // Get due cards count
-  const getDueFlashcardsForDeck = useFlashcardStore(state => state.getDueFlashcardsForDeck);
   const totalDueCards = decks.reduce((total, deck) => {
     return total + getDueFlashcardsForDeck(deck.id).length;
   }, 0);
 
-  const handleStartStudy = (deckId: string) => {
-    startStudySession(deckId);
-    router.push(`/study/${deckId}`);
+  useEffect(() => {
+    if (activelyDownloadingDeckId && !loadingFlashcardsForDeckId) {
+      const deckJustLoaded = decks.find(d => d.id === activelyDownloadingDeckId);
+      
+      if (flashcardStoreError && useFlashcardStore.getState().error?.includes(activelyDownloadingDeckId)) {
+        Alert.alert("Download Failed", `Could not download flashcards for ${deckJustLoaded?.name || 'deck'}. Please try again.`);
+        setActivelyDownloadingDeckId(null);
+        return;
+      }
+
+      if (deckJustLoaded && deckJustLoaded.areCardsLoaded) {
+        console.log(`[HomeScreen] Flashcards for deck ${activelyDownloadingDeckId} loaded. Starting session and navigating.`);
+        const cardsForDeck = useFlashcardStore.getState().getFlashcardsForDeck(activelyDownloadingDeckId);
+        if (cardsForDeck.length > 0 || deckJustLoaded.cardCount === 0) {
+            startStudySession(activelyDownloadingDeckId);
+            router.push(`/study/${activelyDownloadingDeckId}`);
+        } else {
+            console.warn(`[HomeScreen] Deck ${activelyDownloadingDeckId} marked as loaded, but no cards found in store. Card count: ${deckJustLoaded.cardCount}`);
+            Alert.alert("Study Error", `Flashcards for ${deckJustLoaded.name} seem to be missing. Try refreshing.`);
+        }
+      } else if (deckJustLoaded) {
+        console.warn(`[HomeScreen] Deck ${activelyDownloadingDeckId} finished loading but 'areCardsLoaded' is false or no cards. Deck state:`, deckJustLoaded);
+        Alert.alert("Download Incomplete", `Flashcards for ${deckJustLoaded.name} may not have loaded correctly. Please try refreshing or re-opening the deck.`);
+      } else if (!flashcardStoreError) {
+        console.warn(`[HomeScreen] Download finished for ${activelyDownloadingDeckId}, but deck not found or not marked as loaded and no specific error from store.`);
+      }
+      setActivelyDownloadingDeckId(null);
+    }
+  }, [loadingFlashcardsForDeckId, decks, flashcardStoreError, activelyDownloadingDeckId, router, startStudySession]);
+
+  const handleStudyPress = (deckId: string) => {
+    const deck = decks.find(d => d.id === deckId);
+    if (!deck) {
+      console.warn(`[HomeScreen] Attempted to study deck ID ${deckId} not found in store.`);
+      Alert.alert("Error", "Deck not found. It might have been deleted.");
+      return;
+    }
+
+    if (deck.areCardsLoaded || deck.cardCount === 0) {
+      console.log(`[HomeScreen] Cards for deck ${deckId} are already loaded or deck is empty. Starting session.`);
+      startStudySession(deckId);
+      router.push(`/study/${deckId}`);
+    } else {
+      console.log(`[HomeScreen] Cards for deck ${deckId} not loaded. Fetching now...`);
+      setActivelyDownloadingDeckId(deckId);
+      fetchFlashcardsForDeck(deckId);
+    }
+  };
+
+  const onRefresh = useCallback(async () => {
+    console.log("[HomeScreen] Refresh triggered.");
+    setRefreshing(true);
+    setActivelyDownloadingDeckId(null);
+    try {
+      const { checkAuthStatus } = useUserStore.getState();
+      await checkAuthStatus();
+    } catch (error) {
+      console.error("[HomeScreen] Refresh error:", error);
+      Alert.alert("Refresh Failed", "Could not update decks. Please check your connection.");
+    }
+    setRefreshing(false);
+  }, []);
+
+  if (isLoadingFlashcardStore && decks.length === 0 && !refreshing && !activelyDownloadingDeckId) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <View style={styles.centeredMessageContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading your decks...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const renderStudyButtonContent = (deckId: string, buttonStyleConfig: { textStyle: any, iconSize: number, iconColor: string, showText: boolean, text: string }) => {
+    if (activelyDownloadingDeckId === deckId) {
+      return (
+        <>
+          <ActivityIndicator size="small" color={buttonStyleConfig.iconColor} style={{marginRight: buttonStyleConfig.showText ? 6 : 0}} />
+          {buttonStyleConfig.showText && <Text style={buttonStyleConfig.textStyle}>Downloading...</Text>}
+        </>
+      );
+    }
+    return (
+      <>
+        <BookOpen size={buttonStyleConfig.iconSize} color={buttonStyleConfig.iconColor} style={{marginRight: buttonStyleConfig.showText ? 6 : 0}} />
+        {buttonStyleConfig.showText && <Text style={buttonStyleConfig.textStyle}>{buttonStyleConfig.text}</Text>}
+      </>
+    );
   };
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} tintColor={colors.primary}/>
+      }>
         <View style={styles.header}>
           <View style={styles.greetingContainer}>
             <Text style={styles.greeting}>Hello, {user?.name || "Student"}</Text>
@@ -47,51 +155,71 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Featured Decks Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Featured Decks</Text>
-            <TouchableOpacity onPress={() => router.push("/decks")}>
-              <Text style={styles.seeAllText}>See All</Text>
+        {decks.length === 0 && !isLoadingFlashcardStore && (
+          <View style={styles.centeredMessageContainer_withPadding}>
+            <Text style={styles.emptyDecksTitle}>No decks yet!</Text>
+            <Text style={styles.emptyDecksSubtitle}>Create your first deck or explore public decks.</Text>
+            <TouchableOpacity 
+              style={styles.createDeckButton}
+              onPress={() => router.push("/decks/create")}
+            >
+              <Plus size={18} color="white" style={{marginRight: 8}} />
+              <Text style={styles.createDeckButtonText}>Create New Deck</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.featuredDecksContainer}
-          >
-            {featuredDecks.map(deck => (
-              <TouchableOpacity 
-                key={deck.id} 
-                style={styles.deckCard}
-                onPress={() => router.push(`/deck/${deck.id}`)}
-              >
-                <Image 
-                  source={{ uri: deck.coverImage }} 
-                  style={styles.deckImage}
-                />
-                <View style={styles.deckCardOverlay}>
-                  <Text style={styles.deckCardTitle}>{deck.name}</Text>
-                  <Text style={styles.deckCardSubtitle}>{deck.cardCount} cards</Text>
-                  <TouchableOpacity 
-                    style={styles.studyNowButton}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      handleStartStudy(deck.id);
-                    }}
-                  >
-                    <Text style={styles.studyNowText}>Study Now</Text>
-                  </TouchableOpacity>
-                  {deck.isPremium && (
-                    <View style={styles.premiumBadge}>
-                      <Text style={styles.premiumText}>PRO</Text>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+        )}
+
+        {/* Featured Decks Section */}
+        {featuredDecks.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Featured Decks</Text>
+              {decks.length > 3 && (
+                <TouchableOpacity onPress={() => router.push("/decks")}>
+                  <Text style={styles.seeAllText}>See All</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.featuredDecksContainer}
+            >
+              {featuredDecks.map(deck => (
+                <TouchableOpacity 
+                  key={deck.id} 
+                  style={styles.deckCard}
+                  onPress={() => router.push(`/deck/${deck.id}`)}
+                >
+                  <Image 
+                    source={{ uri: deck.coverImage || undefined }}
+                    style={styles.deckImage}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.deckCardOverlay}>
+                    <Text style={styles.deckCardTitle} numberOfLines={2}>{deck.name}</Text>
+                    <Text style={styles.deckCardSubtitle}>{deck.cardCount || 0} cards</Text>
+                    <TouchableOpacity 
+                      style={styles.studyNowButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleStudyPress(deck.id);
+                      }}
+                      disabled={activelyDownloadingDeckId === deck.id}
+                    >
+                      {renderStudyButtonContent(deck.id, { textStyle: styles.studyNowText, iconSize: 16, iconColor: 'white', showText: true, text: 'Study Now' })}
+                    </TouchableOpacity>
+                    {deck.isPremium && (
+                      <View style={styles.premiumBadge}>
+                        <Text style={styles.premiumText}>PRO</Text>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Continue Studying Section */}
         {totalDueCards > 0 && (
@@ -116,49 +244,54 @@ export default function HomeScreen() {
         )}
 
         {/* Recent Decks Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Decks</Text>
-            <TouchableOpacity onPress={() => router.push("/decks")}>
-              <Text style={styles.seeAllText}>See All</Text>
-            </TouchableOpacity>
-          </View>
-          {recentDecks.map(deck => (
-            <TouchableOpacity 
-              key={deck.id} 
-              style={styles.recentDeckCard}
-              onPress={() => router.push(`/deck/${deck.id}`)}
-            >
-              <View style={styles.recentDeckInfo}>
+        {recentDecks.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Recent Decks</Text>
+              {decks.length > 3 && (
+                <TouchableOpacity onPress={() => router.push("/decks")}>
+                  <Text style={styles.seeAllText}>See All</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {recentDecks.map(deck => (
+              <TouchableOpacity 
+                key={deck.id} 
+                style={styles.recentDeckCard}
+                onPress={() => router.push(`/deck/${deck.id}`)}
+              >
                 <Image 
-                  source={{ uri: deck.coverImage }} 
+                  source={{ uri: deck.coverImage || undefined }}
                   style={styles.recentDeckImage}
+                  resizeMode="cover"
                 />
                 <View style={styles.recentDeckTextContainer}>
-                  <Text style={styles.recentDeckTitle}>{deck.name}</Text>
-                  <Text style={styles.recentDeckSubtitle}>{deck.cardCount} cards</Text>
-                  <View style={styles.recentDeckTagsContainer}>
-                    {deck.tags.slice(0, 2).map(tag => (
-                      <View key={tag} style={styles.tagBadge}>
-                        <Text style={styles.tagText}>{tag}</Text>
-                      </View>
-                    ))}
-                  </View>
+                  <Text style={styles.recentDeckTitle} numberOfLines={1}>{deck.name}</Text>
+                  <Text style={styles.recentDeckSubtitle}>{deck.cardCount || 0} cards</Text>
+                  {(deck.tags && deck.tags.length > 0) && (
+                    <View style={styles.recentDeckTagsContainer}>
+                      {deck.tags.slice(0, 2).map(tag => (
+                        <View key={tag} style={styles.tagBadge}>
+                          <Text style={styles.tagText}>{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                 </View>
-              </View>
-              <TouchableOpacity 
-                style={styles.studyButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleStartStudy(deck.id);
-                }}
-              >
-                <BookOpen size={16} color="white" />
-                <Text style={styles.studyButtonText}>Study</Text>
+                <TouchableOpacity 
+                  style={styles.studyButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleStudyPress(deck.id);
+                  }}
+                  disabled={activelyDownloadingDeckId === deck.id}
+                >
+                  {renderStudyButtonContent(deck.id, { textStyle: styles.studyButtonText, iconSize: 16, iconColor: 'white', showText: true, text: 'Study' })}
+                </TouchableOpacity>
               </TouchableOpacity>
-            </TouchableOpacity>
-          ))}
-        </View>
+            ))}
+          </View>
+        )}
 
         {/* Study Stats Section */}
         <View style={styles.section}>
@@ -183,7 +316,7 @@ export default function HomeScreen() {
         </View>
 
         {/* Quick Actions */}
-        <View style={styles.section}>
+        <View style={[styles.section, styles.lastSection]}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.actionsContainer}>
             <TouchableOpacity 
@@ -306,6 +439,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     alignSelf: "flex-start",
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   studyNowText: {
     color: "white",
@@ -488,5 +623,50 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: colors.primary,
+  },
+  centeredMessageContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  centeredMessageContainer_withPadding: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    marginVertical: 40,
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: colors.text,
+  },
+  emptyDecksTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  emptyDecksSubtitle: {
+    fontSize: 16,
+    color: colors.textLight,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  createDeckButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  createDeckButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  lastSection: {
+    marginBottom: 30,
   },
 });

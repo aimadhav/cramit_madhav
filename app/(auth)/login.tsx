@@ -33,7 +33,7 @@ export default function LoginScreen() {
           phone: data.user.phone || undefined,
         };
 
-        setSession(appUser, data.session.access_token);
+        setSession(appUser, data.session.access_token, data.session.refresh_token);
         Alert.alert('Login Successful', data.message || 'You are now logged in!');
         router.replace('/(tabs)'); 
       } else {

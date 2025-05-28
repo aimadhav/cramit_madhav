@@ -95,6 +95,12 @@ export default function StudySessionScreen() {
   const dueCards = getDueFlashcardsForDeck(id);
   const studyProgressFromStore = useFlashcardStore(state => state.studyProgress);
   
+  // Ref to keep track of the latest studyProgress for cleanup
+  const studyProgressRef = useRef(studyProgressFromStore);
+  useEffect(() => {
+    studyProgressRef.current = studyProgressFromStore;
+  }, [studyProgressFromStore]);
+  
   // Check if there are any pending operations for the current card
   const isPending = useMemo(() => {
     if (!currentCard) return false;
@@ -179,7 +185,10 @@ export default function StudySessionScreen() {
       // If it was for *this* deck, it's already handled by setting isSessionFinished to true.
       // If it was null, this does nothing.
       if (sessionJustCompletedDeckId && sessionJustCompletedDeckId !== id) {
-        clearSessionJustCompleted();
+        // Defer this store update to avoid updates during render
+        requestAnimationFrame(() => {
+          clearSessionJustCompleted();
+        });
       }
     }
   }, [id, sessionJustCompletedDeckId, clearSessionJustCompleted]);
@@ -196,13 +205,19 @@ export default function StudySessionScreen() {
   // End session when navigating away
   useEffect(() => {
     return () => {
+      // Use the ref to get the latest studyProgress at the time of unmount
+      const currentStudyProgress = studyProgressRef.current;
       const sessionDuration = Math.ceil((Date.now() - sessionStartTime) / 60000);
-      const cardsStudied = studyProgress?.cardsStudied || 0;
+      const cardsStudied = currentStudyProgress?.cardsStudied || 0;
       
-      updateStudyStats(sessionDuration, cardsStudied);
-      endStudySession();
+      requestAnimationFrame(() => {
+        updateStudyStats(sessionDuration, cardsStudied);
+        endStudySession();
+      });
     };
-  }, []);
+    // Dependencies should be stable functions/values that don't change often
+    // sessionStartTime is stable. updateStudyStats and endStudySession are store actions (should be stable).
+  }, [sessionStartTime, updateStudyStats, endStudySession]); 
 
   // Log current card's bookmark status when it changes
   useEffect(() => {

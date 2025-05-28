@@ -27,7 +27,7 @@ interface UserState {
   isLoading: boolean; 
   error: string | null;
 
-  setSession: (userData: AppUser, token: string) => void; 
+  setSession: (userData: AppUser, accessToken: string, refreshToken?: string) => void; 
   logout: () => Promise<void>; 
   updateUser: (userData: Partial<AppUser>) => void;
   updateStudyStats: (studyTime: number, cardsStudied: number) => void;
@@ -52,7 +52,8 @@ const defaultUserInitialState: AppUser = {
   ownedDecks: [],
 };
 
-const TOKEN_STORAGE_KEY = 'sessionToken';
+export const TOKEN_STORAGE_KEY = 'sessionToken';
+export const REFRESH_TOKEN_STORAGE_KEY = 'sessionRefreshToken';
 
 export const useUserStore = create<UserState>()(
   persist(
@@ -62,14 +63,19 @@ export const useUserStore = create<UserState>()(
       isLoading: false,
       error: null,
 
-      setSession: (userData, token) => {
+      setSession: (userData: AppUser, accessToken: string, refreshToken?: string) => {
         set({ 
           user: { ...userData, isLoggedIn: true }, 
-          sessionToken: token, 
+          sessionToken: accessToken, 
           isLoading: false, 
           error: null 
         });
-        SecureStore.setItemAsync(TOKEN_STORAGE_KEY, token); 
+        SecureStore.setItemAsync(TOKEN_STORAGE_KEY, accessToken);
+        if (refreshToken) {
+          SecureStore.setItemAsync(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+        } else {
+          SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+        }
       },
 
       logout: async () => {
@@ -80,16 +86,19 @@ export const useUserStore = create<UserState>()(
           error: null 
         });
         await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+        await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
       },
       
       checkAuthStatus: async () => {
         set({ isLoading: true });
         try {
-          const token = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
-          if (token) {
+          const accessToken = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+          const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+
+          if (accessToken && refreshToken) {
             const persistedUser = get().user; 
             set({ 
-              sessionToken: token, 
+              sessionToken: accessToken, 
               user: persistedUser && persistedUser.id !== 'guest-user' && persistedUser.isLoggedIn 
                     ? { ...persistedUser, isLoggedIn: true } 
                     : defaultUserInitialState, 
@@ -97,10 +106,14 @@ export const useUserStore = create<UserState>()(
             });
           } else {
             set({ user: defaultUserInitialState, sessionToken: null, isLoading: false });
+            await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+            await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
           }
         } catch (e) {
           console.error("Failed to check auth status", e);
           set({ user: defaultUserInitialState, sessionToken: null, isLoading: false, error: 'Auth check failed' });
+          await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+          await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
         }
       },
 

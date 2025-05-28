@@ -105,6 +105,42 @@ export const authRouter = createTRPCRouter({
       };
     }),
 
+  refreshSession: publicProcedure // Public because it's called with a refresh token, not an access token
+    .input(z.object({ refreshToken: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      if (!input.refreshToken) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Refresh token is required.",
+        });
+      }
+      const { data, error } = await ctx.supabase.auth.refreshSession({ 
+        refresh_token: input.refreshToken 
+      });
+
+      if (error) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: error.message || "Failed to refresh session.",
+          cause: error,
+        });
+      }
+      
+      if (!data.session || !data.user) {
+        // This case might indicate the refresh token was invalid or revoked by Supabase
+        throw new TRPCError({
+          code: "UNAUTHORIZED", 
+          message: "Failed to refresh session: No session or user returned. Refresh token may be invalid.",
+        });
+      }
+
+      return {
+        message: "Session refreshed successfully!",
+        session: data.session, // Contains new access_token and potentially new refresh_token
+        user: data.user,
+      };
+    }),
+
   // Optional: A protected route to get the current user's info
   me: protectedProcedure
     .query(({ ctx }) => {

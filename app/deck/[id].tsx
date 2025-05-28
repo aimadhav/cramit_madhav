@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Alert, ScrollView } from "react-native";
+import React, { useState, useEffect, useCallback } from "react";
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, Image, Alert, ScrollView, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -11,7 +11,9 @@ import {
   ChevronRight, 
   Tag,
   Clock,
-  Share
+  Share,
+  AlertCircle,
+  RefreshCw
 } from "lucide-react-native";
 
 import colors from "@/constants/colors";
@@ -35,6 +37,9 @@ export default function DeckDetailScreen() {
   const pendingOperations = useFlashcardStore(state => state.pendingOperations);
   const tempIdToRealIdMap = useFlashcardStore(state => state.tempIdToRealIdMap);
   const clearTempIdMapping = useFlashcardStore(state => state.clearTempIdMapping);
+  const fetchFlashcardsForDeck = useFlashcardStore(state => state.fetchFlashcardsForDeck);
+  const loadingFlashcardsForDeckId = useFlashcardStore(state => state.loadingFlashcardsForDeckId);
+  const flashcardStoreError = useFlashcardStore(state => state.error);
   
   const user = useUserStore(state => state.user);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -62,6 +67,25 @@ export default function DeckDetailScreen() {
       console.log(`DeckDetailScreen: [Not Focused] Temp ID ${routeId} confirmed to Real ID ${tempIdToRealIdMap[routeId]}. Route update deferred.`);
     }
   }, [routeId, tempIdToRealIdMap, router, clearTempIdMapping, isFocused]);
+  
+  // Destructure for stable dependencies
+  const deckId = deck?.id;
+  const deckAreCardsLoaded = deck?.areCardsLoaded;
+
+  useEffect(() => {
+    // Ensure deckId is defined and deckAreCardsLoaded is a boolean before proceeding
+    if (deckId && typeof deckAreCardsLoaded === 'boolean' && !deckAreCardsLoaded && loadingFlashcardsForDeckId !== deckId) {
+      console.log(`[DeckDetailScreen] Deck ${deckId} cards not loaded. Fetching...`);
+      fetchFlashcardsForDeck(deckId);
+    }
+  }, [deckId, deckAreCardsLoaded, fetchFlashcardsForDeck, loadingFlashcardsForDeckId]);
+
+  const handleRetryFetch = useCallback(() => {
+    if (deck) {
+      console.log(`[DeckDetailScreen] Retrying fetch for deck ${deck.id}`);
+      fetchFlashcardsForDeck(deck.id);
+    }
+  }, [deck, fetchFlashcardsForDeck]);
   
   if (!routeId) {
     return (
@@ -98,15 +122,21 @@ export default function DeckDetailScreen() {
   const displayedCards = showAll ? flashcards : flashcards.slice(0, 5);
   
   const handleStartStudy = () => {
-    if (dueCards.length === 0) {
+    if (!deck) return;
+    if (!deck.areCardsLoaded && deck.cardCount > 0) {
+        Alert.alert("Flashcards Not Loaded", "Flashcards for this deck are still being loaded or failed to load. Please wait or try again.");
+        if (loadingFlashcardsForDeckId !== deck.id) {
+            fetchFlashcardsForDeck(deck.id);
+        }
+        return;
+    }
+
+    if (dueCards.length === 0 && deck.cardCount > 0) {
       Alert.alert(
         "No Cards Due",
-        "There are no cards due for review. Would you like to study anyway?",
+        "There are no cards due for review. Would you like to study all cards in this deck?",
         [
-          {
-            text: "Cancel",
-            style: "cancel"
-          },
+          { text: "Cancel", style: "cancel" },
           {
             text: "Study All",
             onPress: () => {
@@ -118,7 +148,6 @@ export default function DeckDetailScreen() {
       );
       return;
     }
-    
     startStudySession(deck.id);
     router.push(`/study/${deck.id}`);
   };
@@ -139,12 +168,8 @@ export default function DeckDetailScreen() {
               setIsDeleting(true);
               await deleteDeck(deck.id);
               router.back();
-            } catch (error) {
-              Alert.alert(
-                "Error",
-                "Failed to delete deck. Please try again.",
-                [{ text: "OK" }]
-              );
+            } catch (error: any) {
+              Alert.alert("Error", error.message || "Failed to delete deck. Please try again.");
             } finally {
               setIsDeleting(false);
             }
@@ -155,34 +180,37 @@ export default function DeckDetailScreen() {
     );
   };
 
-  const isPending = Object.entries(pendingOperations).some(([key, op]) => {
-    if (routeId && routeId.startsWith('deck-temp-') && op.type === 'add' && op.data.id === routeId) return true;
-    if (op.type === 'update' && key === deck.id) return true;
-    if (op.type === 'delete' && key === deck.id) return true;
-    return false;
-  });
+  const isPending = React.useMemo(() => {
+    if (!deckId) return false;
+    return Object.entries(pendingOperations).some(([key, op]) => {
+      if (routeId && routeId.startsWith('deck-temp-') && op.type === 'add' && op.itemType === 'deck' && op.data.id === routeId) return true;
+      if (op.type === 'update' && op.itemType === 'deck' && key === deckId) return true;
+      if (op.type === 'delete' && op.itemType === 'deck' && key === deckId) return true;
+      return false;
+    });
+  }, [pendingOperations, routeId, deckId]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Stack.Screen 
         options={{
-          title: deck.name,
-          headerShown: false,
+          title: isPending ? "Syncing..." : deck.name,
+          headerShown: true,
           headerRight: () => (
             <View style={styles.headerButtons}>
               <TouchableOpacity 
                 style={styles.headerButton}
-                onPress={() => router.push(`/deck/edit/${deck.id}`)}
-                disabled={isDeleting || isPending}
+                onPress={() => router.push(`/deck/${deck.id}/edit`)}
+                disabled={isDeleting || isPending || routeId?.startsWith('deck-temp-')}
               >
-                <Edit size={20} color={colors.primary} />
+                <Edit size={20} color={(isDeleting || isPending || routeId?.startsWith('deck-temp-')) ? colors.gray[400] : colors.primary} />
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.headerButton}
                 onPress={handleDeleteDeck}
-                disabled={isDeleting || isPending}
+                disabled={isDeleting || isPending || routeId?.startsWith('deck-temp-')}
               >
-                <Trash2 size={20} color={colors.error} />
+                <Trash2 size={20} color={(isDeleting || isPending || routeId?.startsWith('deck-temp-')) ? colors.gray[400] : colors.error} />
               </TouchableOpacity>
             </View>
           ),
@@ -243,17 +271,20 @@ export default function DeckDetailScreen() {
           
           <View style={styles.actionsContainer}>
             <TouchableOpacity 
-              style={styles.primaryButton}
+              style={[styles.primaryButton, (isPending || (!deck.areCardsLoaded && deck.cardCount > 0)) && styles.disabledButton]}
               onPress={handleStartStudy}
+              disabled={isPending || (!deck.areCardsLoaded && deck.cardCount > 0 && loadingFlashcardsForDeckId !== deck.id)}
             >
-              <Text style={styles.primaryButtonText}>Start Studying</Text>
+              <BookOpen size={18} color="white" />
+              <Text style={styles.primaryButtonText}>Study Deck ({dueCards.length} due / {flashcards.length} total)</Text>
             </TouchableOpacity>
             <TouchableOpacity 
-              style={styles.secondaryButton}
+              style={[styles.secondaryButton, (isPending || routeId?.startsWith('deck-temp-')) && styles.disabledButton]}
               onPress={() => router.push(`/deck/${deck.id}/add-card`)}
+              disabled={isPending || routeId?.startsWith('deck-temp-')}
             >
-              <Plus size={20} color={colors.primary} />
-              <Text style={styles.secondaryButtonText}>Add Card</Text>
+              <Plus size={18} color={colors.primary} />
+              <Text style={[styles.secondaryButtonText, (isPending || routeId?.startsWith('deck-temp-')) && styles.disabledButtonText]}>Add Card</Text>
             </TouchableOpacity>
           </View>
           
@@ -575,5 +606,8 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.5,
+  },
+  disabledButtonText: {
+    color: colors.gray[400],
   },
 });

@@ -10,61 +10,87 @@ import { trpcClient } from '@/lib/trpc';
 
 interface PendingOperation {
   type: 'add' | 'update' | 'delete';
-  // status: 'optimistic' for an operation that is proceeding (backend call made or about to be made for its own item),
-  // 'pendingRealId' for an update/delete on an item that itself has a tempId and is waiting for that item's realId confirmation.
-  // 'pendingDependency' for an 'add' operation of a child item that is waiting for its parent's realId.
-  status: 'optimistic' | 'pendingRealId' | 'pendingDependency'; 
+  status: 'optimistic' | 'pendingRealId' | 'pendingDependency' | 'creation_failed' | 'update_failed' | 'delete_failed';
   itemType: 'deck' | 'flashcard';
-  data: any; // For 'add', this is the creation DTO. For 'update', this is the optimistic object.
-  originalData?: any; // For rollback of updates/deletes
+  data: any; 
+  originalData?: any; 
   timestamp: number;
   operationSubType?: 'rateCard' | 'updateContent' | 'toggleBookmark';
-  
-  // For operations dependent on another item's real ID (status: 'pendingDependency')
   waitsForTempId?: string; 
   waitsForItemType?: 'deck' | 'flashcard';
+  error?: string;
 }
 
-// Temporary store for the current session's card queue (IDs)
 let currentSessionCardQueue: string[] = [];
 
+interface StoreDeck extends Deck {
+  areCardsLoaded?: boolean;
+}
+
+interface LocalUserFlashcardStatus {
+  flashcardId: string;
+  interval?: number;
+  easeFactor?: number;
+  repetitions?: number;
+  dueDate?: string | Date | number;
+  lastReviewed?: string | Date | number | null;
+  isBookmarked?: boolean;
+  updatedAt?: string | Date | number;
+}
+
+interface FetchedFlashcardData {
+  id: string;
+  deckId: string;
+  front: string;
+  back: string;
+  contentType?: ContentType | string;
+  mediaUrls?: string[];
+  tags?: string[];
+  createdAt: string | Date | number;
+  updatedAt: string | Date | number;
+  userStatus?: Partial<LocalUserFlashcardStatus>;
+}
+
+interface ListByDeckResponse {
+  items: FetchedFlashcardData[];
+  userStatuses?: LocalUserFlashcardStatus[];
+  nextCursor?: string;
+}
+
 interface FlashcardState {
-  decks: Deck[];
+  decks: StoreDeck[];
   flashcards: Flashcard[];
   currentDeckId: string | null;
-  studyProgress: StudyProgress | null; // Uses the defined StudyProgress type
+  studyProgress: StudyProgress | null; 
   isLoading: boolean;
   error: string | null;
-  sessionJustCompletedDeckId: string | null; // New state
+  sessionJustCompletedDeckId: string | null; 
   pendingOperations: {
     [key: string]: PendingOperation;
   };
-  tempIdToRealIdMap?: { [tempId: string]: string }; // Made optional for initial state
+  tempIdToRealIdMap?: { [tempId: string]: string };
+  loadingFlashcardsForDeckId: string | null;
   
-  // Deck actions
   addDeck: (deck: Omit<Deck, 'id' | 'createdAt' | 'updatedAt' | 'cardCount' | 'userId'>, tempId: string) => Promise<string>;
   updateDeck: (id: string, deckData: Partial<Omit<Deck, 'id' | 'createdAt' | 'updatedAt' | 'cardCount' | 'userId'>>) => Promise<void>;
   deleteDeck: (id: string) => Promise<void>;
   setCurrentDeck: (deckId: string | null) => void;
+  fetchFlashcardsForDeck: (deckId: string) => Promise<void>; 
   
-  // Flashcard actions
   addFlashcard: (card: Omit<Flashcard, 'id' | 'createdAt' | 'updatedAt' | 'interval' | 'easeFactor' | 'repetitions' | 'dueDate' | 'lastReviewed' | 'isBookmarked'>) => Promise<string>;
   updateFlashcard: (id: string, cardData: Partial<Omit<Flashcard, 'id' | 'createdAt' | 'updatedAt' | 'deckId' | 'interval' | 'easeFactor' | 'repetitions' | 'dueDate' | 'lastReviewed'>>) => Promise<void>;
   deleteFlashcard: (id: string) => Promise<void>;
   toggleBookmark: (cardId: string) => Promise<void>;
   
-  // Study session actions
   startStudySession: (deckId: string) => void;
   rateCard: (cardId: string, rating: DifficultyRating) => Promise<void>;
   endStudySession: () => void;
   
-  // Utility functions
   getFlashcardsForDeck: (deckId: string) => Flashcard[];
   getDueFlashcardsForDeck: (deckId: string) => Flashcard[];
   getCurrentCard: () => Flashcard | null;
   getNextCard: () => Flashcard | null;
   
-  // New actions
   loadInitialData: (decks: Deck[], flashcards: Flashcard[]) => void;
   getTotalCardsStudied: () => number;
   getAverageEaseFactor: () => number;
@@ -78,10 +104,6 @@ interface FlashcardState {
   clearTempIdMapping: (tempId: string) => void;
 }
 
-// Helper function to execute a pending operation's tRPC call
-// This will be defined outside or as a static part of the store if preferred,
-// but for now, let's assume it can access trpcClient and 'set'/'get' if needed for error handling.
-// For simplicity here, it's part of the store's context.
 async function executePendingUpdateOperation(pendingOp: any, storeMethods: { set: any, get: any, trpcClient: any }) {
   const { data, originalData, type } = pendingOp;
   const { set, get, trpcClient } = storeMethods;
@@ -90,7 +112,7 @@ async function executePendingUpdateOperation(pendingOp: any, storeMethods: { set
     console.log(`[FlashcardStore] executePendingUpdateOperation: Processing deferred rating for ${data.id}`);
     try {
       const backendSrsData = {
-        flashcardId: data.id, // Should be realId now
+        flashcardId: data.id,
         interval: data.interval,
         easeFactor: data.easeFactor,
         repetitions: data.repetitions,
@@ -125,9 +147,10 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
     studyProgress: null,
     isLoading: false,
     error: null,
-    pendingOperations: {},
     sessionJustCompletedDeckId: null,
+    pendingOperations: {},
     tempIdToRealIdMap: {},
+    loadingFlashcardsForDeckId: null,
       
     initializeStoreWithMocks: () => {
       console.log("[FlashcardStore] initializeStoreWithMocks called.");
@@ -137,6 +160,7 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
         createdAt: new Date(deck.createdAt).toISOString(), 
         updatedAt: new Date(deck.updatedAt).toISOString(),
         cardCount: mockFlashcards.filter((fc: Flashcard) => fc.deckId === deck.id).length,
+        areCardsLoaded: false,
       }));
       const initializedFlashcards = mockFlashcards.map(card => ({
         ...card,
@@ -157,11 +181,11 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
 
     loadInitialData: (decks, flashcards) => {
       const now = Date.now();
-      const normalizedDecks = decks.map(deck => ({
+      const normalizedDecks: StoreDeck[] = decks.map(deck => ({
           ...deck,
           createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date(now).toISOString(),
           updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date(now).toISOString(),
-          cardCount: flashcards.filter((fc: Flashcard) => fc.deckId === deck.id).length,
+          areCardsLoaded: flashcards.some(fc => fc.deckId === deck.id),
       }));
       const normalizedFlashcards = flashcards.map(card => ({
           ...card,
@@ -175,23 +199,24 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
           easeFactor: card.easeFactor ?? 2.5,
           repetitions: card.repetitions ?? 0,
       }));
-      set({
-        decks: normalizedDecks,
-        flashcards: normalizedFlashcards,
-        isLoading: false,
-        error: null,
-        pendingOperations: {},
-      });
+      set(produce((state: FlashcardState) => {
+        state.decks = normalizedDecks;
+        state.flashcards = normalizedFlashcards;
+        state.isLoading = false;
+        state.error = null;
+        state.pendingOperations = {};
+      }));
     },
 
     addDeck: async (deckData, tempId) => {
-      const optimisticDeck: Deck = {
+      const optimisticDeck: StoreDeck = {
         ...deckData,
         id: tempId,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         cardCount: 0,
         userId: 'temp-user-id',
+        areCardsLoaded: false,
       };
 
       set(produce((state: FlashcardState) => {
@@ -216,13 +241,11 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
 
         if (deckData.coverImage && typeof deckData.coverImage === 'string' && deckData.coverImage.trim() !== '') {
           if (!deckData.coverImage.startsWith('http')) {
-            // It's a non-empty string, not a URL (local path) -> use placeholder
             finalCoverImageForBackend = 'https://via.placeholder.com/300x200.png?text=CramItDeck'; 
           } else {
-            // It's a non-empty string that starts with http -> use it as is
             finalCoverImageForBackend = deckData.coverImage;
           }
-        } // else, deckData.coverImage is null, undefined, empty string, or not a string -> finalCoverImageForBackend remains undefined
+        }
 
         const payload = {
           ...deckData,
@@ -234,13 +257,14 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
         };
         const newDeckFromBackend = await trpcClient.deck.create.mutate(payload);
         set(produce((state: FlashcardState) => {
-          const deckIndex = state.decks.findIndex((d: Deck) => d.id === tempId);
+          const deckIndex = state.decks.findIndex((d: StoreDeck) => d.id === tempId);
           if (deckIndex !== -1) {
             state.decks[deckIndex] = {
               ...newDeckFromBackend,
               cardCount: 0,
               createdAt: newDeckFromBackend.createdAt ? String(newDeckFromBackend.createdAt) : new Date().toISOString(), 
               updatedAt: newDeckFromBackend.updatedAt ? String(newDeckFromBackend.updatedAt) : new Date().toISOString(),
+              areCardsLoaded: false,
             };
           }
           if (!state.tempIdToRealIdMap) {
@@ -256,39 +280,34 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
       } catch (error: any) {
         console.error(`[FlashcardStore] Error during addDeck backend operation for tempId ${tempId}:`, error);
         set(produce((state: FlashcardState) => {
-          // Keep the optimistic deck, but mark its pending operation as failed.
           if (state.pendingOperations[tempId]) {
-            // @ts-ignore 
             state.pendingOperations[tempId].status = 'creation_failed'; 
-            // @ts-ignore
             state.pendingOperations[tempId].error = error.message || 'Unknown TRPC error';
             console.warn(`[FlashcardStore] Deck ${tempId} remains optimistic due to backend failure.`);
           } else {
-            state.decks = state.decks.filter((d: Deck) => d.id !== tempId);
+            state.decks = state.decks.filter((d: StoreDeck) => d.id !== tempId);
             console.error(`[FlashcardStore] Pending operation for ${tempId} not found during error handling. Rolling back optimistic add.`);
           }
           state.isLoading = false;
-          // Do not set global state.error here if we want the optimistic data to persist
         }));
-        // Re-throw the error so the caller's .catch() block is triggered
         throw error; 
       }
     },
 
     updateDeck: async (id, deckUpdateData) => {
-      const originalDeck = get().decks.find((d: Deck) => d.id === id);
+      const originalDeck = get().decks.find((d: StoreDeck) => d.id === id);
       if (!originalDeck) {
         throw new Error("Deck not found for update.");
       }
 
-      const optimisticDeck: Deck = {
+      const optimisticDeck: StoreDeck = {
         ...originalDeck,
         ...deckUpdateData,
         updatedAt: new Date().toISOString(),
       };
 
       set(produce((state: FlashcardState) => {
-        const deckIndex = state.decks.findIndex((d: Deck) => d.id === id);
+        const deckIndex = state.decks.findIndex((d: StoreDeck) => d.id === id);
         if (deckIndex !== -1) {
           state.decks[deckIndex] = optimisticDeck;
         }
@@ -317,13 +336,14 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
         };
         const updatedDeckFromBackend = await trpcClient.deck.update.mutate(payload as any);
         set(produce((state: FlashcardState) => {
-          const deckIndex = state.decks.findIndex((d: Deck) => d.id === id);
+          const deckIndex = state.decks.findIndex((d: StoreDeck) => d.id === id);
           if (deckIndex !== -1) {
              state.decks[deckIndex] = {
               ...updatedDeckFromBackend,
               cardCount: originalDeck.cardCount, 
               createdAt: String(updatedDeckFromBackend.createdAt), 
               updatedAt: String(updatedDeckFromBackend.updatedAt),
+              areCardsLoaded: originalDeck.areCardsLoaded,
             };
           }
           delete state.pendingOperations[id];
@@ -331,9 +351,9 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
         }));
       } catch (error: any) {
         set(produce((state: FlashcardState) => {
-          const deckIndex = state.decks.findIndex((d: Deck) => d.id === id);
+          const deckIndex = state.decks.findIndex((d: StoreDeck) => d.id === id);
           if (deckIndex !== -1 && state.pendingOperations[id]?.originalData) {
-            state.decks[deckIndex] = state.pendingOperations[id].originalData as Deck;
+            state.decks[deckIndex] = state.pendingOperations[id].originalData as StoreDeck;
           }
           delete state.pendingOperations[id];
           state.isLoading = false;
@@ -345,14 +365,14 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
     },
 
     deleteDeck: async (id) => {
-      const originalDeck = get().decks.find((d: Deck) => d.id === id);
+      const originalDeck = get().decks.find((d: StoreDeck) => d.id === id);
       const originalFlashcards = get().flashcards.filter((f: Flashcard) => f.deckId === id);
       if (!originalDeck) {
         throw new Error("Deck not found for deletion.");
       }
 
       set(produce((state: FlashcardState) => {
-        state.decks = state.decks.filter((d: Deck) => d.id !== id);
+        state.decks = state.decks.filter((d: StoreDeck) => d.id !== id);
         state.flashcards = state.flashcards.filter((f: Flashcard) => f.deckId !== id);
         state.isLoading = true;
         state.error = null;
@@ -411,21 +431,20 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
       const tempFlashcardId = `flashcard-temp-${Date.now()}`;
       const now = Date.now();
       
-      // Check if the provided deckId is temporary and if a realId mapping exists
       const tempIdMap = get().tempIdToRealIdMap || {};
       const isProvidedDeckIdTemporary = deckId.startsWith('deck-temp-');
       let finalDeckId = deckId;
 
       if (isProvidedDeckIdTemporary && tempIdMap[deckId]) {
         console.log(`[FlashcardStore] addFlashcard: Deck ID ${deckId} is temporary, but real ID ${tempIdMap[deckId]} found in map. Using real ID.`);
-        finalDeckId = tempIdMap[deckId]; // Use the real deck ID
+        finalDeckId = tempIdMap[deckId];
       }
       
-      const isFinalDeckIdTemporary = finalDeckId.startsWith('deck-temp-'); // Re-check after potential mapping
+      const isFinalDeckIdTemporary = finalDeckId.startsWith('deck-temp-');
 
       const optimisticFlashcard: Flashcard = {
         ...flashcardData,
-        deckId: finalDeckId, // Use the finalDeckId (which might be the real one now)
+        deckId: finalDeckId,
         id: tempFlashcardId,
         createdAt: now,
         updatedAt: now,
@@ -438,22 +457,18 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
         contentType: flashcardData.contentType || 'text',
       };
         
-      // Optimistic update to local state (always happens)
       set(produce((state: FlashcardState) => {
         state.flashcards.push(optimisticFlashcard);
-        // Use finalDeckId to find the deck for cardCount update
-        const deck = state.decks.find((d: Deck) => d.id === finalDeckId); 
+        const deck = state.decks.find((d: StoreDeck) => d.id === finalDeckId); 
         if (deck) {
           deck.cardCount = (deck.cardCount || 0) + 1;
           deck.updatedAt = new Date().toISOString();
         }
         state.isLoading = true;
         state.error = null;
-        // Pending operation details depend on whether the deckId is temporary
       }));
 
-      if (isFinalDeckIdTemporary) { // Check based on finalDeckId
-        // Deck ID is still temporary, so this flashcard add must be deferred.
+      if (isFinalDeckIdTemporary) {
         set(produce((state: FlashcardState) => {
           state.pendingOperations[`deferred-add-${tempFlashcardId}`] = {
             type: 'add',
@@ -463,37 +478,34 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
             originalData: undefined, 
             timestamp: Date.now(),
             operationSubType: undefined, 
-            waitsForTempId: finalDeckId, // It's waiting for this temp deck ID to become real   
+            waitsForTempId: finalDeckId,
             waitsForItemType: 'deck',
           };
         }));
         console.log(`[FlashcardStore] addFlashcard for temp deck ${finalDeckId} is deferred. Flashcard tempId: ${tempFlashcardId}`);
         return tempFlashcardId; 
       } else {
-        // Deck ID is real, proceed with fully optimistic add and background backend call.
         set(produce((state: FlashcardState) => {
-          // Ensure pending op for the flashcard itself is added before backend call
           state.pendingOperations[tempFlashcardId] = {
             type: 'add',
             status: 'optimistic',
             itemType: 'flashcard',
-            data: optimisticFlashcard, // data is the optimistic card with temp ID
+            data: optimisticFlashcard,
             originalData: undefined, 
             timestamp: Date.now(),
             operationSubType: undefined, 
             waitsForTempId: undefined, 
             waitsForItemType: undefined,
           };
-          state.isLoading = false; // isLoading was set true earlier, reset if not globally managed for this
+          state.isLoading = false;
         }));
 
-        // Perform backend operation in the background, don't await it here
         trpcClient.flashcards.create.mutate(
-          { ...flashcardData, deckId: finalDeckId } // Ensure payload uses finalDeckId
+          { ...flashcardData, deckId: finalDeckId }
         )
         .then(async (newFlashcardFromBackend) => {
           const realFlashcardId = newFlashcardFromBackend.id;
-          const nowForUpdate = Date.now(); // Consistent timestamp for updates
+          const nowForUpdate = Date.now();
           set(produce((state: FlashcardState) => {
             const cardIndex = state.flashcards.findIndex((f: Flashcard) => f.id === tempFlashcardId);
             if (cardIndex !== -1) {
@@ -505,7 +517,7 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
                 contentType: (newFlashcardFromBackend.contentType as ContentType) || 'text',
                 mediaUrls: newFlashcardFromBackend.mediaUrls || [],
                 tags: newFlashcardFromBackend.tags || [],
-                deckId: finalDeckId, // Should be the real deckId used in payload
+                deckId: finalDeckId,
                 createdAt: newFlashcardFromBackend.createdAt ? new Date(newFlashcardFromBackend.createdAt).getTime() : nowForUpdate,
                 updatedAt: newFlashcardFromBackend.updatedAt ? new Date(newFlashcardFromBackend.updatedAt).getTime() : nowForUpdate,
                 interval: userStatus?.interval ?? 1,
@@ -516,7 +528,6 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
                 isBookmarked: userStatus?.isBookmarked ?? false,
               };
             }
-            // Update currentSessionCardQueue if the tempId was in it
             const queueIndex = currentSessionCardQueue.indexOf(tempFlashcardId);
             if (queueIndex !== -1) {
               currentSessionCardQueue[queueIndex] = realFlashcardId;
@@ -524,35 +535,27 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
             delete state.pendingOperations[tempFlashcardId];
             state.isLoading = false;
           }));
-          // Process operations dependent on this flashcard having its real ID
           await get()._processPendingOperationsForItem(tempFlashcardId, realFlashcardId, 'flashcard');
         })
         .catch((error: any) => {
           console.error(`[FlashcardStore] Error adding flashcard (real deckId ${finalDeckId}, tempFlashcardId ${tempFlashcardId}) in background:`, error);
           set(produce((state: FlashcardState) => {
-            // Rollback optimistic add of flashcard
             state.flashcards = state.flashcards.filter((f: Flashcard) => f.id !== tempFlashcardId);
-            const deck = state.decks.find((d: Deck) => d.id === finalDeckId);
+            const deck = state.decks.find((d: StoreDeck) => d.id === finalDeckId);
             if (deck) {
               deck.cardCount = Math.max(0, (deck.cardCount || 0) - 1);
             }
-            // Update pending operation to reflect failure
             if (state.pendingOperations[tempFlashcardId]) {
-              // @ts-ignore adding custom error field or changing status
               state.pendingOperations[tempFlashcardId].status = 'creation_failed'; 
-               // @ts-ignore
               state.pendingOperations[tempFlashcardId].error = error.message || 'Unknown TRPC error for flashcard creation';
             } else {
-              // Fallback if pending op was somehow missed, though it should have been added.
               delete state.pendingOperations[tempFlashcardId]; 
             }
             state.isLoading = false;
-            // Consider if a global error state needs to be set or a specific callback invoked
-            // For now, error is logged, and optimistic data is rolled back.
           }));
         });
 
-        return tempFlashcardId; // Return tempId immediately for UI responsiveness
+        return tempFlashcardId;
       }
     },
 
@@ -663,7 +666,7 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
 
       set(produce((state: FlashcardState) => {
         state.flashcards = state.flashcards.filter((f: Flashcard) => f.id !== id);
-        const deck = state.decks.find((d: Deck) => d.id === deckId);
+        const deck = state.decks.find((d: StoreDeck) => d.id === deckId);
         if (deck) {
           deck.cardCount = Math.max(0, (deck.cardCount || 0) - 1);
           deck.updatedAt = new Date().toISOString();
@@ -694,7 +697,7 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
           const op = state.pendingOperations[id];
           if (op && op.originalData) {
             state.flashcards.push(op.originalData as Flashcard);
-            const deck = state.decks.find((d: Deck) => d.id === (op.originalData as Flashcard).deckId);
+            const deck = state.decks.find((d: StoreDeck) => d.id === (op.originalData as Flashcard).deckId);
             if (deck) {
               deck.cardCount = (deck.cardCount || 0) + 1;
             }
@@ -963,16 +966,14 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
 
     _processPendingOperationsForItem: async (tempParentId, realParentId, parentItemType) => {
       console.log(`[FlashcardStore] _processPendingOperationsForItem called for parent ${parentItemType}: ${tempParentId} -> ${realParentId}`);
-      const pendingOps = { ...get().pendingOperations }; // Shallow copy to iterate safely
-      let processedOpKeys: string[] = []; // Keep track of ops processed in this run to avoid issues if recursive calls modify pendingOps
+      const pendingOps = { ...get().pendingOperations };
+      let processedOpKeys: string[] = [];
 
       for (const opKey in pendingOps) {
-        if (processedOpKeys.includes(opKey)) continue; // Skip if already handled in this run (e.g. by a recursive call)
+        if (processedOpKeys.includes(opKey)) continue;
 
         const op = pendingOps[opKey];
 
-        // Case 1: An 'update' or 'delete' operation was on an item that now has its real ID confirmed.
-        // Example: A flashcard was rated (update) while its own ID was temp, and now its real ID is known.
         if ((op.type === 'update' || op.type === 'delete') && op.status === 'pendingRealId' && 
             op.data?.id === tempParentId && op.itemType === parentItemType) {
           
@@ -982,17 +983,12 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
 
           try {
             if (op.type === 'update' && op.itemType === 'flashcard' && op.operationSubType === 'rateCard') {
-              // Specific handling for deferred rating
               await executePendingUpdateOperation(operationToExecute, { set, get, trpcClient });
             } else if (op.type === 'update' && op.itemType === 'flashcard') {
-              // Generic flashcard content update (if we add such deferred updates)
-              // await executePendingFlashcardContentUpdate(operationToExecute, { set, get, trpcClient });
                console.warn("[FlashcardStore] Generic deferred flashcard content update not yet implemented in _processPendingOperationsForItem");
             } else if (op.type === 'update' && op.itemType === 'deck') {
-              // Generic deck update (if we add such deferred updates)
                console.warn("[FlashcardStore] Generic deferred deck update not yet implemented in _processPendingOperationsForItem");
             }
-            // Add handlers for other deferred update/delete types as needed
 
             set(produce((state: FlashcardState) => {
               delete state.pendingOperations[opKey];
@@ -1000,30 +996,23 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
             processedOpKeys.push(opKey);
           } catch (error) {
             console.error(`[FlashcardStore] Error executing deferred ${op.type} op ${opKey} for ${realParentId}:`, error);
-            // Rollback or error handling for this specific failed deferred op might be needed here
-            // For now, it's logged, and the op might remain if executePending... doesn't clean up on its own errors.
           }
         }
-        // Case 2: A child 'add' operation was waiting for this parent's real ID.
-        // Example: A flashcard add was deferred because its deckId was temporary.
         else if (op.type === 'add' && op.status === 'pendingDependency' && 
                  op.waitsForTempId === tempParentId && op.waitsForItemType === parentItemType) {
           
           console.log(`[FlashcardStore] Processing deferred dependent 'add' operation ${opKey} (itemType: ${op.itemType}) for parent ${realParentId}`);
           
-          // This is the optimistic child data that was stored, its own ID is temporary.
           const optimisticChildDataWithTempId = op.data;
           const tempChildId = optimisticChildDataWithTempId.id;
 
-          // Prepare the payload for the backend, updating the parent foreign key.
           let backendPayload;
           if (op.itemType === 'flashcard') {
             backendPayload = { ...optimisticChildDataWithTempId, deckId: realParentId };
-            delete backendPayload.id; // Backend create doesn't want the temp child ID
+            delete backendPayload.id;
           } else {
-            // Handle other child types if necessary (e.g., a sub-deck, though not in our current model)
             console.error("[FlashcardStore] Deferred add for unexpected itemType:", op.itemType);
-            continue; // Skip this operation
+            continue;
           }
 
           try {
@@ -1031,7 +1020,6 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
             if (op.itemType === 'flashcard') {
               newChildFromBackend = await trpcClient.flashcards.create.mutate(backendPayload as any);
             }
-            // Add else if for other types like sub-decks if they become dependent adds
 
             if (newChildFromBackend) {
               const realChildId = newChildFromBackend.id;
@@ -1049,7 +1037,7 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
                       contentType: (newChildFromBackend.contentType as ContentType) || 'text',
                       mediaUrls: newChildFromBackend.mediaUrls || [],
                       tags: newChildFromBackend.tags || [],
-                      deckId: realParentId, // Ensure it has the real parent ID
+                      deckId: realParentId,
                       createdAt: newChildFromBackend.createdAt ? new Date(newChildFromBackend.createdAt).getTime() : Date.now(),
                       updatedAt: newChildFromBackend.updatedAt ? new Date(newChildFromBackend.updatedAt).getTime() : Date.now(),
                       interval: userStatus?.interval ?? 1,
@@ -1063,13 +1051,10 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
                   const queueIndex = currentSessionCardQueue.indexOf(tempChildId);
                   if (queueIndex !== -1) currentSessionCardQueue[queueIndex] = realChildId;
                 }
-                // Add similar update logic for other item types if needed
-                delete state.pendingOperations[opKey]; // Remove this processed deferred add
+                delete state.pendingOperations[opKey];
               }));
               processedOpKeys.push(opKey);
 
-              // RECURSIVE CALL: Now that this child item has its real ID, 
-              // process any operations that might have been dependent on IT.
               await get()._processPendingOperationsForItem(tempChildId, realChildId, op.itemType);
 
             } else {
@@ -1081,21 +1066,72 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
             set(produce((state: FlashcardState) => {
               if (op.itemType === 'flashcard') {
                 state.flashcards = state.flashcards.filter(f => f.id !== tempChildId);
-                const parentDeck = state.decks.find(d => d.id === realParentId); // Parent ID is real now
+                const parentDeck = state.decks.find(d => d.id === realParentId);
                 if (parentDeck) parentDeck.cardCount = Math.max(0, (parentDeck.cardCount || 0) - 1);
               }
-              // Add rollback for other item types if needed
               delete state.pendingOperations[opKey];
               state.error = `Failed to add dependent ${op.itemType}`;
             }));
-            processedOpKeys.push(opKey); // Ensure it's marked as processed even on failure to prevent re-runs
+            processedOpKeys.push(opKey);
           }
         }
       }
-      // Final cleanup of any operations that might have been added by recursive calls and processed.
-      // This is a bit tricky; the simple processedOpKeys might not be enough if new ops are added with keys that were already iterated over.
-      // A more robust solution might involve re-fetching pendingOps if the map changes significantly during iteration.
-      // For now, this handles the direct items in the initial pendingOps snapshot.
+    },
+
+    fetchFlashcardsForDeck: async (deckId: string) => {
+      console.log(`[FlashcardStore] Fetching flashcards for deck: ${deckId}`);
+      set(produce((state: FlashcardState) => {
+        state.loadingFlashcardsForDeckId = deckId;
+        state.error = null;
+      }));
+
+      try {
+        const response = await trpcClient.flashcards.listByDeck.query({ deckId }) as ListByDeckResponse;
+        const userStatusesList = response.userStatuses || [];
+
+        set(produce((state: FlashcardState) => {
+          const now = Date.now();
+          const normalizedFetchedFlashcards: Flashcard[] = response.items.map((fc: FetchedFlashcardData): Flashcard => {
+            const userStatus: LocalUserFlashcardStatus | undefined = userStatusesList.find((us: LocalUserFlashcardStatus) => us.flashcardId === fc.id);
+            return {
+              id: fc.id,
+              deckId: fc.deckId,
+              front: fc.front,
+              back: fc.back,
+              contentType: (fc.contentType as ContentType) ?? 'text',
+              mediaUrls: fc.mediaUrls ?? [],
+              tags: fc.tags ?? [],
+              createdAt: fc.createdAt ? new Date(fc.createdAt).getTime() : now,
+              updatedAt: fc.updatedAt ? new Date(fc.updatedAt).getTime() : now,
+              interval: userStatus?.interval ?? 1,
+              easeFactor: userStatus?.easeFactor ?? 2.5,
+              repetitions: userStatus?.repetitions ?? 0,
+              dueDate: userStatus?.dueDate ? new Date(userStatus.dueDate).getTime() : now,
+              lastReviewed: userStatus?.lastReviewed ? new Date(userStatus.lastReviewed).getTime() : null,
+              isBookmarked: userStatus?.isBookmarked ?? false,
+            };
+          });
+
+          const existingFlashcardIds = new Set(state.flashcards.map(f => f.id));
+          const newFlashcardsToMerge = normalizedFetchedFlashcards.filter((fc: Flashcard) => !existingFlashcardIds.has(fc.id));
+          state.flashcards.push(...newFlashcardsToMerge);
+
+          const deckIndexToUpdate = state.decks.findIndex((d: StoreDeck) => d.id === deckId);
+          if (deckIndexToUpdate !== -1) {
+            state.decks[deckIndexToUpdate].cardCount = state.flashcards.filter((fc: Flashcard) => fc.deckId === deckId).length; 
+            state.decks[deckIndexToUpdate].areCardsLoaded = true;
+          }
+          
+          state.loadingFlashcardsForDeckId = null;
+          console.log(`[FlashcardStore] Successfully fetched and merged ${newFlashcardsToMerge.length} flashcards for deck: ${deckId}. New total cards for deck: ${state.decks[deckIndexToUpdate]?.cardCount}`);
+        }));
+      } catch (error: any) {
+        console.error(`[FlashcardStore] Error fetching flashcards for deck ${deckId}:`, error);
+        set(produce((state: FlashcardState) => {
+          state.loadingFlashcardsForDeckId = null;
+          state.error = `Failed to load flashcards for deck ${deckId}: ${error.message || 'Unknown error'}`;
+        }));
+      }
     },
 });
 

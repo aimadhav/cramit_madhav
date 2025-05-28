@@ -37,6 +37,11 @@ export const deckRouter = createTRPCRouter({
         take: limit + 1, 
         cursor: cursor ? { id: cursor } : undefined,
         where: whereClause,
+        include: {
+          _count: {
+            select: { flashcards: true },
+          },
+        },
         orderBy: {
           createdAt: 'desc',
         },
@@ -60,6 +65,11 @@ export const deckRouter = createTRPCRouter({
         cursor: cursor ? { id: cursor } : undefined,
         where: {
           userId: userIdAuth, 
+        },
+        include: {
+          _count: {
+            select: { flashcards: true },
+          },
         },
         orderBy: {
           updatedAt: 'desc',
