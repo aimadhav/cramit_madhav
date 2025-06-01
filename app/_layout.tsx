@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Alert } from 'react-native';
 
 // Ensure no useColorScheme references remain
 import { trpc, trpcClient } from '../utils/trpc';
@@ -131,6 +132,12 @@ function AppNavigatorAndDataHandler() {
 
       } catch (error) {
         console.error('[AppNavigatorAndDataHandler] Error fetching and processing DECK data:', error);
+        // Display an alert if there's an error
+        Alert.alert(
+          "Connection Error",
+          "Failed to load data. Please check your internet connection and try again.",
+          [{ text: "OK" }]
+        );
         loadInitialData([], []); 
       } finally {
         setIsDataLoading(false);

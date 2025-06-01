@@ -187,7 +187,7 @@ export default function StudySessionScreen() {
       if (sessionJustCompletedDeckId && sessionJustCompletedDeckId !== id) {
         // Defer this store update to avoid updates during render
         requestAnimationFrame(() => {
-          clearSessionJustCompleted();
+        clearSessionJustCompleted();
         });
       }
     }
@@ -211,8 +211,8 @@ export default function StudySessionScreen() {
       const cardsStudied = currentStudyProgress?.cardsStudied || 0;
       
       requestAnimationFrame(() => {
-        updateStudyStats(sessionDuration, cardsStudied);
-        endStudySession();
+      updateStudyStats(sessionDuration, cardsStudied);
+      endStudySession();
       });
     };
     // Dependencies should be stable functions/values that don't change often

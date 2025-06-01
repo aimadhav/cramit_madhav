@@ -25,27 +25,38 @@ export default function DeckDetailScreen() {
   const { id: idFromParams } = useLocalSearchParams<{ id: string }>();
   const routeId = Array.isArray(idFromParams) ? idFromParams[0] : idFromParams;
   const isFocused = useIsFocused();
-  
-  const deck = useFlashcardStore(state => 
+  const isMountedRef = React.useRef(true);
+
+  const storeDeck = useFlashcardStore(state => 
     routeId ? state.decks.find(d => d.id === routeId) : undefined
   );
   
   const getFlashcardsForDeck = useFlashcardStore(state => state.getFlashcardsForDeck);
   const getDueFlashcardsForDeck = useFlashcardStore(state => state.getDueFlashcardsForDeck);
   const startStudySession = useFlashcardStore(state => state.startStudySession);
-  const deleteDeck = useFlashcardStore(state => state.deleteDeck);
+  const deleteDeckFromStore = useFlashcardStore(state => state.deleteDeck);
   const pendingOperations = useFlashcardStore(state => state.pendingOperations);
   const tempIdToRealIdMap = useFlashcardStore(state => state.tempIdToRealIdMap);
   const clearTempIdMapping = useFlashcardStore(state => state.clearTempIdMapping);
   const fetchFlashcardsForDeck = useFlashcardStore(state => state.fetchFlashcardsForDeck);
   const loadingFlashcardsForDeckId = useFlashcardStore(state => state.loadingFlashcardsForDeckId);
-  const flashcardStoreError = useFlashcardStore(state => state.error);
-  
+
   const user = useUserStore(state => state.user);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  
-  console.log('[DeckDetailScreen] Component rendered. Received routeId:', routeId);
+
+  const deck = storeDeck;
+  const deckId = deck?.id;
+  const deckAreCardsLoaded = deck?.areCardsLoaded;
+
+  console.log('[DeckDetailScreen] Component rendered. Received routeId:', routeId, 'Deck ID from store:', deckId);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const currentDeckInStore = routeId ? useFlashcardStore.getState().decks.find(d => d.id === routeId) : undefined;
@@ -57,7 +68,6 @@ export default function DeckDetailScreen() {
     if (isFocused && routeId && routeId.startsWith('deck-temp-') && tempIdToRealIdMap && tempIdToRealIdMap[routeId]) {
       const realId = tempIdToRealIdMap[routeId];
       console.log(`DeckDetailScreen: [Focused] Temp ID ${routeId} confirmed to Real ID ${realId}. Scheduling route update.`);
-      
       requestAnimationFrame(() => {
         console.log(`DeckDetailScreen: [Focused] Executing route update for temp ID ${routeId} to real ID ${realId}.`);
         router.replace(`/deck/${realId}`);
@@ -67,13 +77,8 @@ export default function DeckDetailScreen() {
       console.log(`DeckDetailScreen: [Not Focused] Temp ID ${routeId} confirmed to Real ID ${tempIdToRealIdMap[routeId]}. Route update deferred.`);
     }
   }, [routeId, tempIdToRealIdMap, router, clearTempIdMapping, isFocused]);
-  
-  // Destructure for stable dependencies
-  const deckId = deck?.id;
-  const deckAreCardsLoaded = deck?.areCardsLoaded;
 
   useEffect(() => {
-    // Ensure deckId is defined and deckAreCardsLoaded is a boolean before proceeding
     if (deckId && typeof deckAreCardsLoaded === 'boolean' && !deckAreCardsLoaded && loadingFlashcardsForDeckId !== deckId) {
       console.log(`[DeckDetailScreen] Deck ${deckId} cards not loaded. Fetching...`);
       fetchFlashcardsForDeck(deckId);
@@ -86,99 +91,6 @@ export default function DeckDetailScreen() {
       fetchFlashcardsForDeck(deck.id);
     }
   }, [deck, fetchFlashcardsForDeck]);
-  
-  if (!routeId) {
-    return (
-      <SafeAreaView style={styles.container} edges={["top"]}>
-        <Stack.Screen options={{ title: "Error", headerShown: false }} />
-        <View style={styles.notFoundContainer}>
-          <Text style={styles.notFoundText}>Deck ID not provided in route.</Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-  
-  if (!deck) {
-    return (
-      <SafeAreaView style={styles.container} edges={["top"]}>
-        <Stack.Screen options={{ title: "Loading Deck...", headerShown: false }} />
-        <View style={styles.notFoundContainer}>
-          <Text style={styles.notFoundText}>Deck not found or still loading...</Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-  
-  console.log('[DeckDetailScreen] Deck is defined, proceeding to render details for:', deck.id);
-
-  const flashcards = getFlashcardsForDeck(deck.id);
-  const dueCards = getDueFlashcardsForDeck(deck.id);
-  const displayedCards = showAll ? flashcards : flashcards.slice(0, 5);
-  
-  const handleStartStudy = () => {
-    if (!deck) return;
-    if (!deck.areCardsLoaded && deck.cardCount > 0) {
-        Alert.alert("Flashcards Not Loaded", "Flashcards for this deck are still being loaded or failed to load. Please wait or try again.");
-        if (loadingFlashcardsForDeckId !== deck.id) {
-            fetchFlashcardsForDeck(deck.id);
-        }
-        return;
-    }
-
-    if (dueCards.length === 0 && deck.cardCount > 0) {
-      Alert.alert(
-        "No Cards Due",
-        "There are no cards due for review. Would you like to study all cards in this deck?",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Study All",
-            onPress: () => {
-              startStudySession(deck.id);
-              router.push(`/study/${deck.id}`);
-            }
-          }
-        ]
-      );
-      return;
-    }
-    startStudySession(deck.id);
-    router.push(`/study/${deck.id}`);
-  };
-  
-  const handleDeleteDeck = async () => {
-    Alert.alert(
-      "Delete Deck",
-      "Are you sure you want to delete this deck? This action cannot be undone.",
-      [
-        {
-          text: "Cancel",
-          style: "cancel"
-        },
-        {
-          text: "Delete",
-          onPress: async () => {
-            try {
-              setIsDeleting(true);
-              await deleteDeck(deck.id);
-              router.back();
-            } catch (error: any) {
-              Alert.alert("Error", error.message || "Failed to delete deck. Please try again.");
-            } finally {
-              setIsDeleting(false);
-            }
-          },
-          style: "destructive"
-        }
-      ]
-    );
-  };
 
   const isPending = React.useMemo(() => {
     if (!deckId) return false;
@@ -190,38 +102,136 @@ export default function DeckDetailScreen() {
     });
   }, [pendingOperations, routeId, deckId]);
 
-  return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
-      <Stack.Screen 
-        options={{
-          title: isPending ? "Syncing..." : deck.name,
-          headerShown: true,
-          headerRight: () => (
-            <View style={styles.headerButtons}>
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={() => router.push(`/deck/${deck.id}/edit`)}
-                disabled={isDeleting || isPending || routeId?.startsWith('deck-temp-')}
-              >
-                <Edit size={20} color={(isDeleting || isPending || routeId?.startsWith('deck-temp-')) ? colors.gray[400] : colors.primary} />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.headerButton}
-                onPress={handleDeleteDeck}
-                disabled={isDeleting || isPending || routeId?.startsWith('deck-temp-')}
-              >
-                <Trash2 size={20} color={(isDeleting || isPending || routeId?.startsWith('deck-temp-')) ? colors.gray[400] : colors.error} />
-              </TouchableOpacity>
-            </View>
-          ),
-        }} 
-      />
-      
+  const handleDeleteDeck = async () => {
+    if (!deck) {
+        Alert.alert("Error", "Deck data is missing. Cannot delete.");
+        return;
+    }
+    Alert.alert(
+      "Delete Deck",
+      `Are you sure you want to delete "${deck.name}"? This action cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          onPress: async () => {
+            const deckIdToDelete = deck.id;
+            router.back();
+            if (isMountedRef.current) {
+                setIsDeleting(true);
+            }
+
+            try {
+              await deleteDeckFromStore(deckIdToDelete);
+            } catch (error: any) {
+              console.error("Failed to delete deck from store after navigating back:", error);
+              Alert.alert(
+                "Delete Error", 
+                error.message || "Failed to delete deck. The deck might still appear until you refresh the list."
+              );
+            } finally {
+              if (isMountedRef.current) {
+                setIsDeleting(false);
+              }
+            }
+          },
+          style: "destructive"
+        }
+      ]
+    );
+  };
+  
+  let screenTitle = "Loading...";
+  let screenHeaderShown = true;
+  let screenHeaderRight: (() => React.ReactNode) | undefined = undefined;
+  let mainContent: React.ReactNode;
+
+  if (!routeId) {
+    screenTitle = "Error";
+    screenHeaderShown = true;
+    mainContent = (
+      <View style={styles.notFoundContainer}>
+        <Text style={styles.notFoundText}>Deck ID not provided in route.</Text>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Text style={styles.backButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  } else if (!deck) {
+    screenTitle = "Deck Not Found";
+    screenHeaderShown = true;
+    mainContent = (
+      <View style={styles.notFoundContainer}>
+        <ActivityIndicator size="large" color={colors.primary} style={{marginBottom: 10}}/>
+        <Text style={styles.notFoundText}>Deck not found or was recently deleted.</Text>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Text style={styles.backButtonText}>Go Back to Decks</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  } else {
+    screenTitle = isPending ? "Syncing..." : deck.name;
+    screenHeaderShown = true;
+    screenHeaderRight = () => (
+      <View style={styles.headerButtons}>
+        <TouchableOpacity 
+          style={styles.headerButton}
+          onPress={() => router.push(`/deck/${deck.id}/edit`)}
+          disabled={isDeleting || isPending || routeId?.startsWith('deck-temp-')}
+        >
+          <Edit size={20} color={(isDeleting || isPending || routeId?.startsWith('deck-temp-')) ? colors.gray[400] : colors.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.headerButton}
+          onPress={handleDeleteDeck}
+          disabled={isDeleting || isPending || routeId?.startsWith('deck-temp-')}
+        >
+          <Trash2 size={20} color={(isDeleting || isPending || routeId?.startsWith('deck-temp-')) ? colors.gray[400] : colors.error} />
+        </TouchableOpacity>
+      </View>
+    );
+
+    const flashcards = getFlashcardsForDeck(deck.id);
+    const dueCards = getDueFlashcardsForDeck(deck.id);
+    const displayedCards = showAll ? flashcards : flashcards.slice(0, 5);
+
+    const handleStartStudy = () => {
+      if (!deck) return;
+      if (!deck.areCardsLoaded && deck.cardCount > 0) {
+          Alert.alert("Flashcards Not Loaded", "Flashcards for this deck are still being loaded or failed to load. Please wait or try again.");
+          if (loadingFlashcardsForDeckId !== deck.id) {
+              fetchFlashcardsForDeck(deck.id);
+          }
+          return;
+      }
+      if (dueCards.length === 0 && deck.cardCount > 0) {
+        Alert.alert(
+          "No Cards Due",
+          "There are no cards due for review. Would you like to study all cards in this deck?",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Study All",
+              onPress: () => {
+                startStudySession(deck.id);
+                router.push(`/study/${deck.id}`);
+              }
+            }
+          ]
+        );
+        return;
+      }
+      startStudySession(deck.id);
+      router.push(`/study/${deck.id}`);
+    };
+
+    mainContent = (
       <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
         <View style={styles.coverImageContainer}>
           <Image 
             source={{ uri: deck.coverImage || undefined }}
             style={styles.coverImage}
+            onError={(e) => console.log("Failed to load cover image:", e.nativeEvent.error)}
           />
           <View style={styles.coverOverlay}>
             <View style={styles.deckInfo}>
@@ -237,9 +247,16 @@ export default function DeckDetailScreen() {
         </View>
         
         <View style={styles.content}>
+          {loadingFlashcardsForDeckId === deck.id && !deck.areCardsLoaded && (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={styles.loadingText}>Loading flashcards...</Text>
+            </View>
+          )}
+
           <View style={styles.descriptionContainer}>
             <Text style={styles.descriptionTitle}>Description</Text>
-            <Text style={styles.descriptionText}>{deck.description}</Text>
+            <Text style={styles.descriptionText}>{deck.description || "No description available."}</Text>
           </View>
           
           <View style={styles.tagsContainer}>
@@ -248,11 +265,11 @@ export default function DeckDetailScreen() {
               <Text style={styles.tagsTitle}>Tags</Text>
             </View>
             <View style={styles.tagsList}>
-              {deck.tags.map(tag => (
+              {deck.tags && deck.tags.length > 0 ? deck.tags.map(tag => (
                 <View key={tag} style={styles.tagBadge}>
                   <Text style={styles.tagText}>{tag}</Text>
                 </View>
-              ))}
+              )) : <Text style={styles.noTagsText}>No tags</Text>}
             </View>
           </View>
           
@@ -271,12 +288,12 @@ export default function DeckDetailScreen() {
           
           <View style={styles.actionsContainer}>
             <TouchableOpacity 
-              style={[styles.primaryButton, (isPending || (!deck.areCardsLoaded && deck.cardCount > 0)) && styles.disabledButton]}
+              style={[styles.primaryButton, (isPending || (!deck.areCardsLoaded && deck.cardCount > 0 && loadingFlashcardsForDeckId === deck.id)) && styles.disabledButton]}
               onPress={handleStartStudy}
-              disabled={isPending || (!deck.areCardsLoaded && deck.cardCount > 0 && loadingFlashcardsForDeckId !== deck.id)}
+              disabled={isPending || (!deck.areCardsLoaded && deck.cardCount > 0 && loadingFlashcardsForDeckId === deck.id)}
             >
               <BookOpen size={18} color="white" />
-              <Text style={styles.primaryButtonText}>Study Deck ({dueCards.length} due / {flashcards.length} total)</Text>
+              <Text style={styles.primaryButtonText}>Study ({dueCards.length} due / {flashcards.length} total)</Text>
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.secondaryButton, (isPending || routeId?.startsWith('deck-temp-')) && styles.disabledButton]}
@@ -290,12 +307,14 @@ export default function DeckDetailScreen() {
           
           <View style={styles.cardsSection}>
             <View style={styles.cardsSectionHeader}>
-              <Text style={styles.cardsSectionTitle}>Flashcards</Text>
-              <TouchableOpacity onPress={() => setShowAll(!showAll)}>
-                <Text style={styles.viewAllText}>
-                  {showAll ? "Show Less" : "View All"}
-                </Text>
-              </TouchableOpacity>
+              <Text style={styles.cardsSectionTitle}>Flashcards ({flashcards.length})</Text>
+              {flashcards.length > 5 && (
+                <TouchableOpacity onPress={() => setShowAll(!showAll)}>
+                  <Text style={styles.viewAllText}>
+                    {showAll ? "Show Less" : `View All (${flashcards.length})`}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
             
             {flashcards.length > 0 ? (
@@ -315,24 +334,40 @@ export default function DeckDetailScreen() {
                 ))}
               </View>
             ) : (
-              <View style={styles.emptyCardsContainer}>
-                <Text style={styles.emptyCardsText}>No cards in this deck</Text>
-                <TouchableOpacity 
-                  style={styles.addCardButton}
-                  onPress={() => router.push(`/deck/${deck.id}/add-card`)}
-                >
-                  <Text style={styles.addCardButtonText}>Add Card</Text>
-                </TouchableOpacity>
-              </View>
+              !loadingFlashcardsForDeckId && (
+                <View style={styles.emptyCardsContainer}>
+                  <Text style={styles.emptyCardsText}>No cards in this deck yet.</Text>
+                  <TouchableOpacity 
+                    style={styles.addCardButton}
+                    onPress={() => router.push(`/deck/${deck.id}/add-card`)}
+                    disabled={isPending || routeId?.startsWith('deck-temp-')}
+                  >
+                    <Text style={styles.addCardButtonText}>Add First Card</Text>
+                  </TouchableOpacity>
+                </View>
+              )
             )}
           </View>
           
-          <TouchableOpacity style={styles.shareButton}>
+          <TouchableOpacity style={[styles.shareButton, styles.disabledButton] /* Disabled for now */ }>
             <Share size={20} color={colors.primary} />
-            <Text style={styles.shareButtonText}>Share Deck</Text>
+            <Text style={styles.shareButtonText}>Share Deck (Coming Soon)</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container} edges={["top"]}>
+      <Stack.Screen 
+        options={{
+          title: screenTitle,
+          headerShown: screenHeaderShown,
+          headerRight: screenHeaderRight,
+        }} 
+      />
+      {mainContent}
     </SafeAreaView>
   );
 }
@@ -356,25 +391,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 20,
+    backgroundColor: colors.background,
   },
   notFoundText: {
     fontSize: 18,
     color: colors.textDark,
     marginBottom: 16,
+    textAlign: 'center',
   },
   backButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     backgroundColor: colors.primary,
     borderRadius: 8,
   },
   backButtonText: {
     color: "white",
     fontWeight: "600",
+    fontSize: 16,
   },
   coverImageContainer: {
     height: 200,
     width: "100%",
+    backgroundColor: colors.gray[200],
   },
   coverImage: {
     width: "100%",
@@ -461,6 +500,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textDark,
   },
+  noTagsText: {
+    fontSize: 14,
+    color: colors.textLight,
+    fontStyle: 'italic',
+  },
   statsContainer: {
     flexDirection: "row",
     marginBottom: 20,
@@ -498,7 +542,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.primary,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 8,
     marginRight: 5,
   },
@@ -506,20 +550,23 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 14,
     fontWeight: '600',
+    marginLeft: 6,
   },
   secondaryButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.gray[200],
+    backgroundColor: colors.gray[100],
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 8,
     marginLeft: 5,
+    borderWidth: 1,
+    borderColor: colors.gray[300],
   },
   secondaryButtonText: {
-    color: colors.primary,
+    color: colors.textDark,
     fontSize: 14,
     fontWeight: '600',
     marginLeft: 6,
@@ -555,6 +602,7 @@ const styles = StyleSheet.create({
   },
   cardContent: {
     flex: 1,
+    marginRight: 8,
   },
   cardFront: {
     fontSize: 16,
@@ -568,7 +616,11 @@ const styles = StyleSheet.create({
   },
   emptyCardsContainer: {
     alignItems: "center",
-    paddingVertical: 20,
+    paddingVertical: 30,
+    backgroundColor: colors.gray[50],
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.gray[200],
   },
   emptyCardsText: {
     fontSize: 16,
@@ -576,14 +628,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   addCardButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     backgroundColor: colors.primary,
     borderRadius: 8,
   },
   addCardButtonText: {
     color: "white",
     fontWeight: "600",
+    fontSize: 16,
   },
   shareButton: {
     flexDirection: "row",
@@ -593,6 +646,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.primary,
+    backgroundColor: colors.gray[100],
     marginBottom: 20,
   },
   shareButtonText: {
@@ -605,9 +659,20 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   disabledButton: {
-    opacity: 0.5,
+    opacity: 0.6,
   },
   disabledButtonText: {
-    color: colors.gray[400],
+    color: colors.gray[500],
   },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  loadingText: {
+    marginLeft: 10,
+    fontSize: 16,
+    color: colors.textLight,
+  }
 });

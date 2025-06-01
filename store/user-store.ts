@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store'; 
+import { Platform } from 'react-native';
 
 export interface AppUser {
   id: string;
@@ -63,18 +64,27 @@ export const useUserStore = create<UserState>()(
       isLoading: false,
       error: null,
 
-      setSession: (userData: AppUser, accessToken: string, refreshToken?: string) => {
+      setSession: async (userData: AppUser, accessToken: string, refreshToken?: string) => {
         set({ 
           user: { ...userData, isLoggedIn: true }, 
           sessionToken: accessToken, 
           isLoading: false, 
           error: null 
         });
-        SecureStore.setItemAsync(TOKEN_STORAGE_KEY, accessToken);
-        if (refreshToken) {
-          SecureStore.setItemAsync(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+        if (Platform.OS === 'web') {
+          localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+          if (refreshToken) {
+            localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+          } else {
+            localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+          }
         } else {
-          SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          await SecureStore.setItemAsync(TOKEN_STORAGE_KEY, accessToken);
+          if (refreshToken) {
+            await SecureStore.setItemAsync(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+          } else {
+            await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          }
         }
       },
 
@@ -85,35 +95,58 @@ export const useUserStore = create<UserState>()(
           isLoading: false, 
           error: null 
         });
+        if (Platform.OS === 'web') {
+          localStorage.removeItem(TOKEN_STORAGE_KEY);
+          localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+        } else {
         await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
-        await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+        }
       },
       
       checkAuthStatus: async () => {
         set({ isLoading: true });
         try {
-          const accessToken = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
-          const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          let accessToken: string | null = null;
+          let refreshToken: string | null = null;
 
-          if (accessToken && refreshToken) {
+          if (Platform.OS === 'web') {
+            accessToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+            refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+          } else {
+            accessToken = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+            refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          }
+
+          if (accessToken) {
             const persistedUser = get().user; 
             set({ 
               sessionToken: accessToken, 
               user: persistedUser && persistedUser.id !== 'guest-user' && persistedUser.isLoggedIn 
                     ? { ...persistedUser, isLoggedIn: true } 
-                    : defaultUserInitialState, 
+                    : { ...defaultUserInitialState, isLoggedIn: true }, 
               isLoading: false 
             });
           } else {
             set({ user: defaultUserInitialState, sessionToken: null, isLoading: false });
-            await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
-            await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+            if (Platform.OS === 'web') {
+              localStorage.removeItem(TOKEN_STORAGE_KEY);
+              localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+            } else {
+              await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+              await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+            }
           }
         } catch (e) {
           console.error("Failed to check auth status", e);
           set({ user: defaultUserInitialState, sessionToken: null, isLoading: false, error: 'Auth check failed' });
-          await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
-          await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          if (Platform.OS === 'web') {
+            localStorage.removeItem(TOKEN_STORAGE_KEY);
+            localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+          } else {
+            await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+            await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          }
         }
       },
 

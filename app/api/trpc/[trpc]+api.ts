@@ -1,10 +1,21 @@
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import { createContext } from '../../../backend/trpc/create-context';
 import { appRouter } from '../../../backend/trpc/app-router';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const handler = async (req: NextRequest) => {
   console.log(`[TRPC API Handler] Received ${req.method} request for ${req.url}`);
+
+  // Handle CORS preflight (OPTIONS) requests
+  if (req.method === 'OPTIONS') {
+    console.log('[TRPC API Handler] Responding to OPTIONS request with CORS headers.');
+    const response = new NextResponse(null, { status: 204 });
+    response.headers.set('Access-Control-Allow-Origin', '*'); // Adjust as needed for security
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-TRPC-Method'); // Add any other headers your client might send
+    response.headers.set('Access-Control-Max-Age', '86400'); // Optional: cache preflight response
+    return response;
+  }
 
   /*
   if (req.method === 'POST') {
