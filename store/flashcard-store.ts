@@ -1085,14 +1085,56 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
         state.error = null;
       }));
 
+      let currentDeckId = deckId;
+      if (currentDeckId.startsWith('deck-temp-')) {
+        console.log(`[FlashcardStore] Detected temporary ID: ${currentDeckId}. Waiting for real ID.`);
+        const maxAttempts = 30;
+        let attempt = 0;
+        let realId = get().tempIdToRealIdMap?.[currentDeckId];
+
+        while (!realId && attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          realId = get().tempIdToRealIdMap?.[currentDeckId];
+          attempt++;
+          if (!realId) {
+             console.log(`[FlashcardStore] Waiting for real ID for ${deckId}, attempt ${attempt}. Real ID not yet found.`);
+          }
+        }
+
+        if (realId) {
+          console.log(`[FlashcardStore] Real ID found for ${deckId}: ${realId}. Proceeding with fetch.`);
+          currentDeckId = realId;
+          set(produce((state: FlashcardState) => {
+             if(state.loadingFlashcardsForDeckId === deckId) {
+                state.loadingFlashcardsForDeckId = realId;
+             }
+          }));
+        } else {
+          console.error(`[FlashcardStore] Timed out waiting for real ID for temporary deck ID: ${deckId}`);
+          set(produce((state: FlashcardState) => {
+            state.loadingFlashcardsForDeckId = null;
+            state.error = `Could not load deck. Temporary ID ${deckId} was not resolved to a real ID after ${maxAttempts} attempts.`;
+          }));
+          return;
+        }
+      }
+
       try {
-        const response = await trpcClient.flashcards.listByDeck.query({ deckId }) as ListByDeckResponse;
-        const userStatusesList = response.userStatuses || [];
+        set(produce((state: FlashcardState) => {
+             if(!state.loadingFlashcardsForDeckId) {
+                state.loadingFlashcardsForDeckId = currentDeckId;
+             }
+          }));
+
+        const response = await trpcClient.flashcards.listByDeck.query({ deckId: currentDeckId }) as ListByDeckResponse;
+
+        const fetchedCards = response.items;
+        const userStatuses = response.userStatuses || [];
 
         set(produce((state: FlashcardState) => {
           const now = Date.now();
-          const normalizedFetchedFlashcards: Flashcard[] = response.items.map((fc: FetchedFlashcardData): Flashcard => {
-            const userStatus: LocalUserFlashcardStatus | undefined = userStatusesList.find((us: LocalUserFlashcardStatus) => us.flashcardId === fc.id);
+          const normalizedFetchedFlashcards: Flashcard[] = fetchedCards.map((fc: FetchedFlashcardData): Flashcard => {
+            const userStatus: LocalUserFlashcardStatus | undefined = userStatuses.find((us: LocalUserFlashcardStatus) => us.flashcardId === fc.id);
             return {
               id: fc.id,
               deckId: fc.deckId,
@@ -1116,20 +1158,22 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
           const newFlashcardsToMerge = normalizedFetchedFlashcards.filter((fc: Flashcard) => !existingFlashcardIds.has(fc.id));
           state.flashcards.push(...newFlashcardsToMerge);
 
-          const deckIndexToUpdate = state.decks.findIndex((d: StoreDeck) => d.id === deckId);
+          const deckIndexToUpdate = state.decks.findIndex((d: StoreDeck) => d.id === currentDeckId);
           if (deckIndexToUpdate !== -1) {
-            state.decks[deckIndexToUpdate].cardCount = state.flashcards.filter((fc: Flashcard) => fc.deckId === deckId).length; 
+            state.decks[deckIndexToUpdate].cardCount = state.flashcards.filter((fc: Flashcard) => fc.deckId === currentDeckId).length;
             state.decks[deckIndexToUpdate].areCardsLoaded = true;
           }
-          
+
           state.loadingFlashcardsForDeckId = null;
-          console.log(`[FlashcardStore] Successfully fetched and merged ${newFlashcardsToMerge.length} flashcards for deck: ${deckId}. New total cards for deck: ${state.decks[deckIndexToUpdate]?.cardCount}`);
+          state.error = null;
+          console.log(`[FlashcardStore] Successfully fetched and merged ${newFlashcardsToMerge.length} flashcards for deck: ${currentDeckId}. New total cards for deck: ${state.flashcards.filter(fc => fc.deckId === currentDeckId).length}`);
         }));
-      } catch (error: any) {
-        console.error(`[FlashcardStore] Error fetching flashcards for deck ${deckId}:`, error);
+
+      } catch (e: any) {
+        console.error(`[FlashcardStore] Error fetching flashcards for deck ${currentDeckId}:`, e);
         set(produce((state: FlashcardState) => {
           state.loadingFlashcardsForDeckId = null;
-          state.error = `Failed to load flashcards for deck ${deckId}: ${error.message || 'Unknown error'}`;
+          state.error = e.message || `Failed to fetch flashcards for deck ${currentDeckId}`;
         }));
       }
     },

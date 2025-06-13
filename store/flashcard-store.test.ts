@@ -131,7 +131,7 @@ describe('useFlashcardStore optimistic updates', () => {
       (trpcClient.deck.create.mutate as any).mockResolvedValueOnce(mockBackendDeck);
 
       let tempId = '';
-      const addDeckPromise = useFlashcardStore.getState().addDeck(deckData);
+      const addDeckPromise = useFlashcardStore.getState().addDeck(deckData, `deck-temp-${Date.now()}`);
       
       const stateAfterOptimisticAdd = useFlashcardStore.getState();
       expect(stateAfterOptimisticAdd.decks.length).toBe(1);
@@ -169,7 +169,7 @@ describe('useFlashcardStore optimistic updates', () => {
         }
       });
 
-      await expect(useFlashcardStore.getState().addDeck(deckData)).rejects.toThrow(errorMessage);
+      await expect(useFlashcardStore.getState().addDeck(deckData, `deck-temp-${Date.now()}`)).rejects.toThrow(errorMessage);
       unsub();
       
       const stateAfterError = useFlashcardStore.getState();

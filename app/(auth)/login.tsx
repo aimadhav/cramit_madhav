@@ -1,48 +1,46 @@
 import React, { useState } from 'react';
-import { View, TextInput, Button, Text, StyleSheet, Alert, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, TextInput, Text, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { trpc } from '../../utils/trpc';
-import { useUserStore } from '../../store/user-store'; 
-import type { AppUser } from '../../store/user-store'; 
+import { useUserStore } from '../../store/user-store';
+import type { AppUser } from '../../store/user-store';
+import { Image } from 'react-native';
 
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { setSession } = useUserStore.getState(); 
+  const { setSession } = useUserStore.getState();
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: (data) => {
-      console.log('Login successful:', data);
       if (data.session && data.user && data.user.email) {
         const appUser: AppUser = {
           id: data.user.id,
           email: data.user.email,
-          name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || null,
+          name: data.user.name || null,
           isLoggedIn: true,
-          isPremium: false, 
+          isPremium: false,
           createdAt: new Date(data.user.created_at || Date.now()).getTime(),
           updatedAt: new Date(data.user.updated_at || Date.now()).getTime(),
-          studyStats: { 
+          studyStats: {
             totalCardsStudied: 0,
             totalTimeStudied: 0,
             streakDays: 0,
             lastStudyDate: null,
           },
-          ownedDecks: [], 
+          ownedDecks: [],
           phone: data.user.phone || undefined,
         };
 
         setSession(appUser, data.session.access_token, data.session.refresh_token);
         Alert.alert('Login Successful', data.message || 'You are now logged in!');
-        router.replace('/(tabs)'); 
+        router.replace('/');
       } else {
-        console.error('Login error: Session or user data missing in response', data);
         Alert.alert('Login Failed', 'Received incomplete data from server.');
       }
     },
     onError: (error) => {
-      console.error('Login error:', error);
       Alert.alert('Login Failed', error.message || 'An unexpected error occurred.');
     },
   });
@@ -55,71 +53,119 @@ export default function LoginScreen() {
     loginMutation.mutate({ email, password });
   };
 
-  if (loginMutation.isPending) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#0000ff" style={styles.loader} />
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Login</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
-      <Button title="Login" onPress={handleLogin} disabled={loginMutation.isPending} />
-      <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
-        <Text style={styles.linkText}>Don't have an account? Sign Up</Text>
-      </TouchableOpacity>
-    </View>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.container}
+    >
+      <View style={styles.innerContainer}>
+        <Image
+          source={require('../../assets/images/icon.png')}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        <Text style={styles.title}>Welcome to Cramit</Text>
+        <Text style={styles.subtitle}>Your flashcards, supercharged.</Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          placeholderTextColor="#999"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Password"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          placeholderTextColor="#999"
+        />
+
+        <TouchableOpacity
+          style={[styles.button, loginMutation.isPending && styles.buttonDisabled]}
+          onPress={handleLogin}
+          disabled={loginMutation.isPending}
+        >
+          {loginMutation.isPending ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Login</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
+          <Text style={styles.linkText}>Don't have an account? <Text style={styles.linkBold}>Sign Up</Text></Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     padding: 20,
+    paddingTop: 10, // adjust as needed
     backgroundColor: '#f5f5f5',
+  },
+  innerContainer: {
+    gap: 16,
+    paddingVertical: 32,
+  },
+  logo: {
+    width: 300,
+    height: 120,
+    alignSelf: 'center',
+    marginBottom: 16,
+    marginTop: 8, // Optional: adjust as needed
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 25,
+    color: '#111',
     textAlign: 'center',
-    color: '#333',
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 24,
   },
   input: {
-    height: 50,
-    borderColor: '#ddd',
-    borderWidth: 1,
-    marginBottom: 15,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-    backgroundColor: '#fff',
+    height: 52,
+    backgroundColor: '#f1f1f1',
+    borderRadius: 10,
+    paddingHorizontal: 16,
     fontSize: 16,
+    color: '#111',
+  },
+  button: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 16,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '600',
   },
   linkText: {
-    marginTop: 20,
-    color: '#007bff',
     textAlign: 'center',
-    fontSize: 16,
-  },
-  loader: {
     marginTop: 20,
+    fontSize: 15,
+    color: '#444',
+  },
+  linkBold: {
+    color: '#007AFF',
+    fontWeight: '600',
   },
 });

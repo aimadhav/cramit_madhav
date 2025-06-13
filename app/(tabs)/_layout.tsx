@@ -18,19 +18,19 @@ export default function TabLayout() {
         },
         headerStyle: {
           backgroundColor: colors.background,
-          height: 60,
+          height: 75,
         },
         headerTitleStyle: {
           fontWeight: 'bold',
           fontSize: 20,
         },
         headerTitle: ({children}) => (
-          <View style={{position: 'absolute', left: 16, bottom: 8}}>
+          <View style={{position: 'absolute', left: 5, bottom: 0}}>
             <Text style={styles.headerText}>{children}</Text>
           </View>
         ),
         headerRight: () => (
-          <View style={{paddingRight: 16, paddingBottom: 8}}>
+          <View style={{paddingRight: 16, paddingBottom: 5}}>
             <Image 
               source={require("@/assets/images/finallogo.png")} 
               style={styles.logo} 

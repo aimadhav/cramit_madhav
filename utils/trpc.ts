@@ -44,13 +44,16 @@ const getBaseUrl = () => {
 
 // Function to get the current access token
 const getToken = async () => {
+  console.log('[TRPC Client] getToken called.');
   try {
     if (Platform.OS === 'web') {
       const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-      console.log(`[TRPC Client] getToken (web): localStorage.getItem(${TOKEN_STORAGE_KEY}) returned:`, token ? "token_found_not_empty" : token);
+      console.log(`[TRPC Client] getToken (web): localStorage.getItem(${TOKEN_STORAGE_KEY}) returned:`, token ? "token_found_not_empty" : "null_or_empty");
       return token;
     } else {
-      return await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+      const token = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+      console.log(`[TRPC Client] getToken (native): SecureStore.getItemAsync(${TOKEN_STORAGE_KEY}) returned:`, token ? "token_found_not_empty" : "null_or_empty");
+      return token;
     }
   } catch (e) { // Catch potential errors from localStorage or SecureStore
     console.error("Error getting token:", e);
@@ -60,13 +63,16 @@ const getToken = async () => {
 
 // Function to get the current refresh token
 const getRefreshToken = async () => {
+  console.log('[TRPC Client] getRefreshToken called.');
   try {
     if (Platform.OS === 'web') {
       const refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
-      console.log(`[TRPC Client] getRefreshToken (web): localStorage.getItem(${REFRESH_TOKEN_STORAGE_KEY}) returned:`, refreshToken ? "token_found_not_empty" : refreshToken);
+      console.log(`[TRPC Client] getRefreshToken (web): localStorage.getItem(${REFRESH_TOKEN_STORAGE_KEY}) returned:`, refreshToken ? "token_found_not_empty" : "null_or_empty");
       return refreshToken;
     } else {
-      return await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+      const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+      console.log(`[TRPC Client] getRefreshToken (native): SecureStore.getItemAsync(${REFRESH_TOKEN_STORAGE_KEY}) returned:`, refreshToken ? "token_found_not_empty" : "null_or_empty");
+      return refreshToken;
     }
   } catch (e) { // Catch potential errors
     console.error("Error getting refresh token:", e);

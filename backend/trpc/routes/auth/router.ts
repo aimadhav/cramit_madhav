@@ -94,14 +94,33 @@ export const authRouter = createTRPCRouter({
         });
       }
 
-      // Optionally, you could fetch the user from your Prisma DB here too
-      // const appUser = await ctx.prisma.user.findUnique({ where: { id: data.user.id }});
+      // Fetch the user from Prisma DB to get the complete user data
+      const appUser = await ctx.prisma.user.findUnique({ 
+        where: { id: data.user.id },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          isPremium: true,
+          createdAt: true,
+          updatedAt: true,
+        }
+      });
+
+      if (!appUser) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "User not found in application database.",
+        });
+      }
 
       return {
         message: "Login successful!",
-        session: data.session, // Contains JWT (access_token, refresh_token)
-        user: data.user,       // Supabase user object
-        // appUser, // If you fetched it
+        session: data.session,
+        user: {
+          ...data.user,
+          name: appUser.name, // Include the name from Prisma
+        },
       };
     }),
 
@@ -143,14 +162,28 @@ export const authRouter = createTRPCRouter({
 
   // Optional: A protected route to get the current user's info
   me: protectedProcedure
-    .query(({ ctx }) => {
-      // ctx.user is the Supabase user object from the token
-      // You might want to fetch additional details from your Prisma User table
-      return {
-        id: ctx.user.id,
-        email: ctx.user.email,
-        // any other app-specific user data you want to return
-      };
+    .query(async ({ ctx }) => {
+      // Fetch the complete user data from Prisma
+      const appUser = await ctx.prisma.user.findUnique({
+        where: { id: ctx.user.id },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          isPremium: true,
+          createdAt: true,
+          updatedAt: true,
+        }
+      });
+
+      if (!appUser) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "User not found in application database.",
+        });
+      }
+
+      return appUser;
     }),
   
   // Optional: Logout (invalidates Supabase session on the client, server doesn't do much here for stateless JWTs)

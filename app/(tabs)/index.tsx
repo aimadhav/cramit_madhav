@@ -26,10 +26,31 @@ export default function HomeScreen() {
   
   const [refreshing, setRefreshing] = useState(false);
   const [activelyDownloadingDeckId, setActivelyDownloadingDeckId] = useState<string | null>(null);
+  const [loadingDots, setLoadingDots] = useState(1);
   
   useEffect(() => {
-    console.log("[HomeScreen] Mounted. User:", user?.email, "Decks loaded:", decks.length);
+    console.log("[HomeScreen] Mounted. User:", user?.name, "Decks loaded:", decks.length);
   }, []);
+  
+  useEffect(() => {
+    let intervalId: number | null = null;
+    if (activelyDownloadingDeckId) {
+      intervalId = setInterval(() => {
+        setLoadingDots(prevDots => (prevDots % 3) + 1);
+      }, 500); // Change dot count every 500ms
+    } else {
+      if (intervalId !== null) {
+         clearInterval(intervalId);
+      }
+      setLoadingDots(1); // Reset dots when not downloading
+    }
+
+    return () => {
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [activelyDownloadingDeckId]);
   
   // Get featured decks (first 3)
   const featuredDecks = decks.slice(0, 3);
@@ -140,7 +161,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
+    <SafeAreaView style={styles.container} edges={[]}>
       <ScrollView showsVerticalScrollIndicator={false} refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} tintColor={colors.primary}/>
       }>
@@ -350,7 +371,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: 8,
     paddingBottom: 16,
   },
   greetingContainer: {

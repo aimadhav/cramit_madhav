@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { 
   StyleSheet, 
   Text, 
@@ -132,8 +132,8 @@ export default function StudySessionScreen() {
   
   // useEffect for handling "No Cards Left" and logging problematic states
   useEffect(() => {
-    // Reset session finished state if deck ID changes (new session)
-    runOnJS(setIsSessionFinished)(false);
+    // Reset session finished state if deck ID changes (new session) - this is now handled by the other useEffect.
+    // Removed: runOnJS(setIsSessionFinished)(false);
 
     if (!isDeleting) {
       // Condition 1: getCurrentCard() returned null (session queue might be exhausted or no session active)
@@ -153,7 +153,9 @@ export default function StudySessionScreen() {
           forceRefreshCount: forceRefresh, 
           timestamp: new Date().toISOString(),
         });
-        handleNoCardsLeft();
+        requestAnimationFrame(() => { // Defer the call to handleNoCardsLeft
+          handleNoCardsLeft();
+        });
       } else if (!currentCard && studyProgressFromStore && studyProgressFromStore.cardsLeft > 0 && dueCards.length > 0) {
         // This state is unusual: No current card object, but studyProgress claims cards are left, and dueCards exist.
         // This could happen if the card queue in the store got desynced or a card ID was bad.
@@ -170,7 +172,7 @@ export default function StudySessionScreen() {
          // For now, just logging. Could also try to re-initiate study session after a delay.
       }
     }
-  }, [id, isDeleting, dueCards, currentCard, studyProgressFromStore]);
+  }, [id, isDeleting, dueCards, currentCard, studyProgressFromStore, handleNoCardsLeft]); // Added handleNoCardsLeft to dependencies
   
   // This useEffect handles new session initialization regarding isSessionFinished
   useEffect(() => {
@@ -263,7 +265,7 @@ export default function StudySessionScreen() {
     setShowBack(false); 
   }, [currentCard?.id]); // Key dependency
   
-  const handleNoCardsLeft = () => {
+  const handleNoCardsLeft = useCallback(() => {
     console.log('[StudySessionScreen] handleNoCardsLeft: All cards session complete or deck empty.');
     // The primary UI for "No cards left" is handled by the conditional JSX.
     // This function will ensure the study session state in the store is cleaned up.
@@ -288,9 +290,9 @@ export default function StudySessionScreen() {
     //     }
     //   ]
     // );
-  };
+  }, []);
   
-  const handleRateCard = async (rating: DifficultyRating) => {
+  const handleRateCard = useCallback(async (rating: DifficultyRating) => {
     if (!currentCard || isRating || isPending) return;
 
     setIsRating(true);
@@ -314,11 +316,25 @@ export default function StudySessionScreen() {
     // or can be called here if we are sure the critical path is done.
     // For now, let's ensure it's reset.
     setIsRating(false);
-  };
+  }, [currentCard, isRating, isPending, rateCard, getNextCard, setShowBack, setSwipeDirection]);
   
-  const handleDeleteCard = async () => { // Keep async for Alert pattern if needed, but core logic changes
-    if (!currentCard || isDeleting || isPending) return;
+  const handleDeleteCard = useCallback(async () => {
+    // Always call setIsDeleting at the start to maintain hook order
+    setIsDeleting(true);
 
+    // Early return if conditions are not met
+    if (!currentCard || isPending) {
+      setIsDeleting(false);
+      return;
+    }
+
+    // Store card ID before any async operations
+    const cardIdToDelete = currentCard.id;
+
+    // Reset UI states first
+    setShowBack(false);
+
+    // Show confirmation dialog
     Alert.alert(
       "Delete Card",
       "Are you sure you want to delete this card? This action cannot be undone.",
@@ -326,41 +342,35 @@ export default function StudySessionScreen() {
         {
           text: "Cancel",
           style: "cancel",
-          onPress: () => setIsDeleting(false), // Ensure isDeleting is reset if cancelled
+          onPress: () => {
+            setIsDeleting(false);
+          },
         },
         {
           text: "Delete",
-          onPress: () => { // onPress is synchronous here
-            if (!currentCard) { // Re-check in case currentCard became null
-                setIsDeleting(false);
-                return;
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteFlashcard(cardIdToDelete);
+              // Get next card after successful deletion
+              getNextCard();
+            } catch (error) {
+              console.error("Error in handleDeleteCard:", error);
+              Alert.alert(
+                "Error",
+                "Failed to delete card. Please try again.",
+                [{ text: "OK" }]
+              );
+            } finally {
+              setIsDeleting(false);
             }
-            setIsDeleting(true);
-            const cardIdToDelete = currentCard.id;
-
-            deleteFlashcard(cardIdToDelete)
-              .catch((error) => {
-                console.error("Error in handleDeleteCard (background sync):", error);
-                // Optionally: Show a non-blocking toast
-                // Alert.alert("Sync Error", "Failed to sync deletion with server.");
-              });
-            
-            // Optimistically get the next card immediately
-            const nextCardAfterDelete = getNextCard();
-
-            setShowBack(false); // Reset flip state
-            // setIsDeleting(false) should be called after the optimistic UI update is stable.
-            // The useEffect for currentCard.id change will handle card position reset.
-            // Let's ensure isDeleting is reset.
-            setIsDeleting(false); 
           },
-          style: "destructive"
         }
       ]
     );
-  };
+  }, [currentCard, isPending, deleteFlashcard, getNextCard, setShowBack, setIsDeleting]);
   
-  const handleToggleBookmark = async () => {
+  const handleToggleBookmark = useCallback(async () => {
     if (!currentCard || isBookmarking || isPending) return;
 
     try {
@@ -375,7 +385,7 @@ export default function StudySessionScreen() {
     } finally {
       setIsBookmarking(false);
     }
-  };
+  }, [currentCard, isBookmarking, isPending, toggleBookmark, setIsBookmarking]);
   
   // Gesture handler for swipe
   const gesture = Gesture.Pan()

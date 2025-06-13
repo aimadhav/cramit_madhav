@@ -1,7 +1,17 @@
 import React, { useState } from 'react';
-import { View, TextInput, Button, Text, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import {
+  View,
+  TextInput,
+  Text,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  TouchableOpacity,
+} from 'react-native';
 import { useRouter } from 'expo-router';
-import { trpc } from '../../utils/trpc'; // Reverted to correct path
+import { trpc } from '../../utils/trpc';
+import { Image } from 'react-native';
+
 
 export default function SignupScreen() {
   const router = useRouter();
@@ -22,37 +32,32 @@ export default function SignupScreen() {
     }
 
     try {
-      // Ensure isLoading is set before the async call
-      // signupMutation.isLoading is automatically handled by react-query
       const result = await signupMutation.mutateAsync({
         email,
         password,
-        name: name || undefined, // Send name only if provided
+        name: name || undefined,
       });
+
       Alert.alert('Success', result.message + '\nPlease log in.');
-      router.push('/(auth)/login'); 
+      router.push('/(auth)/login');
     } catch (error: any) {
       console.error('Signup failed:', error);
-      // Attempt to get a more specific error message from tRPC error
-      const trpcErrorMessage = error.data?.zodError?.fieldErrors?.password?.[0] || 
-                               error.data?.zodError?.fieldErrors?.email?.[0] || 
-                               error.data?.message || 
-                               error.message || 
-                               'An unknown error occurred during signup.';
+      const trpcErrorMessage =
+        error.data?.zodError?.fieldErrors?.password?.[0] ||
+        error.data?.zodError?.fieldErrors?.email?.[0] ||
+        error.data?.message ||
+        error.message ||
+        'An unknown error occurred during signup.';
       Alert.alert('Signup Failed', trpcErrorMessage);
     }
   };
 
-  if (signupMutation.isPending) { 
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#0000ff" style={styles.loader} />
-      </View>
-    );
-  }
-
   return (
+    
     <View style={styles.container}>
+      <Image  source={require('../../assets/images/icon.png')}
+      style={{ width: 300, height: 120, marginBottom: 50,marginTop: 10, alignSelf: 'center' }}
+      resizeMode="contain" />
       <Text style={styles.title}>Create Account</Text>
       <TextInput
         style={styles.input}
@@ -64,7 +69,7 @@ export default function SignupScreen() {
       />
       <TextInput
         style={styles.input}
-        placeholder="Password (min. 6 characters)"
+        placeholder="Password"
         value={password}
         onChangeText={setPassword}
         secureTextEntry
@@ -75,7 +80,24 @@ export default function SignupScreen() {
         value={name}
         onChangeText={setName}
       />
-      <Button title="Sign Up" onPress={handleSignup} disabled={signupMutation.isPending} />
+      <TouchableOpacity
+        style={[
+          styles.button,
+          signupMutation.isPending && styles.buttonDisabled,
+        ]}
+        onPress={handleSignup}
+        disabled={signupMutation.isPending}
+      >
+        {signupMutation.isPending ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Sign Up</Text>
+        )}
+      </TouchableOpacity>
+
+      <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
+        <Text style={styles.linkText}>Already have an account? <Text style={styles.linkBold}>Log In</Text></Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -83,28 +105,57 @@ export default function SignupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start', // <-- align content to the top
     padding: 20,
+    paddingTop: 40, // or a value you like (try 20, 30, 40)
     backgroundColor: '#f5f5f5',
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 24,
+    marginBottom: 25,
     textAlign: 'center',
     color: '#333',
   },
   input: {
-    height: 45,
-    borderColor: '#ccc',
+    height: 50,
+    borderColor: '#ddd',
     borderWidth: 1,
     marginBottom: 15,
-    paddingHorizontal: 12,
+    paddingHorizontal: 15,
     borderRadius: 8,
     backgroundColor: '#fff',
     fontSize: 16,
   },
-  loader: {
+  button: {
+    backgroundColor: '#007bff',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  buttonDisabled: {
+    backgroundColor: '#99c9ff',
+  },
+  linkText: {
+    textAlign: 'center',
     marginTop: 20,
-  }
+    fontSize: 15,
+    color: '#444',
+  },
+  linkBold: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },logo: {
+    width: 120,
+    height: 120,
+    alignSelf: 'center',
+    marginBottom: 10,
+  },
+  
 });

@@ -98,7 +98,7 @@ export default function CreateDeckScreen() {
       {
         name: name.trim(),
         description: description.trim() || "No description provided",
-        tags: tags.length > 0 ? tags : ["uncategorized"],
+        tags: tags.length > 0 ? tags : ["No tag"],
         isPremium: false,
         isPublic: false,
         coverImage: coverImage || defaultCoverImage,
