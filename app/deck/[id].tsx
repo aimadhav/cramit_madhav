@@ -244,14 +244,12 @@ export default function DeckDetailScreen() {
 
         // Check if flashcards are loaded *or* if the deck is known to have 0 cards
         if (!deck.areCardsLoaded && deck.cardCount > 0 && loadingFlashcardsForDeckId !== deck.id) {
-             console.log(`[DeckDetailScreen] handleStartStudy: Cards not loaded for deck ${deck.id}, cardCount > 0. Fetching...`);
-             Alert.alert("Loading Flashcards", "Flashcards for this deck are being loaded. Please try again in a moment.");
-             fetchFlashcardsForDeck(deck.id);
-            return;
+          console.log(`[DeckDetailScreen] handleStartStudy: Cards not loaded for deck ${deck.id}, cardCount > 0. Fetching...`);
+          fetchFlashcardsForDeck(deck.id);
+          return;
         } else if (!deck.areCardsLoaded && deck.cardCount > 0 && loadingFlashcardsForDeckId === deck.id) {
-             console.log(`[DeckDetailScreen] handleStartStudy: Cards not loaded for deck ${deck.id}, already loading.`);
-             Alert.alert("Loading Flashcards", "Flashcards for this deck are still being loaded. Please wait.");
-             return;
+          console.log(`[DeckDetailScreen] handleStartStudy: Cards not loaded for deck ${deck.id}, already loading.`);
+          return;
         }
 
         if (dueCards.length === 0 && deck.cardCount > 0) {
@@ -270,10 +268,10 @@ export default function DeckDetailScreen() {
           );
           return;
         }
-         if (deck.cardCount === 0) {
-           Alert.alert("Empty Deck", "This deck has no flashcards yet. Add some cards to start studying!");
-           return;
-         }
+        if (deck.cardCount === 0) {
+          Alert.alert("Empty Deck", "This deck has no flashcards yet. Add some cards to start studying!");
+          return;
+        }
         startStudySession(deck.id);
         router.push(`/study/${deck.id}`);
       };
@@ -334,10 +332,18 @@ export default function DeckDetailScreen() {
 
             <View style={styles.actionsContainer}>
               <TouchableOpacity
-                style={styles.primaryButton}
+                style={[styles.primaryButton, loadingFlashcardsForDeckId === deck.id && styles.loadingButton]}
                 onPress={handleStartStudy}
+                disabled={loadingFlashcardsForDeckId === deck.id}
               >
-                <Text style={styles.primaryButtonText}>Start Studying</Text>
+                {loadingFlashcardsForDeckId === deck.id ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="small" color="white" />
+                    <Text style={styles.loadingText}>Loading ...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.primaryButtonText}>Start Studying</Text>
+                )}
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.secondaryButton}
@@ -716,11 +722,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 20,
   },
   loadingText: {
-    marginLeft: 10,
-    fontSize: 16,
-    color: colors.textLight,
-  }
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  loadingButton: {
+    opacity: 0.8,
+  },
 });

@@ -5,7 +5,9 @@ import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Alert } from 'react-native';
+import { Alert, View } from 'react-native';
+import { OfflineStatusBar } from '../components/OfflineStatusBar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // Ensure no useColorScheme references remain
 import { trpc, trpcClient } from '../utils/trpc';
@@ -127,7 +129,7 @@ function AppNavigatorAndDataHandler() {
         });
         
         console.log("[AppNavigatorAndDataHandler] Combined unique decks:", combinedDecks.length);
-        loadInitialData(combinedDecks, []); 
+        useFlashcardStore.getState().setDecks(combinedDecks);
         console.log("[AppNavigatorAndDataHandler] DECK data loaded into flashcard store. Flashcards will be loaded on demand.");
 
       } catch (error) {
@@ -218,19 +220,22 @@ export default function RootLayout() {
     }
   }, [loadedFonts, isAuthChecked]);
 
-  // Root component now wraps everything with providers
+  if (!loadedFonts) {
+    return null;
+  }
+
   return (
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          {/* Conditionally render AppNavigatorAndDataHandler only when auth is checked and fonts are loaded */}
-          {!isAuthChecked || !loadedFonts ? (
-            null // Or a dedicated splash screen component
-          ) : (
-            <AppNavigatorAndDataHandler />
-          )}
-        </GestureHandlerRootView>
+            <View style={{ flex: 1 }}>
+              <OfflineStatusBar />
+              {isAuthChecked ? <AppNavigatorAndDataHandler /> : null}
+            </View>
       </QueryClientProvider>
     </trpc.Provider>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }

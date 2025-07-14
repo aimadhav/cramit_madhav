@@ -101,6 +101,14 @@ export default function StudySessionScreen() {
     studyProgressRef.current = studyProgressFromStore;
   }, [studyProgressFromStore]);
   
+  // Define handleNoCardsLeft before its usage
+  const handleNoCardsLeft = useCallback(() => {
+    console.log('[StudySessionScreen] handleNoCardsLeft: All cards session complete or deck empty.');
+    // The primary UI for "No cards left" is handled by the conditional JSX.
+    // This function will ensure the study session state in the store is cleaned up.
+    // It will NOT navigate back here, allowing the JSX to show the message and "Go Back" button.
+  }, []);
+  
   // Check if there are any pending operations for the current card
   const isPending = useMemo(() => {
     if (!currentCard) return false;
@@ -128,51 +136,43 @@ export default function StudySessionScreen() {
         <X size={24} color={colors.textDark} />
       </TouchableOpacity>
     ),
-  }), [deck, endStudySession, router]);
+  }), [deck, endStudySession, router, clearSessionJustCompleted]);
   
   // useEffect for handling "No Cards Left" and logging problematic states
   useEffect(() => {
-    // Reset session finished state if deck ID changes (new session) - this is now handled by the other useEffect.
-    // Removed: runOnJS(setIsSessionFinished)(false);
-
     if (!isDeleting) {
-      // Condition 1: getCurrentCard() returned null (session queue might be exhausted or no session active)
-      // AND the store's studyProgress itself is null or indicates completion (cardsLeft is 0).
-      // AND there are genuinely no more due cards for this deck right now.
       if (!currentCard && 
           (!studyProgressFromStore || studyProgressFromStore.cardsLeft === 0) && 
           dueCards.length === 0) {
         
         console.log('[StudySessionScreen] handleNoCardsLeft triggered. Details:', {
           deckId: id,
-          currentCardFromStore: currentCard, // Expected to be null
-          studyProgressAtTrigger: studyProgressFromStore, // Log what the store thinks about progress
-          dueCardsFromStoreLength: dueCards.length, // Expected to be 0
+          currentCardFromStore: currentCard,
+          studyProgressAtTrigger: studyProgressFromStore,
+          dueCardsFromStoreLength: dueCards.length,
           dueCardsFromStoreContent: JSON.stringify(dueCards.map(c => c.id)),
           isDeletingState: isDeleting,
           forceRefreshCount: forceRefresh, 
           timestamp: new Date().toISOString(),
         });
-        requestAnimationFrame(() => { // Defer the call to handleNoCardsLeft
+        
+        // Use requestAnimationFrame to defer the call
+        requestAnimationFrame(() => {
           handleNoCardsLeft();
         });
       } else if (!currentCard && studyProgressFromStore && studyProgressFromStore.cardsLeft > 0 && dueCards.length > 0) {
-        // This state is unusual: No current card object, but studyProgress claims cards are left, and dueCards exist.
-        // This could happen if the card queue in the store got desynced or a card ID was bad.
         console.warn('[StudySessionScreen] State: No current card object, but store progress/dueCards indicate cards should be available. Details:', {
           deckId: id,
-          currentCardFromStore: currentCard, // Expected to be null
+          currentCardFromStore: currentCard,
           studyProgressAtTrigger: studyProgressFromStore,
           dueCardsFromStoreLength: dueCards.length,
           dueCardsFromStoreContent: JSON.stringify(dueCards.map(c => c.id)),
           isDeletingState: isDeleting,
           timestamp: new Date().toISOString(),
         });
-         // Potentially force a session restart or a more graceful recovery if this state is hit.
-         // For now, just logging. Could also try to re-initiate study session after a delay.
       }
     }
-  }, [id, isDeleting, dueCards, currentCard, studyProgressFromStore, handleNoCardsLeft]); // Added handleNoCardsLeft to dependencies
+  }, [id, isDeleting, dueCards, currentCard, studyProgressFromStore, handleNoCardsLeft, forceRefresh]);
   
   // This useEffect handles new session initialization regarding isSessionFinished
   useEffect(() => {
@@ -264,33 +264,6 @@ export default function StudySessionScreen() {
     // Ensure the front of the card is shown when a new card loads
     setShowBack(false); 
   }, [currentCard?.id]); // Key dependency
-  
-  const handleNoCardsLeft = useCallback(() => {
-    console.log('[StudySessionScreen] handleNoCardsLeft: All cards session complete or deck empty.');
-    // The primary UI for "No cards left" is handled by the conditional JSX.
-    // This function will ensure the study session state in the store is cleaned up.
-    // It will NOT navigate back here, allowing the JSX to show the message and "Go Back" button.
-    
-    // endStudySession(); // We might still want to call this to clear studyProgress in the store.
-                     // However, if currentCard is null, the UI is already in the "empty" state.
-                     // Let's evaluate if this is strictly needed or if the natural end of session (no current card) is enough.
-                     // For now, let's rely on the UI's back button to trigger router.back(), 
-                     // and the main component's unmount effect to call endStudySession.
-
-    // Alert.alert(
-    //   "No Cards Left",
-    //   "You've completed all cards in this deck!",
-    //   [
-    //     {
-    //       text: "OK",
-    //       onPress: () => {
-    //         // endStudySession(); // Already called or will be called on unmount
-    //         // router.back(); // Let the UI button handle this
-    //       }
-    //     }
-    //   ]
-    // );
-  }, []);
   
   const handleRateCard = useCallback(async (rating: DifficultyRating) => {
     if (!currentCard || isRating || isPending) return;
@@ -750,7 +723,7 @@ export default function StudySessionScreen() {
           
           <View style={styles.swipeHintContainer}>
             {swipeDirection === 'left' && (
-              <Text style={[styles.swipeHint, styles.hardHint]}>Hard</Text>
+              <Text style={[styles.swipeHint, styles.hardHint]}>Forgot</Text>
             )}
             {swipeDirection === 'right' && (
               <Text style={[styles.swipeHint, styles.easyHint]}>Easy</Text>
@@ -760,7 +733,7 @@ export default function StudySessionScreen() {
             )}
             {!swipeDirection && (
               <Text style={[styles.swipeInstructions, { textAlign: 'center' }]}>
-                Swipe left for Hard, right for Easy, up to Delete
+                Swipe left for Forgot, right for Easy, up to Delete
               </Text>
             )}
           </View>

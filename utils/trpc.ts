@@ -82,20 +82,102 @@ const getRefreshToken = async () => {
 
 let isRefreshingToken = false;
 let refreshTokenPromise: Promise<void> | null = null;
+let tokenRefreshTimeout: NodeJS.Timeout | null = null;
 
-// Simpler type for the link function argument for broader compatibility
-// TRPCLink is a function that takes Operation and returns an Observable
+// Function to schedule token refresh
+const scheduleTokenRefresh = (expiresAt: number) => {
+  if (tokenRefreshTimeout) {
+    clearTimeout(tokenRefreshTimeout);
+  }
+
+  const FIVE_MINUTES = 5 * 60 * 1000;
+  const refreshTime = expiresAt - FIVE_MINUTES - Date.now();
+  
+  if (refreshTime > 0) {
+    tokenRefreshTimeout = setTimeout(async () => {
+      const { shouldRefreshToken, logout } = useUserStore.getState();
+      if (shouldRefreshToken()) {
+        try {
+          const refreshToken = await getRefreshToken();
+          if (!refreshToken) {
+            console.log('[Token Refresh] No refresh token available');
+            await logout();
+            return;
+          }
+
+          console.log('[Token Refresh] Proactively refreshing token...');
+          const freshSessionData = await trpcClient.auth.refreshSession.mutate({
+            refreshToken,
+          });
+
+          if (freshSessionData.session && freshSessionData.user) {
+            const { setSession, user } = useUserStore.getState();
+            const currentUserData = user || ({} as Partial<AppUser>);
+            const updatedAppUser: AppUser = {
+              id: freshSessionData.user.id,
+              email: freshSessionData.user.email ?? null,
+              isLoggedIn: true,
+              name: freshSessionData.user.user_metadata?.full_name ??
+                    freshSessionData.user.user_metadata?.name ??
+                    currentUserData.name ??
+                    null,
+              isPremium: currentUserData.isPremium ?? false,
+              createdAt: currentUserData.createdAt ?? Date.now(),
+              updatedAt: Date.now(),
+              studyStats: currentUserData.studyStats ?? {
+                totalCardsStudied: 0,
+                totalTimeStudied: 0,
+                streakDays: 0,
+                lastStudyDate: null,
+              },
+              ownedDecks: currentUserData.ownedDecks ?? [],
+              phone: freshSessionData.user.phone ?? currentUserData.phone ?? undefined,
+            };
+
+            setSession(
+              updatedAppUser,
+              freshSessionData.session.access_token,
+              freshSessionData.session.refresh_token,
+              freshSessionData.session.expires_at
+            );
+
+            // Schedule next refresh
+            if (freshSessionData.session.expires_at) {
+              scheduleTokenRefresh(freshSessionData.session.expires_at);
+            }
+          }
+        } catch (error) {
+          console.error('[Token Refresh] Failed to refresh token:', error);
+          await logout();
+        }
+      }
+    }, refreshTime);
+  }
+};
+
+// Update the auth link to handle token refresh
 const authLink: TRPCLink<AppRouter> = () => {
-  // This function is an OperationLink<AppRouter>
   return (opts: { op: Operation; next: (op: Operation) => Observable<any, TRPCClientError<AppRouter>> }) => {
     const { op, next } = opts;
     return observable((observer) => {
       const unsubscribe = next(op).subscribe({
+        next: (result) => {
+          // Check if this is a login or refresh response
+          if (result.data?.session?.expires_at) {
+            scheduleTokenRefresh(result.data.session.expires_at);
+          }
+          observer.next(result);
+        },
         error: async (err: TRPCClientError<AppRouter>) => {
-          const { logout, setSession, user } = useUserStore.getState();
+          const { logout, setSession, user, shouldRefreshToken } = useUserStore.getState();
 
           if (err instanceof TRPCClientError && err.data?.code === 'UNAUTHORIZED') {
             console.warn('[TRPC AuthLink] Unauthorized error detected:', err.message);
+
+            if (err.message === 'Invalid login credentials') {
+              observer.error(err);
+              return;
+            }
 
             if (!isRefreshingToken) {
               isRefreshingToken = true;
@@ -120,39 +202,39 @@ const authLink: TRPCLink<AppRouter> = () => {
 
                   if (freshSessionData.session && freshSessionData.user) {
                     console.log('[TRPC AuthLink] Token refresh successful. Updating session.');
-                    const currentUserData = user || ({} as Partial<AppUser>); // User from store might be null
+                    const currentUserData = user || ({} as Partial<AppUser>);
                     const updatedAppUser: AppUser = {
-                        // It's crucial to ensure all fields of AppUser are correctly populated.
-                        // Start with defaults or ensure currentUserData has them.
-                        id: freshSessionData.user.id,
-                        email: freshSessionData.user.email ?? null,
-                        isLoggedIn: true, 
-                        name: freshSessionData.user.user_metadata?.full_name ?? 
-                              freshSessionData.user.user_metadata?.name ?? 
-                              currentUserData.name ?? 
-                              null,
-                        isPremium: currentUserData.isPremium ?? false,
-                        createdAt: currentUserData.createdAt ?? Date.now(),
-                        updatedAt: Date.now(), 
-                        studyStats: currentUserData.studyStats ?? { totalCardsStudied: 0, totalTimeStudied: 0, streakDays: 0, lastStudyDate: null },
-                        ownedDecks: currentUserData.ownedDecks ?? [],
-                        phone: freshSessionData.user.phone ?? currentUserData.phone ?? undefined,
+                      id: freshSessionData.user.id,
+                      email: freshSessionData.user.email ?? null,
+                      isLoggedIn: true,
+                      name: freshSessionData.user.user_metadata?.full_name ??
+                            freshSessionData.user.user_metadata?.name ??
+                            currentUserData.name ??
+                            null,
+                      isPremium: currentUserData.isPremium ?? false,
+                      createdAt: currentUserData.createdAt ?? Date.now(),
+                      updatedAt: Date.now(),
+                      studyStats: currentUserData.studyStats ?? {
+                        totalCardsStudied: 0,
+                        totalTimeStudied: 0,
+                        streakDays: 0,
+                        lastStudyDate: null,
+                      },
+                      ownedDecks: currentUserData.ownedDecks ?? [],
+                      phone: freshSessionData.user.phone ?? currentUserData.phone ?? undefined,
                     };
+
                     setSession(
-                        updatedAppUser,
-                        freshSessionData.session.access_token,
-                        freshSessionData.session.refresh_token
+                      updatedAppUser,
+                      freshSessionData.session.access_token,
+                      freshSessionData.session.refresh_token,
+                      freshSessionData.session.expires_at
                     );
-                    console.log('[TRPC AuthLink] Session updated with new tokens.');
-                  } else {
-                    console.error('[TRPC AuthLink] Token refresh failed: No session or user in response. Logging out.');
-                    Alert.alert(
-                      "Session Expired",
-                      "Could not refresh your session. Please log in again.",
-                      [{ text: "OK" }]
-                    );
-                    await logout();
-                    throw new TRPCClientError('Token refresh failed: No session/user data');
+
+                    // Schedule next refresh
+                    if (freshSessionData.session.expires_at) {
+                      scheduleTokenRefresh(freshSessionData.session.expires_at);
+                    }
                   }
                 } catch (refreshError: any) {
                   console.error('[TRPC AuthLink] Error during token refresh process. Logging out.', refreshError);
@@ -175,21 +257,16 @@ const authLink: TRPCLink<AppRouter> = () => {
               try {
                 await refreshTokenPromise;
                 console.log('[TRPC AuthLink] Retrying operation after token refresh:', op.path);
-                // Retry the original operation by re-subscribing
-                // The observer from the outer observable is passed to the new subscription
                 next(op).subscribe(observer);
-                return; 
+                return;
               } catch (retryError: any) {
                 observer.error(retryError as TRPCClientError<AppRouter>);
                 return;
               }
             }
           }
-          observer.error(err); // Forward other errors or if refresh fails to handle
+          observer.error(err);
         },
-        // Use `any` for result if specific shape causes issues, 
-        // but ideally it should align with what `next(op)` emits.
-        next: (result: any) => observer.next(result),
         complete: () => observer.complete(),
       });
       return unsubscribe;

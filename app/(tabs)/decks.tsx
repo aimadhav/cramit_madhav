@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, Text, View, FlatList, TouchableOpacity, Image, ActivityIndicator, ScrollView } from "react-native";
+import { StyleSheet, Text, View, FlatList, TouchableOpacity, Image, ActivityIndicator, ScrollView, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { BookOpen, Plus, Filter } from "lucide-react-native";
@@ -15,11 +15,15 @@ export default function DecksScreen() {
   const router = useRouter();
   const decks = useFlashcardStore(state => state.decks);
   const startStudySession = useFlashcardStore(state => state.startStudySession);
+  const fetchFlashcardsForDeck = useFlashcardStore(state => state.fetchFlashcardsForDeck);
+  const loadingFlashcardsForDeckId = useFlashcardStore(state => state.loadingFlashcardsForDeckId);
   const [filterPremium, setFilterPremium] = useState<boolean | null>(null);
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [cursor, setCursor] = useState<string | null>(null);
+  const [lastLoadingDeckId, setLastLoadingDeckId] = useState<string | null>(null);
+  const [shouldNavigateAfterLoad, setShouldNavigateAfterLoad] = useState(false);
 
   const { data: userDecksResult, isLoading: isLoadingUserDecks, refetch: refetchUserDecks } = 
     trpc.deck.listUserDecks.useQuery(
@@ -53,6 +57,32 @@ export default function DecksScreen() {
       setCursor(newDecks[newDecks.length - 1]?.id || null);
     }
   }, [userDecksResult]);
+
+  useEffect(() => {
+    if (loadingFlashcardsForDeckId !== null) {
+      setLastLoadingDeckId(loadingFlashcardsForDeckId);
+    }
+  }, [loadingFlashcardsForDeckId]);
+
+  useEffect(() => {
+    const checkAndNavigate = async () => {
+      console.log(`[DecksScreen] Effect triggered. loadingFlashcardsForDeckId: ${loadingFlashcardsForDeckId}, lastLoadingDeckId: ${lastLoadingDeckId}, shouldNavigate: ${shouldNavigateAfterLoad}`);
+      if (loadingFlashcardsForDeckId === null && lastLoadingDeckId && shouldNavigateAfterLoad) {
+        // Find the deck that was just loading
+        const deck = decks.find(d => d.areCardsLoaded && d.id === lastLoadingDeckId);
+        console.log(`[DecksScreen] Found deck with loaded cards:`, deck?.id);
+        if (deck) {
+          console.log(`[DecksScreen] Cards loaded for deck ${deck.id}, navigating to study screen...`);
+          startStudySession(deck.id);
+          router.push(`/study/${deck.id}`);
+          setLastLoadingDeckId(null);
+          setShouldNavigateAfterLoad(false);
+        }
+      }
+    };
+
+    checkAndNavigate();
+  }, [loadingFlashcardsForDeckId, lastLoadingDeckId, decks, router, startStudySession, shouldNavigateAfterLoad]);
 
   const loadMoreDecks = async () => {
     if (!hasMore || isLoadingMore) return;
@@ -93,11 +123,26 @@ export default function DecksScreen() {
   });
 
   const handleStartStudy = (deckId: string) => {
-    startStudySession(deckId);
-    router.push(`/study/${deckId}`);
+    const deck = decks.find(d => d.id === deckId);
+    if (!deck) {
+      console.warn(`[DecksScreen] Attempted to study deck ID ${deckId} not found in store.`);
+      Alert.alert("Error", "Deck not found. It might have been deleted.");
+      return;
+    }
+
+    console.log(`[DecksScreen] handleStartStudy for deck ${deckId}. Cards loaded: ${deck.areCardsLoaded}, Card count: ${deck.cardCount}`);
+    if (!deck.areCardsLoaded && deck.cardCount > 0) {
+      console.log(`[DecksScreen] Cards for deck ${deckId} not loaded. Fetching now...`);
+      setShouldNavigateAfterLoad(true);
+      fetchFlashcardsForDeck(deckId);
+    } else {
+      console.log(`[DecksScreen] Cards already loaded for deck ${deckId}. Starting study session...`);
+      startStudySession(deckId);
+      router.push(`/study/${deckId}`);
+    }
   };
 
-  const handleFilterPress = (type: 'premium', value: FilterType) => {
+  const handleFilterPress = (type: 'premium' | 'subject', value: FilterType) => {
     if (type === 'premium') {
       setFilterPremium(value as boolean | null);
     } else {
@@ -159,7 +204,7 @@ export default function DecksScreen() {
       onPress={() => router.push(`/deck/${item.id}`)}
     >
       <Image 
-        source={{ uri: item.coverImage }} 
+        source={{ uri: item.coverImage || 'https://via.placeholder.com/300x200.png?text=CramItDeck' }} 
         style={styles.deckImage}
       />
       <View style={styles.deckContent}>
@@ -178,14 +223,24 @@ export default function DecksScreen() {
           </View>
         </View>
         <TouchableOpacity 
-          style={styles.studyButton}
+          style={[styles.studyButton, loadingFlashcardsForDeckId === item.id && styles.loadingButton]}
           onPress={(e) => {
             e.stopPropagation();
             handleStartStudy(item.id);
           }}
+          disabled={loadingFlashcardsForDeckId === item.id}
         >
-          <BookOpen size={16} color="white" />
-          <Text style={styles.studyButtonText}>Study</Text>
+          {loadingFlashcardsForDeckId === item.id ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color="white" />
+              <Text style={styles.loadingText}>Loading...</Text>
+            </View>
+          ) : (
+            <>
+              <BookOpen size={16} color="white" />
+              <Text style={styles.studyButtonText}>Study</Text>
+            </>
+          )}
         </TouchableOpacity>
       </View>
       {item.isPremium && (
@@ -476,5 +531,18 @@ const styles = StyleSheet.create({
   loadingMore: {
     paddingVertical: 20,
     alignItems: "center",
+  },
+  loadingButton: {
+    opacity: 0.8,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    color: 'white',
+    marginLeft: 8,
+    fontWeight: '500',
   },
 });

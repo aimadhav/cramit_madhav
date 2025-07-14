@@ -82,7 +82,7 @@ export const authRouter = createTRPCRouter({
 
       if (error) {
         throw new TRPCError({
-          code: "UNAUTHORIZED", // Or INTERNAL_SERVER_ERROR depending on error type
+          code: "UNAUTHORIZED",
           message: error.message || "Login failed.",
         });
       }
@@ -114,17 +114,23 @@ export const authRouter = createTRPCRouter({
         });
       }
 
+      // Calculate token expiration time
+      const expiresAt = data.session.expires_at ? data.session.expires_at * 1000 : null;
+
       return {
         message: "Login successful!",
-        session: data.session,
+        session: {
+          ...data.session,
+          expires_at: expiresAt,
+        },
         user: {
           ...data.user,
-          name: appUser.name, // Include the name from Prisma
+          name: appUser.name,
         },
       };
     }),
 
-  refreshSession: publicProcedure // Public because it's called with a refresh token, not an access token
+  refreshSession: publicProcedure
     .input(z.object({ refreshToken: z.string() }))
     .mutation(async ({ ctx, input }) => {
       if (!input.refreshToken) {
@@ -146,16 +152,21 @@ export const authRouter = createTRPCRouter({
       }
       
       if (!data.session || !data.user) {
-        // This case might indicate the refresh token was invalid or revoked by Supabase
         throw new TRPCError({
           code: "UNAUTHORIZED", 
           message: "Failed to refresh session: No session or user returned. Refresh token may be invalid.",
         });
       }
 
+      // Calculate token expiration time
+      const expiresAt = data.session.expires_at ? data.session.expires_at * 1000 : null;
+
       return {
         message: "Session refreshed successfully!",
-        session: data.session, // Contains new access_token and potentially new refresh_token
+        session: {
+          ...data.session,
+          expires_at: expiresAt,
+        },
         user: data.user,
       };
     }),

@@ -102,6 +102,7 @@ interface FlashcardState {
   clearSessionJustCompleted: () => void;
   _processPendingOperationsForItem: (tempParentId: string, realParentId: string, parentItemType: 'deck' | 'flashcard') => Promise<void>;
   clearTempIdMapping: (tempId: string) => void;
+  setDecks: (decks: StoreDeck[]) => void;
 }
 
 async function executePendingUpdateOperation(pendingOp: any, storeMethods: { set: any, get: any, trpcClient: any }) {
@@ -181,27 +182,51 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
 
     loadInitialData: (decks, flashcards) => {
       const now = Date.now();
-      const normalizedDecks: StoreDeck[] = decks.map(deck => ({
+      // Preserve existing loaded states
+      const existingLoadedDecks = new Map(
+        get().decks
+          .filter((d: StoreDeck) => d.areCardsLoaded)
+          .map((d: StoreDeck) => [d.id, { areCardsLoaded: d.areCardsLoaded, cardCount: d.cardCount } as { areCardsLoaded: boolean, cardCount: number }])
+      );
+
+      const normalizedDecks: StoreDeck[] = decks.map(deck => {
+        const existingState = existingLoadedDecks.get(deck.id);
+        if (existingState) {
+          return {
+            ...deck,
+            createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date(now).toISOString(),
+            updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date(now).toISOString(),
+            areCardsLoaded: existingState.areCardsLoaded,
+            cardCount: existingState.cardCount
+          };
+        }
+        return {
           ...deck,
           createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date(now).toISOString(),
           updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date(now).toISOString(),
-          areCardsLoaded: flashcards.some(fc => fc.deckId === deck.id),
-      }));
+          areCardsLoaded: flashcards.some((fc: Flashcard) => fc.deckId === deck.id),
+        };
+      });
+
       const normalizedFlashcards = flashcards.map(card => ({
-          ...card,
-          createdAt: card.createdAt ? new Date(card.createdAt).getTime() : now,
-          updatedAt: card.updatedAt ? new Date(card.updatedAt).getTime() : now,
-          dueDate: card.dueDate ? new Date(card.dueDate).getTime() : now,
-          lastReviewed: card.lastReviewed ? new Date(card.lastReviewed).getTime() : null,
-          isBookmarked: card.isBookmarked ?? false,
-          contentType: card.contentType ?? 'text',
-          interval: card.interval ?? 1,
-          easeFactor: card.easeFactor ?? 2.5,
-          repetitions: card.repetitions ?? 0,
+        ...card,
+        createdAt: card.createdAt ? new Date(card.createdAt).getTime() : now,
+        updatedAt: card.updatedAt ? new Date(card.updatedAt).getTime() : now,
+        dueDate: card.dueDate ? new Date(card.dueDate).getTime() : now,
+        lastReviewed: card.lastReviewed ? new Date(card.lastReviewed).getTime() : null,
+        isBookmarked: card.isBookmarked ?? false,
+        contentType: card.contentType ?? 'text',
+        interval: card.interval ?? 1,
+        easeFactor: card.easeFactor ?? 2.5,
+        repetitions: card.repetitions ?? 0,
       }));
+
       set(produce((state: FlashcardState) => {
         state.decks = normalizedDecks;
-        state.flashcards = normalizedFlashcards;
+        // Only update flashcards if new ones are provided
+        if (flashcards.length > 0) {
+          state.flashcards = normalizedFlashcards;
+        }
         state.isLoading = false;
         state.error = null;
         state.pendingOperations = {};
@@ -1080,6 +1105,12 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
 
     fetchFlashcardsForDeck: async (deckId: string) => {
       console.log(`[FlashcardStore] Fetching flashcards for deck: ${deckId}`);
+      console.log('[FlashcardStore] Current store state before fetch:', {
+        totalFlashcards: get().flashcards.length,
+        deckFlashcards: get().flashcards.filter(f => f.deckId === deckId).length,
+        isDeckLoaded: get().decks.find(d => d.id === deckId)?.areCardsLoaded
+      });
+
       set(produce((state: FlashcardState) => {
         state.loadingFlashcardsForDeckId = deckId;
         state.error = null;
@@ -1127,9 +1158,9 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
           }));
 
         const response = await trpcClient.flashcards.listByDeck.query({ deckId: currentDeckId }) as ListByDeckResponse;
-
         const fetchedCards = response.items;
         const userStatuses = response.userStatuses || [];
+        console.log(`[FlashcardStore] Fetched ${fetchedCards.length} cards from server for deck ${currentDeckId}`);
 
         set(produce((state: FlashcardState) => {
           const now = Date.now();
@@ -1156,17 +1187,27 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
 
           const existingFlashcardIds = new Set(state.flashcards.map(f => f.id));
           const newFlashcardsToMerge = normalizedFetchedFlashcards.filter((fc: Flashcard) => !existingFlashcardIds.has(fc.id));
+          
+          console.log('[FlashcardStore] Merging flashcards:', {
+            existingCount: state.flashcards.length,
+            newCardsCount: newFlashcardsToMerge.length,
+            duplicateCount: normalizedFetchedFlashcards.length - newFlashcardsToMerge.length
+          });
+
           state.flashcards.push(...newFlashcardsToMerge);
 
           const deckIndexToUpdate = state.decks.findIndex((d: StoreDeck) => d.id === currentDeckId);
           if (deckIndexToUpdate !== -1) {
             state.decks[deckIndexToUpdate].cardCount = state.flashcards.filter((fc: Flashcard) => fc.deckId === currentDeckId).length;
             state.decks[deckIndexToUpdate].areCardsLoaded = true;
+            console.log(`[FlashcardStore] Updated deck ${currentDeckId} status:`, {
+              cardCount: state.decks[deckIndexToUpdate].cardCount,
+              areCardsLoaded: state.decks[deckIndexToUpdate].areCardsLoaded
+            });
           }
 
           state.loadingFlashcardsForDeckId = null;
           state.error = null;
-          console.log(`[FlashcardStore] Successfully fetched and merged ${newFlashcardsToMerge.length} flashcards for deck: ${currentDeckId}. New total cards for deck: ${state.flashcards.filter(fc => fc.deckId === currentDeckId).length}`);
         }));
 
       } catch (e: any) {
@@ -1177,6 +1218,43 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
         }));
       }
     },
+
+    setDecks: (decks: StoreDeck[]) => {
+      set((state: FlashcardState) => {
+        // Preserve existing flashcards and loaded states
+        const existingFlashcards = state.flashcards;
+        const existingLoadedDecks = new Map(
+          state.decks
+            .filter((d: StoreDeck) => d.areCardsLoaded)
+            .map((d: StoreDeck) => [d.id, { areCardsLoaded: d.areCardsLoaded, cardCount: d.cardCount }])
+        );
+
+        // Update decks while preserving loaded states
+        const updatedDecks = decks.map(deck => {
+          const existingState = existingLoadedDecks.get(deck.id);
+          if (existingState) {
+            return {
+              ...deck,
+              areCardsLoaded: existingState.areCardsLoaded,
+              cardCount: existingState.cardCount
+            };
+          }
+          return deck;
+        });
+
+        console.log('[FlashcardStore] Updating decks while preserving loaded states:', {
+          newDeckCount: updatedDecks.length,
+          preservedFlashcards: existingFlashcards.length,
+          preservedLoadedDecks: Array.from(existingLoadedDecks.keys())
+        });
+
+        return {
+          ...state,
+          decks: updatedDecks,
+          flashcards: existingFlashcards
+        };
+      });
+    },
 });
 
 export const useFlashcardStore = create<FlashcardState>()(
@@ -1185,10 +1263,38 @@ export const useFlashcardStore = create<FlashcardState>()(
     {
       name: 'flashcard-storage',
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        decks: state.decks,
-        flashcards: state.flashcards,
-      }),
+      partialize: (state) => {
+        console.log('[FlashcardStore] Persisting state to AsyncStorage:', {
+          decksCount: state.decks.length,
+          flashcardsCount: state.flashcards.length,
+          loadedDecks: state.decks.filter((d: StoreDeck) => d.areCardsLoaded).map((d: StoreDeck) => ({ id: d.id, name: d.name }))
+        });
+        return {
+          decks: state.decks,
+          flashcards: state.flashcards,
+        };
+      },
+      onRehydrateStorage: () => (state) => {
+        console.log('[FlashcardStore] Rehydrated state from AsyncStorage:', {
+          decksCount: state?.decks.length,
+          flashcardsCount: state?.flashcards.length,
+          loadedDecks: state?.decks.filter((d: StoreDeck) => d.areCardsLoaded).map((d: StoreDeck) => ({ id: d.id, name: d.name }))
+        });
+        
+        // Ensure loaded decks are properly marked
+        if (state) {
+          const loadedDeckIds = new Set(state.flashcards.map((f: Flashcard) => f.deckId));
+          state.decks.forEach((deck: StoreDeck) => {
+            if (loadedDeckIds.has(deck.id)) {
+              deck.areCardsLoaded = true;
+              deck.cardCount = state.flashcards.filter((f: Flashcard) => f.deckId === deck.id).length;
+            }
+          });
+          console.log('[FlashcardStore] Updated deck loading states after rehydration:', {
+            loadedDecks: state.decks.filter((d: StoreDeck) => d.areCardsLoaded).map((d: StoreDeck) => ({ id: d.id, name: d.name, cardCount: d.cardCount }))
+          });
+        }
+      }
     }
   )
 );

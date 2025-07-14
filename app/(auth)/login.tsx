@@ -35,13 +35,22 @@ export default function LoginScreen() {
 
         setSession(appUser, data.session.access_token, data.session.refresh_token);
         Alert.alert('Login Successful', data.message || 'You are now logged in!');
-        router.replace('/');
+        router.replace('/(tabs)');
       } else {
         Alert.alert('Login Failed', 'Received incomplete data from server.');
       }
     },
     onError: (error) => {
-      Alert.alert('Login Failed', error.message || 'An unexpected error occurred.');
+      if (error.message === 'Invalid login credentials' || error.message.includes('Invalid login credentials')) {
+        Alert.alert('Login Failed', 'Invalid email or password. Please try again.');
+        return;
+      } else if (error.message.includes('Invalid email')) {
+        Alert.alert('Invalid Email', 'Please enter a valid email address.');
+      } else if (error.message.includes('No refresh token available') && !error.message.includes('Invalid login credentials')) {
+        Alert.alert('Session Expired', 'Please try logging in again.');
+      } else {
+        Alert.alert('Login Failed', 'An unexpected error occurred. Please try again later.');
+      }
     },
   });
 

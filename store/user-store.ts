@@ -24,16 +24,18 @@ export interface AppUser {
 
 interface UserState {
   user: AppUser | null;
-  sessionToken: string | null; 
-  isLoading: boolean; 
+  sessionToken: string | null;
+  tokenExpiry: number | null;
+  isLoading: boolean;
   error: string | null;
 
-  setSession: (userData: AppUser, accessToken: string, refreshToken?: string) => void; 
-  logout: () => Promise<void>; 
+  setSession: (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => void;
+  logout: () => Promise<void>;
   updateUser: (userData: Partial<AppUser>) => void;
   updateStudyStats: (studyTime: number, cardsStudied: number) => void;
-  checkAuthStatus: () => Promise<void>; 
+  checkAuthStatus: () => Promise<void>;
   clearError: () => void;
+  shouldRefreshToken: () => boolean;
 }
 
 const defaultUserInitialState: AppUser = {
@@ -60,19 +62,24 @@ export const useUserStore = create<UserState>()(
   persist(
     (set, get) => ({
       user: defaultUserInitialState,
-      sessionToken: null, 
+      sessionToken: null,
+      tokenExpiry: null,
       isLoading: false,
       error: null,
 
-      setSession: async (userData: AppUser, accessToken: string, refreshToken?: string) => {
-        set({ 
-          user: { ...userData, isLoggedIn: true }, 
-          sessionToken: accessToken, 
-          isLoading: false, 
-          error: null 
+      setSession: async (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => {
+        set({
+          user: { ...userData, isLoggedIn: true },
+          sessionToken: accessToken,
+          tokenExpiry: expiresAt || null,
+          isLoading: false,
+          error: null
         });
         if (Platform.OS === 'web') {
           localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+          if (expiresAt) {
+            localStorage.setItem('tokenExpiry', expiresAt.toString());
+          }
           if (refreshToken) {
             localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
           } else {
@@ -80,12 +87,23 @@ export const useUserStore = create<UserState>()(
           }
         } else {
           await SecureStore.setItemAsync(TOKEN_STORAGE_KEY, accessToken);
+          if (expiresAt) {
+            await SecureStore.setItemAsync('tokenExpiry', expiresAt.toString());
+          }
           if (refreshToken) {
             await SecureStore.setItemAsync(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
           } else {
             await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
           }
         }
+      },
+
+      shouldRefreshToken: () => {
+        const state = get();
+        if (!state.tokenExpiry || !state.sessionToken) return false;
+        
+        const FIVE_MINUTES = 5 * 60 * 1000;
+        return Date.now() + FIVE_MINUTES >= state.tokenExpiry;
       },
 
       logout: async () => {
