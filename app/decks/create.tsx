@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert } from "react-native";
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Image } from "react-native";
 import { useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { X, Plus, Tag, ArrowLeft } from "lucide-react-native";
+import { X, Plus, Tag, ArrowLeft, ImageIcon } from "lucide-react-native";
 import { Platform } from "react-native";
 
 import colors from "@/constants/colors";
@@ -21,6 +21,40 @@ export default function CreateDeckScreen() {
   const [chapter, setChapter] = useState("");
   const [coverImage, setCoverImage] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  
+  // Predefined cover photo options
+  const coverPhotoOptions = [
+    {
+      id: 'math',
+      url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/21/Blackboard_with_math_formula.jpg/300px-Blackboard_with_math_formula.jpg',
+      label: 'Mathematics'
+    },
+    {
+      id: 'physics',
+      url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Physics_world_map.png/300px-Physics_world_map.png',
+      label: 'Physics'
+    },
+    {
+      id: 'chemistry',
+      url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/Chemicals_in_flasks.jpg/300px-Chemicals_in_flasks.jpg',
+      label: 'Chemistry'
+    },
+    {
+      id: 'biology',
+      url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f7/DNA_Overview.png/300px-DNA_Overview.png',
+      label: 'Biology'
+    },
+    {
+      id: 'general',
+      url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Book_collection.jpg/300px-Book_collection.jpg',
+      label: 'General Studies'
+    },
+    {
+      id: 'languages',
+      url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/Desktop_computer_clipart_-_Yellow_theme.svg/300px-Desktop_computer_clipart_-_Yellow_theme.svg.png',
+      label: 'Languages'
+    }
+  ];
   
   const handleNameChange = (text: string) => {
     const words = text.trim().split(/\s+/).filter(word => word.length > 0);
@@ -208,6 +242,44 @@ export default function CreateDeckScreen() {
         </View>
         
         <View style={styles.formGroup}>
+          <Text style={styles.label}>Cover Photo</Text>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.coverPhotosContainer}
+          >
+            {coverPhotoOptions.map(photo => (
+              <TouchableOpacity 
+                key={photo.id}
+                style={[
+                  styles.coverPhotoOption,
+                  coverImage === photo.url && styles.selectedCoverPhoto
+                ]}
+                onPress={() => setCoverImage(photo.url)}
+                disabled={isCreating}
+              >
+                <Image 
+                  source={{ uri: photo.url }}
+                  style={styles.coverPhotoImage}
+                  resizeMode="cover"
+                />
+                <Text style={[
+                  styles.coverPhotoLabel,
+                  coverImage === photo.url && styles.selectedCoverPhotoLabel
+                ]}>
+                  {photo.label}
+                </Text>
+                {coverImage === photo.url && (
+                  <View style={styles.selectedIndicator}>
+                    <Text style={styles.selectedIndicatorText}>✓</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+        
+        <View style={styles.formGroup}>
           <Text style={styles.label}>Tags</Text>
           <View style={styles.tagInputContainer}>
             <TextInput
@@ -387,5 +459,53 @@ const styles = StyleSheet.create({
     color: colors.textLight,
     alignSelf: 'flex-end',
     marginTop: 4,
+  },
+  coverPhotosContainer: {
+    paddingHorizontal: 4,
+  },
+  coverPhotoOption: {
+    width: 100,
+    marginHorizontal: 6,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: colors.gray[200],
+    backgroundColor: colors.gray[50],
+    position: 'relative',
+  },
+  selectedCoverPhoto: {
+    borderColor: colors.primary,
+    borderWidth: 3,
+  },
+  coverPhotoImage: {
+    width: '100%',
+    height: 70,
+  },
+  coverPhotoLabel: {
+    fontSize: 12,
+    color: colors.textDark,
+    textAlign: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  selectedCoverPhotoLabel: {
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  selectedIndicator: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  selectedIndicatorText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });

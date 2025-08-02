@@ -45,7 +45,9 @@ interface FetchedFlashcardData {
   back: string;
   contentType?: ContentType | string;
   mediaUrls?: string[];
+  mediaUrlsJson?: string;
   tags?: string[];
+  tagsJson?: string;
   createdAt: string | Date | number;
   updatedAt: string | Date | number;
   userStatus?: Partial<LocalUserFlashcardStatus>;
@@ -199,7 +201,8 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
             createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date(now).toISOString(),
             updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date(now).toISOString(),
             areCardsLoaded: existingState.areCardsLoaded,
-            cardCount: existingState.cardCount
+            cardCount: existingState.cardCount,
+            tags: deck.tags || []
           };
         }
         return {
@@ -207,6 +210,7 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
           createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date(now).toISOString(),
           updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date(now).toISOString(),
           areCardsLoaded: flashcards.some((fc: Flashcard) => fc.deckId === deck.id),
+          tags: deck.tags || []
         };
       });
 
@@ -371,6 +375,7 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
               createdAt: String(updatedDeckFromBackend.createdAt), 
               updatedAt: String(updatedDeckFromBackend.updatedAt),
               areCardsLoaded: originalDeck.areCardsLoaded,
+              tags: updatedDeckFromBackend.tags || []
             };
           }
           delete state.pendingOperations[id];

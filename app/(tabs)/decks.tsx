@@ -37,7 +37,8 @@ export default function DecksScreen() {
         ...deck,
         createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date().toISOString(),
         updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date().toISOString(),
-        cardCount: deck._count?.flashcards ?? 0
+        cardCount: deck._count?.flashcards ?? 0,
+        tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : (deck.tags || [])
       }));
       
       if (cursor === null) {
