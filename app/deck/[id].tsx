@@ -35,8 +35,10 @@ export default function DeckDetailScreen() {
   
   const getFlashcardsForDeck = useFlashcardStore(state => state.getFlashcardsForDeck);
   const getDueFlashcardsForDeck = useFlashcardStore(state => state.getDueFlashcardsForDeck);
+  const getNewFlashcardsForDeck = useFlashcardStore(state => state.getNewFlashcardsForDeck);
   const startStudySession = useFlashcardStore(state => state.startStudySession);
   const deleteDeckFromStore = useFlashcardStore(state => state.deleteDeck);
+  const hasIncompleteSession = useFlashcardStore(state => state.hasIncompleteSession);
   const pendingOperations = useFlashcardStore(state => state.pendingOperations);
   const tempIdToRealIdMap = useFlashcardStore(state => state.tempIdToRealIdMap);
   const clearTempIdMapping = useFlashcardStore(state => state.clearTempIdMapping);
@@ -237,10 +239,19 @@ export default function DeckDetailScreen() {
 
       const flashcards = getFlashcardsForDeck(deck.id);
       const dueCards = getDueFlashcardsForDeck(deck.id);
+      const newCards = getNewFlashcardsForDeck(deck.id);
       const displayedCards = showAll ? flashcards : (flashcards || []).slice(0, 5);
+      const hasIncompleteStudySession = hasIncompleteSession(deck.id);
 
       const handleStartStudy = () => {
         if (!deck || !isMountedRef.current) return;
+
+        // If there's an incomplete session, continue it directly
+        if (hasIncompleteStudySession) {
+          console.log(`[DeckDetailScreen] Continuing incomplete study session for deck ${deck.id}`);
+          router.push(`/study/${deck.id}`);
+          return;
+        }
 
         // Check if flashcards are loaded *or* if the deck is known to have 0 cards
         if (!deck.areCardsLoaded && deck.cardCount > 0 && loadingFlashcardsForDeckId !== deck.id) {
@@ -253,19 +264,28 @@ export default function DeckDetailScreen() {
         }
 
         if (dueCards.length === 0 && deck.cardCount > 0) {
-          Alert.alert(
-            "No Cards Due",
-            "There are no cards due for review. Would you like to study all cards in this deck?",
-            [
-              { text: "Cancel", style: "cancel" },
-              { text: "Study All", onPress: () => { 
-                if (isMountedRef.current) {
-                  startStudySession(deck.id); 
-                  router.push(`/study/${deck.id}`); 
-                }
-              }}
-            ]
-          );
+          if (newCards.length > 0) {
+            Alert.alert(
+              "No Due Cards",
+              `There are no cards due for review, but you have ${newCards.length} new cards to learn. Would you like to study new cards?`,
+              [
+                { text: "Cancel", style: "cancel" },
+                { text: "Study New Cards", onPress: () => { 
+                  if (isMountedRef.current) {
+                    // Start a session with new cards
+                    startStudySession(deck.id); 
+                    router.push(`/study/${deck.id}`); 
+                  }
+                }}
+              ]
+            );
+          } else {
+            Alert.alert(
+              "No Cards Available",
+              "There are no cards due for review and no new cards to learn. All cards have been studied and are not yet due for review.",
+              [{ text: "OK", style: "default" }]
+            );
+          }
           return;
         }
         if (deck.cardCount === 0) {
@@ -324,17 +344,37 @@ export default function DeckDetailScreen() {
                 <Text style={styles.statLabel}>Due</Text>
               </View>
               <View style={styles.statItem}>
+                <Plus size={20} color={colors.success} />
+                <Text style={styles.statValue}>{newCards.length}</Text>
+                <Text style={styles.statLabel}>New</Text>
+              </View>
+              <View style={styles.statItem}>
                 <BookOpen size={20} color={colors.secondary} />
                 <Text style={styles.statValue}>{deck.cardCount}</Text>
                 <Text style={styles.statLabel}>Total</Text>
               </View>
+              {hasIncompleteStudySession && (
+                <View style={[styles.statItem, styles.progressStatItem]}>
+                  <RefreshCw size={20} color={colors.warning} />
+                  <Text style={styles.statValue}>
+                    {useFlashcardStore.getState().studyProgress?.cardsStudied || 0}/
+                    {(useFlashcardStore.getState().studyProgress?.cardsStudied || 0) + (useFlashcardStore.getState().studyProgress?.cardsLeft || 0)}
+                  </Text>
+                  <Text style={styles.statLabel}>Progress</Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.actionsContainer}>
               <TouchableOpacity
-                style={[styles.primaryButton, loadingFlashcardsForDeckId === deck.id && styles.loadingButton]}
+                style={[
+                  styles.primaryButton, 
+                  loadingFlashcardsForDeckId === deck.id && styles.loadingButton,
+                  hasIncompleteStudySession && styles.continueButton,
+                  (dueCards.length === 0 && newCards.length === 0 && !hasIncompleteStudySession) && styles.disabledButton
+                ]}
                 onPress={handleStartStudy}
-                disabled={loadingFlashcardsForDeckId === deck.id}
+                disabled={loadingFlashcardsForDeckId === deck.id || (dueCards.length === 0 && newCards.length === 0 && !hasIncompleteStudySession)}
               >
                 {loadingFlashcardsForDeckId === deck.id ? (
                   <View style={styles.loadingContainer}>
@@ -342,7 +382,16 @@ export default function DeckDetailScreen() {
                     <Text style={styles.loadingText}>Loading ...</Text>
                   </View>
                 ) : (
-                  <Text style={styles.primaryButtonText}>Start Studying</Text>
+                  <Text style={styles.primaryButtonText}>
+                    {hasIncompleteStudySession 
+                      ? 'Continue Studying' 
+                      : dueCards.length > 0 
+                        ? 'Start Studying' 
+                        : newCards.length > 0 
+                          ? 'Study New Cards'
+                          : 'No Cards to Study'
+                    }
+                  </Text>
                 )}
               </TouchableOpacity>
               <TouchableOpacity
@@ -379,9 +428,22 @@ export default function DeckDetailScreen() {
                       style={styles.cardItem}
                       onPress={() => router.push(`/card/${card.id}`)}
                     >
+                      {card.mediaUrls && card.mediaUrls.length > 0 && card.mediaUrls[0] && (
+                        <Image 
+                          source={{ uri: card.mediaUrls[0] }}
+                          style={styles.cardThumbnail}
+                          resizeMode="cover"
+                        />
+                      )}
                       <View style={styles.cardContent}>
                         <Text style={styles.cardFront} numberOfLines={2}>{card.front}</Text>
                         <Text style={styles.cardBack} numberOfLines={1}>{card.back}</Text>
+                        {card.mediaUrls && card.mediaUrls.length > 0 && (
+                          <View style={styles.mediaIndicator}>
+                            <Plus size={12} color={colors.primary} />
+                            <Text style={styles.mediaText}>Image</Text>
+                          </View>
+                        )}
                       </View>
                       <ChevronRight size={20} color={colors.gray[400]} />
                     </TouchableOpacity>
@@ -573,6 +635,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.gray[200],
   },
+  progressStatItem: {
+    backgroundColor: colors.warning + '10', // Light yellow background
+    borderColor: colors.warning + '30',
+  },
   statValue: {
     fontSize: 20,
     fontWeight: "bold",
@@ -599,6 +665,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
     marginRight: 5,
+  },
+  continueButton: {
+    backgroundColor: colors.warning,
+    shadowColor: colors.warning,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   primaryButtonText: {
     color: 'white',
@@ -654,6 +728,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.gray[200],
   },
+  cardThumbnail: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    marginRight: 12,
+  },
   cardContent: {
     flex: 1,
     marginRight: 8,
@@ -667,6 +747,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textLight,
     marginTop: 4,
+  },
+  mediaIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  mediaText: {
+    fontSize: 12,
+    color: colors.primary,
+    marginLeft: 4,
+    fontWeight: '500',
   },
   emptyCardsContainer: {
     alignItems: "center",

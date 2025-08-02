@@ -70,7 +70,16 @@ export function calculateNextReview(
 // Get cards due for review
 export function getDueCards(cards: Flashcard[]): Flashcard[] {
   const now = Date.now();
-  return cards.filter(card => !card.dueDate || card.dueDate <= now);
+  return cards.filter(card => {
+    // Only include cards that have been reviewed at least once (lastReviewed is not null)
+    // AND are due for review (no dueDate set or dueDate is in the past)
+    return card.lastReviewed !== null && (!card.dueDate || card.dueDate <= now);
+  });
+}
+
+// Get new cards (cards that have never been reviewed)
+export function getNewCards(cards: Flashcard[]): Flashcard[] {
+  return cards.filter(card => card.lastReviewed === null);
 }
 
 // Sort cards by due date

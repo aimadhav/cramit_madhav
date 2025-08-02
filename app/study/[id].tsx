@@ -695,6 +695,19 @@ export default function StudySessionScreen() {
                             )
                           ))}
                         </View>
+                        
+                        {currentCard && currentCard.mediaUrls && currentCard.mediaUrls.length > 0 && currentCard.mediaUrls[0] && (
+                          <View style={styles.imageContainer}>
+                            <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
+                              <Animated.Image 
+                                source={{ uri: currentCard.mediaUrls[0] }}
+                                style={[styles.cardImage, imageStyle]}
+                                resizeMode="contain"
+                              />
+                            </GestureDetector>
+                            <Text style={styles.imageHint}>Pinch to zoom • Drag to move • Double tap to reset</Text>
+                          </View>
+                        )}
                       </>
                     )}
                   </ScrollView>

@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Flashcard, Deck, DifficultyRating, StudyProgress, ContentType } from '@/types';
 import { mockFlashcards } from '@/mocks/flashcards';
 import { mockDecks } from '@/mocks/decks';
-import { calculateNextReview, getDueCards } from '@/utils/spaced-repetition';
+import { calculateNextReview, getDueCards, getNewCards } from '@/utils/spaced-repetition';
 import { produce } from 'immer';
 import { trpcClient } from '@/lib/trpc';
 
@@ -88,8 +88,10 @@ interface FlashcardState {
   
   getFlashcardsForDeck: (deckId: string) => Flashcard[];
   getDueFlashcardsForDeck: (deckId: string) => Flashcard[];
+  getNewFlashcardsForDeck: (deckId: string) => Flashcard[];
   getCurrentCard: () => Flashcard | null;
   getNextCard: () => Flashcard | null;
+  hasIncompleteSession: (deckId: string) => boolean;
   
   loadInitialData: (decks: Deck[], flashcards: Flashcard[]) => void;
   getTotalCardsStudied: () => number;
@@ -749,8 +751,19 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
           if(a.dueDate !== b.dueDate) return a.dueDate - b.dueDate;
           return a.createdAt - b.createdAt;
       }); 
+      
+      let cardsToStudy = dueCards;
+      
+      // If no due cards, include new cards
+      if (dueCards.length === 0) {
+        const newCards = getNewCards(allCardsForDeck).sort((a:Flashcard,b:Flashcard) => {
+          return a.createdAt - b.createdAt; // Sort new cards by creation time
+        });
+        cardsToStudy = newCards;
+        console.log("[FlashcardStore] No due cards found, using new cards:", newCards.length);
+      }
 
-      currentSessionCardQueue = dueCards.map(c => c.id);
+      currentSessionCardQueue = cardsToStudy.map(c => c.id);
       console.log("[FlashcardStore] currentSessionCardQueue set:", currentSessionCardQueue);
 
       if (currentSessionCardQueue.length > 0) {
@@ -766,7 +779,7 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
           });
           console.log("[FlashcardStore] Study session started with progress:", get().studyProgress);
       } else {
-          console.log("[FlashcardStore] No due cards to study in deck:", deckId);
+          console.log("[FlashcardStore] No cards to study in deck:", deckId);
         set({
           currentDeckId: deckId,
           studyProgress: {
@@ -863,6 +876,11 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
     getDueFlashcardsForDeck: (deckId) => {
       const cardsInDeck = get().flashcards.filter((f: Flashcard) => f.deckId === deckId);
       return getDueCards(cardsInDeck);
+    },
+    
+    getNewFlashcardsForDeck: (deckId) => {
+      const cardsInDeck = get().flashcards.filter((f: Flashcard) => f.deckId === deckId);
+      return getNewCards(cardsInDeck);
     },
     
     getCurrentCard: () => {
@@ -976,6 +994,19 @@ const storeImplementation = (set: any, get: any): FlashcardState => ({
     clearSessionJustCompleted: () => {
       console.log('[FlashcardStore] clearSessionJustCompleted');
       set({ sessionJustCompletedDeckId: null });
+    },
+
+    hasIncompleteSession: (deckId: string) => {
+      const { studyProgress, currentDeckId } = get();
+      // Check if there's an active study session for this deck with cards left to study
+      return !!(
+        studyProgress && 
+        currentDeckId === deckId && 
+        studyProgress.deckId === deckId &&
+        studyProgress.cardsLeft > 0 &&
+        currentSessionCardQueue.length > 0 &&
+        studyProgress.currentCardIndex < currentSessionCardQueue.length
+      );
     },
 
     clearTempIdMapping: (tempId: string) => {
