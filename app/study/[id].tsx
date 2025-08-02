@@ -707,11 +707,11 @@ export default function StudySessionScreen() {
                           ))}
                         </View>
                         
-                        {currentCard && currentCard.mediaUrls && currentCard.mediaUrls.length > 0 && currentCard.mediaUrls[0] && (
+                        {currentCard && currentCard.mediaUrls && currentCard.mediaUrls.length > 1 && currentCard.mediaUrls[1] && (
                           <View style={styles.imageContainer}>
                             <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
                               <Animated.Image 
-                                source={{ uri: currentCard.mediaUrls[0] }}
+                                source={{ uri: currentCard.mediaUrls[1] }}
                                 style={[styles.cardImage, imageStyle]}
                                 resizeMode="contain"
                               />

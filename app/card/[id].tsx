@@ -491,7 +491,7 @@ export default function CardDetailScreen() {
                 ))}
               </View>
               
-              {card.mediaUrls && card.mediaUrls.length > 0 && (
+              {card.mediaUrls && card.mediaUrls.length > 0 && card.mediaUrls[0] && (
                 <View style={styles.imageContainer}>
                   {Platform.OS !== 'web' ? (
                     <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
@@ -531,6 +531,33 @@ export default function CardDetailScreen() {
                   )
                 ))}
               </View>
+              
+              {card.mediaUrls && card.mediaUrls.length > 1 && card.mediaUrls[1] && (
+                <View style={styles.imageContainer}>
+                  {Platform.OS !== 'web' ? (
+                    <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
+                      <Animated.View style={styles.imageWrapper}>
+                        <Animated.Image 
+                          source={{ uri: card.mediaUrls[1] }}
+                          style={[styles.cardImage, imageStyle]}
+                          resizeMode="contain"
+                        />
+                      </Animated.View>
+                    </GestureDetector>
+                  ) : (
+                    <Image 
+                      source={{ uri: card.mediaUrls[1] }}
+                      style={styles.cardImage}
+                      contentFit="contain"
+                    />
+                  )}
+                  <Text style={styles.imageHint}>
+                    {Platform.OS !== 'web' ? 
+                      "Pinch to zoom • Drag to move • Double tap to reset" : 
+                      "Image manipulation not available on web"}
+                  </Text>
+                </View>
+              )}
             </>
           )}
         </ScrollView>

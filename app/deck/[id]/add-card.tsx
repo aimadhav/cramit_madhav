@@ -62,25 +62,47 @@ export default function AddCardScreen() {
   };
   
   const handlePickImage = async (side: 'front' | 'back') => {
+    console.log(`[AddCard] handlePickImage called for ${side}, Platform: ${Platform.OS}`);
+    
     if (Platform.OS === 'web') {
       Alert.alert("Not available", "This feature is not available on web");
       return;
     }
     
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.8,
-    });
-    
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      if (side === 'front') {
-        setFrontMediaUrl(result.assets[0].uri);
-      } else {
-        setBackMediaUrl(result.assets[0].uri);
+    try {
+      // Request permissions first
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      console.log('[AddCard] Permission result:', permissionResult);
+      
+      if (permissionResult.granted === false) {
+        Alert.alert("Permission denied", "You've refused to allow this app to access your photos!");
+        return;
       }
-      setContentType("mixed");
+
+      console.log('[AddCard] Launching image picker...');
+      console.log('[AddCard] Available ImagePicker options:', Object.keys(ImagePicker));
+      
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions?.Images || 'Images',
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      
+      console.log('[AddCard] Image picker result:', result);
+      
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        console.log(`[AddCard] Setting ${side} image:`, result.assets[0].uri);
+        if (side === 'front') {
+          setFrontMediaUrl(result.assets[0].uri);
+        } else {
+          setBackMediaUrl(result.assets[0].uri);
+        }
+        setContentType("mixed");
+      }
+    } catch (error) {
+      console.error('[AddCard] Error picking image:', error);
+      Alert.alert("Error", "Failed to pick image. Please try again.");
     }
   };
   
@@ -195,7 +217,10 @@ export default function AddCardScreen() {
             <Text style={styles.imageSectionLabel}>Front Image (Optional)</Text>
             <TouchableOpacity 
               style={styles.imagePickerButton}
-              onPress={() => handlePickImage('front')}
+              onPress={() => {
+                console.log('[AddCard] Button pressed for front image');
+                handlePickImage('front');
+              }}
             >
               {frontMediaUrl ? (
                 <Image 
@@ -237,7 +262,10 @@ export default function AddCardScreen() {
             <Text style={styles.imageSectionLabel}>Back Image (Optional)</Text>
             <TouchableOpacity 
               style={styles.imagePickerButton}
-              onPress={() => handlePickImage('back')}
+              onPress={() => {
+                console.log('[AddCard] Button pressed for back image');
+                handlePickImage('back');
+              }}
             >
               {backMediaUrl ? (
                 <Image 

@@ -75,25 +75,45 @@ export default function EditCardScreen() {
   };
   
   const handlePickImage = async (side: 'front' | 'back') => {
+    console.log(`[EditCard] handlePickImage called for ${side}, Platform: ${Platform.OS}`);
+    
     if (Platform.OS === 'web') {
       Alert.alert("Not available", "This feature is not available on web");
       return;
     }
     
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.8,
-    });
-    
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      if (side === 'front') {
-        setFrontMediaUrl(result.assets[0].uri);
-      } else {
-        setBackMediaUrl(result.assets[0].uri);
+    try {
+      // Request permissions first
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      console.log('[EditCard] Permission result:', permissionResult);
+      
+      if (permissionResult.granted === false) {
+        Alert.alert("Permission denied", "You've refused to allow this app to access your photos!");
+        return;
       }
-      setContentType("mixed");
+
+      console.log('[EditCard] Launching image picker...');
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      
+      console.log('[EditCard] Image picker result:', result);
+      
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        console.log(`[EditCard] Setting ${side} image:`, result.assets[0].uri);
+        if (side === 'front') {
+          setFrontMediaUrl(result.assets[0].uri);
+        } else {
+          setBackMediaUrl(result.assets[0].uri);
+        }
+        setContentType("mixed");
+      }
+    } catch (error) {
+      console.error('[EditCard] Error picking image:', error);
+      Alert.alert("Error", "Failed to pick image. Please try again.");
     }
   };
   

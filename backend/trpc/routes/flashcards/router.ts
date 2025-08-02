@@ -7,7 +7,7 @@ const createFlashcardInput = z.object({
   front: z.string().min(1, "Front content cannot be empty"),
   back: z.string().min(1, "Back content cannot be empty"),
   contentType: z.string().optional().default('text'),
-  mediaUrls: z.array(z.string().url("Invalid URL format")).optional().default([]),
+  mediaUrls: z.array(z.string()).optional().default([]),
   tags: z.array(z.string()).optional().default([]),
 });
 
@@ -27,7 +27,7 @@ const updateFlashcardContentInput = z.object({
   front: z.string().min(1, "Front content cannot be empty").optional(),
   back: z.string().min(1, "Back content cannot be empty").optional(),
   contentType: z.string().optional(),
-  mediaUrls: z.array(z.string().url("Invalid URL format")).optional(),
+  mediaUrls: z.array(z.string()).optional(),
   tags: z.array(z.string()).optional(),
   targetDeckId: z.string().optional(), // Optional: if user wants to copy to a specific existing personal deck
 });
@@ -68,8 +68,8 @@ export const flashcardRouter = createTRPCRouter({
               front,
               back,
               contentType,
-              mediaUrls,
-              tags,
+              mediaUrlsJson: JSON.stringify(mediaUrls || []),
+              tagsJson: JSON.stringify(tags || []),
             },
           });
 
@@ -82,7 +82,12 @@ export const flashcardRouter = createTRPCRouter({
             },
           });
 
-          return { ...newFlashcard, userStatus: newUserFlashcardStatus }; // Return combined result
+          return { 
+            ...newFlashcard, 
+            userStatus: newUserFlashcardStatus,
+            tags: JSON.parse(newFlashcard.tagsJson || '[]'),
+            mediaUrls: JSON.parse(newFlashcard.mediaUrlsJson || '[]')
+          }; // Return combined result
         });
 
         return newFlashcardAndStatus;
@@ -278,7 +283,12 @@ export const flashcardRouter = createTRPCRouter({
         console.log(`[RouterLog] getById: Found UserFlashcardStatus:`, JSON.stringify(userStatus));
       }
 
-      return { ...card, userStatus: userStatus || undefined };
+      return { 
+        ...card, 
+        userStatus: userStatus || undefined,
+        tags: JSON.parse(card.tagsJson || '[]'),
+        mediaUrls: JSON.parse(card.mediaUrlsJson || '[]')
+      };
     }),
 
   getDueFlashcardsForUser: publicProcedure
@@ -316,14 +326,14 @@ export const flashcardRouter = createTRPCRouter({
         front?: string;
         back?: string;
         contentType?: string;
-        mediaUrls?: string[];
-        tags?: string[];
+        mediaUrlsJson?: string;
+        tagsJson?: string;
       } = {};
       if (front !== undefined) updateData.front = front;
       if (back !== undefined) updateData.back = back;
       if (contentType !== undefined) updateData.contentType = contentType;
-      if (mediaUrls !== undefined) updateData.mediaUrls = mediaUrls;
-      if (tags !== undefined) updateData.tags = tags;
+      if (mediaUrls !== undefined) updateData.mediaUrlsJson = JSON.stringify(mediaUrls);
+      if (tags !== undefined) updateData.tagsJson = JSON.stringify(tags);
 
       if (Object.keys(updateData).length === 0) {
         throw new TRPCError({
@@ -353,7 +363,12 @@ export const flashcardRouter = createTRPCRouter({
         const status = await ctx.prisma.userFlashcardStatus.findUnique({
             where: { userId_flashcardId: { userId, flashcardId: updatedFlashcard.id }, isDeleted: false }
         });
-        return { ...updatedFlashcard, userStatus: status };
+        return { 
+          ...updatedFlashcard, 
+          userStatus: status,
+          tags: JSON.parse(updatedFlashcard.tagsJson || '[]'),
+          mediaUrls: JSON.parse(updatedFlashcard.mediaUrlsJson || '[]')
+        };
 
       } else if (originalFlashcard.deck.isPublic) {
         // Card is from a public deck not owned by the user - trigger copy-on-edit
@@ -403,8 +418,8 @@ export const flashcardRouter = createTRPCRouter({
               front: updateData.front ?? originalFlashcard.front,
               back: updateData.back ?? originalFlashcard.back,
               contentType: updateData.contentType ?? originalFlashcard.contentType,
-              mediaUrls: updateData.mediaUrls ?? originalFlashcard.mediaUrls,
-              tags: updateData.tags ?? originalFlashcard.tags,
+              mediaUrlsJson: updateData.mediaUrlsJson ?? originalFlashcard.mediaUrlsJson,
+              tagsJson: updateData.tagsJson ?? originalFlashcard.tagsJson,
               deckId: finalTargetDeckId!,
             },
           });
@@ -438,7 +453,12 @@ export const flashcardRouter = createTRPCRouter({
             });
           }
 
-          return { ...newCopiedFlashcard, userStatus: newStatus };
+          return { 
+            ...newCopiedFlashcard, 
+            userStatus: newStatus,
+            tags: JSON.parse(newCopiedFlashcard.tagsJson || '[]'),
+            mediaUrls: JSON.parse(newCopiedFlashcard.mediaUrlsJson || '[]')
+          };
         });
       } else {
         // Card is not owned by user and deck is not public - this case should ideally not happen
