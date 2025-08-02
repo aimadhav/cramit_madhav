@@ -97,7 +97,7 @@ export default function AddCardScreen() {
         front: front.trim(),
         back: back.trim(),
         contentType,
-        tags: tags.length > 0 ? tags : (deck.tags?.slice(0, 1) || []),
+        tags: tags.length > 0 ? tags : ((deck.tags || []).slice(0, 1) || []),
         deckId: deck.id,
         mediaUrls
       });

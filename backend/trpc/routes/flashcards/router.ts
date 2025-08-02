@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createTRPCRouter, publicProcedure, protectedProcedure } from '../../create-context';
+import { createTRPCRouter, publicProcedure } from '../../create-context';
 import { TRPCError } from '@trpc/server';
 
 const createFlashcardInput = z.object({
@@ -33,11 +33,11 @@ const updateFlashcardContentInput = z.object({
 });
 
 export const flashcardRouter = createTRPCRouter({
-  create: protectedProcedure
+  create: publicProcedure
     .input(createFlashcardInput)
     .mutation(async ({ ctx, input }) => {
       const { deckId, front, back, contentType, mediaUrls, tags } = input;
-      const userId = ctx.user.id;
+      const userId = "guest-user";
 
       // 1. Verify deck ownership
       const deck = await ctx.prisma.deck.findUnique({
@@ -51,12 +51,13 @@ export const flashcardRouter = createTRPCRouter({
         });
       }
 
-      if (deck.userId !== userId) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'You do not have permission to add flashcards to this deck.',
-        });
-      }
+      // Auth check disabled for now
+      // if (deck.userId !== userId) {
+      //   throw new TRPCError({
+      //     code: 'FORBIDDEN',
+      //     message: 'You do not have permission to add flashcards to this deck.',
+      //   });
+      // }
 
       // 2. Create Flashcard and UserFlashcardStatus in a transaction
       try {
@@ -97,10 +98,10 @@ export const flashcardRouter = createTRPCRouter({
       }
     }),
 
-  updateUserStatus: protectedProcedure
+  updateUserStatus: publicProcedure
     .input(updateUserFlashcardStatusInput)
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.user.id;
+      const userId = "guest-user";
       const { flashcardId, ...updateDataRest } = input;
 
       // Manual date string to Date object conversion for Prisma
@@ -125,32 +126,51 @@ export const flashcardRouter = createTRPCRouter({
         });
       }
 
-      const existingStatus = await ctx.prisma.userFlashcardStatus.findUnique({
-        where: {
-          userId_flashcardId: {
+      try {
+        // First, verify the flashcard exists
+        const flashcard = await ctx.prisma.flashcard.findUnique({
+          where: { id: flashcardId }
+        });
+
+        if (!flashcard) {
+          console.log(`[updateUserStatus] Flashcard ${flashcardId} not found, skipping update`);
+          // Return a graceful response instead of throwing an error
+          return {
+            success: false,
+            message: `Flashcard ${flashcardId} no longer exists`,
+            skipped: true
+          };
+        }
+
+        // Use upsert to create if doesn't exist, update if it does
+        const upsertedStatus = await ctx.prisma.userFlashcardStatus.upsert({
+          where: {
+            userId_flashcardId: {
+              userId,
+              flashcardId,
+            },
+          },
+          create: {
             userId,
             flashcardId,
+            ...updateDataForPrisma,
+            // Set default values for required fields if not provided
+            interval: updateDataForPrisma.interval ?? 1,
+            easeFactor: updateDataForPrisma.easeFactor ?? 2.5,
+            repetitions: updateDataForPrisma.repetitions ?? 0,
+            dueDate: updateDataForPrisma.dueDate ?? new Date(),
           },
-        },
-      });
-
-      if (!existingStatus) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: `Status for flashcard ID ${flashcardId} not found for this user. Please ensure the flashcard exists and you have interacted with it.`, 
+          update: updateDataForPrisma,
         });
-      }
-
-      try {
-        const updatedStatus = await ctx.prisma.userFlashcardStatus.update({
-          where: {
-            id: existingStatus.id,
-          },
-          data: updateDataForPrisma, // Use the data with Date objects
-        });
-        return updatedStatus;
+        return upsertedStatus;
       } catch (error) {
-        console.error("Error updating user flashcard status:", error);
+        console.error("Error upserting user flashcard status:", error);
+        
+        // Re-throw TRPCError as-is, wrap other errors
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+        
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'Failed to update flashcard status.',
@@ -205,25 +225,24 @@ export const flashcardRouter = createTRPCRouter({
         nextCursor = nextItem!.id; // Use its ID as the next cursor
       }
 
-      // If user is logged in, fetch their statuses for these cards
-      // This is a simplified example; for production, you might want to do this more efficiently
-      let flashcardsWithStatus = flashcards as Array<typeof flashcards[0] & { userStatus?: any }>;
-      if (ctx.user) {
-        const flashcardIds = flashcards.map(fc => fc.id);
-        const statuses = await ctx.prisma.userFlashcardStatus.findMany({
-          where: {
-            userId: ctx.user.id,
-            flashcardId: { in: flashcardIds },
-            isDeleted: false, // Only include non-deleted statuses
-          },
-        });
-        
-        const statusMap = new Map(statuses.map(s => [s.flashcardId, s]));
-        flashcardsWithStatus = flashcards.map(fc => ({
-          ...fc,
-          userStatus: statusMap.get(fc.id),
-        }));
-      }
+      // Fetch user status for guest-user
+      const userId = "guest-user";
+      const flashcardIds = flashcards.map(fc => fc.id);
+      const statuses = await ctx.prisma.userFlashcardStatus.findMany({
+        where: {
+          userId: userId,
+          flashcardId: { in: flashcardIds },
+          isDeleted: false, // Only include non-deleted statuses
+        },
+      });
+      
+      const statusMap = new Map(statuses.map(s => [s.flashcardId, s]));
+      const flashcardsWithStatus = flashcards.map(fc => ({
+        ...fc,
+        tags: fc.tagsJson ? JSON.parse(fc.tagsJson) : [],
+        mediaUrls: fc.mediaUrlsJson ? JSON.parse(fc.mediaUrlsJson) : [],
+        userStatus: statusMap.get(fc.id),
+      }));
 
       return {
         items: flashcardsWithStatus,
@@ -247,7 +266,7 @@ export const flashcardRouter = createTRPCRouter({
       }
 
       let userStatus: any | undefined = undefined; // Define userStatus outside
-      if (ctx.user) {
+      if (false) { // ctx.user disabled
         // If user is authenticated, try to fetch their specific status for this card
         console.log(`[RouterLog] getById: Attempting to find UserFlashcardStatus for userId: ${ctx.user.id}, flashcardId: ${card.id}, isDeleted: false`);
         userStatus = await ctx.prisma.userFlashcardStatus.findUnique({
@@ -262,9 +281,9 @@ export const flashcardRouter = createTRPCRouter({
       return { ...card, userStatus: userStatus || undefined };
     }),
 
-  getDueFlashcardsForUser: protectedProcedure
+  getDueFlashcardsForUser: publicProcedure
     .query(async ({ ctx }) => {
-      const userId = ctx.user.id;
+      const userId = "guest-user";
       const now = new Date();
 
       const dueFlashcardStatuses = await ctx.prisma.userFlashcardStatus.findMany({
@@ -287,10 +306,10 @@ export const flashcardRouter = createTRPCRouter({
       return dueFlashcardStatuses;
     }),
 
-  updateContent: protectedProcedure
+  updateContent: publicProcedure
     .input(updateFlashcardContentInput)
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.user.id;
+      const userId = "guest-user";
       const { flashcardId, front, back, contentType, mediaUrls, tags, targetDeckId } = input;
 
       const updateData: {
@@ -431,10 +450,10 @@ export const flashcardRouter = createTRPCRouter({
       }
     }),
 
-  delete: protectedProcedure
+  delete: publicProcedure
     .input(z.object({ flashcardId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.user.id;
+      const userId = "guest-user";
       const { flashcardId } = input;
 
       const flashcard = await ctx.prisma.flashcard.findUnique({
@@ -445,7 +464,9 @@ export const flashcardRouter = createTRPCRouter({
       });
 
       if (!flashcard) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Flashcard not found.' });
+        // Card already deleted - return success to avoid blocking UI
+        console.log(`[Flashcard Delete] Card ${flashcardId} already deleted or doesn't exist`);
+        return { success: true, message: 'Flashcard already deleted.' };
       }
 
       // Case 1: User owns the deck this flashcard is in (it's their own card/copy)

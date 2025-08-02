@@ -53,10 +53,10 @@ export default function HomeScreen() {
   }, [activelyDownloadingDeckId]);
   
   // Get featured decks (first 3)
-  const featuredDecks = decks.slice(0, 3);
+  const featuredDecks = (decks || []).slice(0, 3);
   
   // Get recent decks (sort by updatedAt)
-  const recentDecks = [...decks]
+  const recentDecks = [...(decks || [])]
     .sort((a, b) => {
       const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
       const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
@@ -65,13 +65,13 @@ export default function HomeScreen() {
     .slice(0, 3);
   
   // Get due cards count
-  const totalDueCards = decks.reduce((total, deck) => {
+  const totalDueCards = (decks || []).reduce((total, deck) => {
     return total + getDueFlashcardsForDeck(deck.id).length;
   }, 0);
 
   useEffect(() => {
     if (activelyDownloadingDeckId && !loadingFlashcardsForDeckId) {
-      const deckJustLoaded = decks.find(d => d.id === activelyDownloadingDeckId);
+      const deckJustLoaded = (decks || []).find(d => d.id === activelyDownloadingDeckId);
       
       if (flashcardStoreError && useFlashcardStore.getState().error?.includes(activelyDownloadingDeckId)) {
         Alert.alert("Download Failed", `Could not download flashcards for ${deckJustLoaded?.name || 'deck'}. Please try again.`);
@@ -100,7 +100,7 @@ export default function HomeScreen() {
   }, [loadingFlashcardsForDeckId, decks, flashcardStoreError, activelyDownloadingDeckId, router, startStudySession]);
 
   const handleStudyPress = (deckId: string) => {
-    const deck = decks.find(d => d.id === deckId);
+    const deck = (decks || []).find(d => d.id === deckId);
     if (!deck) {
       console.warn(`[HomeScreen] Attempted to study deck ID ${deckId} not found in store.`);
       Alert.alert("Error", "Deck not found. It might have been deleted.");
@@ -132,7 +132,7 @@ export default function HomeScreen() {
     setRefreshing(false);
   }, []);
 
-  if (isLoadingFlashcardStore && decks.length === 0 && !refreshing && !activelyDownloadingDeckId) {
+  if (isLoadingFlashcardStore && (decks || []).length === 0 && !refreshing && !activelyDownloadingDeckId) {
     return (
       <SafeAreaView style={styles.container} edges={["top"]}>
         <View style={styles.centeredMessageContainer}>
@@ -291,7 +291,7 @@ export default function HomeScreen() {
                   <Text style={styles.recentDeckSubtitle}>{deck.cardCount || 0} cards</Text>
                   {(deck.tags && deck.tags.length > 0) && (
                     <View style={styles.recentDeckTagsContainer}>
-                      {deck.tags.slice(0, 2).map(tag => (
+                      {(deck.tags || []).slice(0, 2).map(tag => (
                         <View key={tag} style={styles.tagBadge}>
                           <Text style={styles.tagText}>{tag}</Text>
                         </View>

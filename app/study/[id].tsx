@@ -74,6 +74,7 @@ export default function StudySessionScreen() {
   const [imageScale, setImageScale] = useState(1);
   const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
   const [isImageManipulationActive, setIsImageManipulationActive] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
   
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
@@ -180,18 +181,27 @@ export default function StudySessionScreen() {
     if (sessionJustCompletedDeckId === id) {
       console.log('[StudySessionScreen] Deck ID effect: This deck was just completed. Setting isSessionFinished to true.');
       setIsSessionFinished(true);
+      // Trigger celebration
+      setTimeout(() => {
+        setShowCelebration(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }, 500);
     } else {
       console.log('[StudySessionScreen] Deck ID effect: New/different session or no session just completed. Setting isSessionFinished to false.');
       setIsSessionFinished(false);
-      // If the stored completed ID is for a *different* deck, clear it.
-      // If it was for *this* deck, it's already handled by setting isSessionFinished to true.
-      // If it was null, this does nothing.
-      if (sessionJustCompletedDeckId && sessionJustCompletedDeckId !== id) {
-        // Defer this store update to avoid updates during render
-        requestAnimationFrame(() => {
+      setShowCelebration(false);
+    }
+  }, [id, sessionJustCompletedDeckId]);
+
+  // Separate useEffect to handle clearing session completed state
+  useEffect(() => {
+    if (sessionJustCompletedDeckId && sessionJustCompletedDeckId !== id) {
+      // Defer this store update to avoid updates during render
+      const timeoutId = setTimeout(() => {
         clearSessionJustCompleted();
-        });
-      }
+      }, 0);
+      
+      return () => clearTimeout(timeoutId);
     }
   }, [id, sessionJustCompletedDeckId, clearSessionJustCompleted]);
   
@@ -271,6 +281,15 @@ export default function StudySessionScreen() {
     setIsRating(true);
     const cardIdToRate = currentCard.id; // Capture ID before potential optimistic changes
 
+    // Add haptic feedback based on rating
+    if (rating === 'good' || rating === 'easy') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } else if (rating === 'hard') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else { // 'again'
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    }
+
     // Initiate store action but don't await here for UI speed.
     // Handle promise for error logging/potential non-blocking UI feedback.
     rateCard(cardIdToRate, rating)
@@ -307,40 +326,23 @@ export default function StudySessionScreen() {
     // Reset UI states first
     setShowBack(false);
 
-    // Show confirmation dialog
-    Alert.alert(
-      "Delete Card",
-      "Are you sure you want to delete this card? This action cannot be undone.",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-          onPress: () => {
-            setIsDeleting(false);
-          },
-        },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteFlashcard(cardIdToDelete);
-              // Get next card after successful deletion
-              getNextCard();
-            } catch (error) {
-              console.error("Error in handleDeleteCard:", error);
-              Alert.alert(
-                "Error",
-                "Failed to delete card. Please try again.",
-                [{ text: "OK" }]
-              );
-            } finally {
-              setIsDeleting(false);
-            }
-          },
-        }
-      ]
-    );
+    // Delete immediately without confirmation
+    try {
+      await deleteFlashcard(cardIdToDelete);
+      // Get next card after successful deletion
+      getNextCard();
+      // Add haptic feedback for successful deletion
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (error) {
+      console.error("Error in handleDeleteCard:", error);
+      Alert.alert(
+        "Error",
+        "Failed to delete card. Please try again.",
+        [{ text: "OK" }]
+      );
+    } finally {
+      setIsDeleting(false);
+    }
   }, [currentCard, isPending, deleteFlashcard, getNextCard, setShowBack, setIsDeleting]);
   
   const handleToggleBookmark = useCallback(async () => {
@@ -746,6 +748,35 @@ export default function StudySessionScreen() {
           </View>
         </> 
       )}
+      
+      {/* Celebration Modal */}
+      {showCelebration && (
+        <View style={styles.celebrationOverlay}>
+          <Animated.View style={[styles.celebrationModal, {
+            transform: [{ scale: showCelebration ? 1 : 0 }]
+          }]}>
+            <Text style={styles.celebrationEmoji}>🎉</Text>
+            <Text style={styles.celebrationTitle}>Fantastic!</Text>
+            <Text style={styles.celebrationSubtitle}>
+              You've completed your study session!
+            </Text>
+            <Text style={styles.celebrationStats}>
+              {studyProgress?.cardsStudied || 0} cards studied
+            </Text>
+            <TouchableOpacity 
+              style={styles.celebrationButton}
+              onPress={() => {
+                setShowCelebration(false);
+                clearSessionJustCompleted();
+                endStudySession();
+                router.back();
+              }}
+            >
+              <Text style={styles.celebrationButtonText}>Awesome! 🚀</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -958,5 +989,75 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.5,
+  },
+  celebrationOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  celebrationModal: {
+    backgroundColor: colors.background,
+    borderRadius: 20,
+    padding: 30,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+    maxWidth: '80%',
+  },
+  celebrationEmoji: {
+    fontSize: 60,
+    marginBottom: 20,
+  },
+  celebrationTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: colors.primary,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  celebrationSubtitle: {
+    fontSize: 18,
+    color: colors.textDark,
+    marginBottom: 15,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  celebrationStats: {
+    fontSize: 16,
+    color: colors.textSecondary,
+    marginBottom: 25,
+    textAlign: 'center',
+  },
+  celebrationButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 30,
+    paddingVertical: 15,
+    borderRadius: 25,
+    shadowColor: colors.primary,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  celebrationButtonText: {
+    color: colors.background,
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 });

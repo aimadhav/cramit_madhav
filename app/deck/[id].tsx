@@ -237,7 +237,7 @@ export default function DeckDetailScreen() {
 
       const flashcards = getFlashcardsForDeck(deck.id);
       const dueCards = getDueFlashcardsForDeck(deck.id);
-      const displayedCards = showAll ? flashcards : flashcards.slice(0, 5);
+      const displayedCards = showAll ? flashcards : (flashcards || []).slice(0, 5);
 
       const handleStartStudy = () => {
         if (!deck || !isMountedRef.current) return;

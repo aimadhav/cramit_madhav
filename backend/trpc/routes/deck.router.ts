@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createTRPCRouter, publicProcedure, protectedProcedure } from '../create-context';
+import { createTRPCRouter, publicProcedure } from '../create-context';
 import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
@@ -33,7 +33,7 @@ export const deckRouter = createTRPCRouter({
         delete whereClause.AND;
       }
 
-      return ctx.prisma.deck.findMany({
+      const decks = await ctx.prisma.deck.findMany({
         take: limit + 1, 
         cursor: cursor ? { id: cursor } : undefined,
         where: whereClause,
@@ -46,9 +46,14 @@ export const deckRouter = createTRPCRouter({
           createdAt: 'desc',
         },
       });
+      
+      return decks.map(deck => ({
+        ...deck,
+        tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : [],
+      }));
     }),
 
-  listUserDecks: protectedProcedure
+  listUserDecks: publicProcedure
     .input(
       z.object({
         limit: z.number().min(1).max(100).nullish(),
@@ -58,9 +63,9 @@ export const deckRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const limit = input?.limit ?? 10;
       const { cursor } = input ?? {};
-      const userIdAuth = ctx.user.id; 
+      const userIdAuth = "guest-user"; 
 
-      return ctx.prisma.deck.findMany({
+      const decks = await ctx.prisma.deck.findMany({
         take: limit + 1,
         cursor: cursor ? { id: cursor } : undefined,
         where: {
@@ -75,9 +80,14 @@ export const deckRouter = createTRPCRouter({
           updatedAt: 'desc',
         },
       });
+      
+      return decks.map(deck => ({
+        ...deck,
+        tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : [],
+      }));
     }),
   
-  create: protectedProcedure
+  create: publicProcedure
     .input(
       z.object({
         name: z.string().min(1).max(100),
@@ -91,13 +101,25 @@ export const deckRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const userIdAuth = ctx.user.id; 
-      return ctx.prisma.deck.create({
+      const userIdAuth = "guest-user"; 
+      const { tags, ...restInput } = input;
+      const deck = await ctx.prisma.deck.create({
         data: {
-          ...input,
+          ...restInput,
+          tagsJson: tags ? JSON.stringify(tags) : "[]",
           userId: userIdAuth, 
         },
+        include: {
+          _count: {
+            select: { flashcards: true },
+          },
+        },
       });
+      
+      return {
+        ...deck,
+        tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : [],
+      };
     }),
 
   getById: publicProcedure
@@ -126,7 +148,7 @@ export const deckRouter = createTRPCRouter({
       return deck;
     }),
 
-  update: protectedProcedure
+  update: publicProcedure
     .input(
       z.object({
         id: z.string(),
@@ -142,7 +164,7 @@ export const deckRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, tags, ...otherData } = input;
-      const userIdAuth = ctx.user.id; 
+      const userIdAuth = "guest-user"; 
 
       const deck = await ctx.prisma.deck.findUnique({
         where: { id },
@@ -152,9 +174,10 @@ export const deckRouter = createTRPCRouter({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Deck not found' });
       }
 
-      if (deck.userId !== userIdAuth) { 
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only update your own decks' });
-      }
+      // Auth check disabled for now
+      // if (deck.userId !== userIdAuth) { 
+      //   throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only update your own decks' });
+      // }
 
       const dataToUpdate: Prisma.DeckUpdateInput = { ...otherData };
       if (tags !== undefined) {
@@ -167,10 +190,10 @@ export const deckRouter = createTRPCRouter({
       });
     }),
 
-  delete: protectedProcedure
+  delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const userIdAuth = ctx.user.id; 
+      const userIdAuth = "guest-user"; 
       const deck = await ctx.prisma.deck.findUnique({
         where: { id: input.id },
       });
@@ -179,9 +202,10 @@ export const deckRouter = createTRPCRouter({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Deck not found' });
       }
 
-      if (deck.userId !== userIdAuth) { 
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own decks' });
-      }
+      // Auth check disabled for now
+      // if (deck.userId !== userIdAuth) { 
+      //   throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own decks' });
+      // }
       
       await ctx.prisma.deck.delete({
         where: { id: input.id },
@@ -189,10 +213,10 @@ export const deckRouter = createTRPCRouter({
       return { success: true, message: 'Deck deleted successfully' };
     }),
 
-  studyPublicDeck: protectedProcedure
+  studyPublicDeck: publicProcedure
     .input(z.object({ deckId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.user.id;
+      const userId = "guest-user";
       const { deckId } = input;
 
       // 1. Find the public deck and include its flashcards

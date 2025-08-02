@@ -212,7 +212,7 @@ export default function DecksScreen() {
           <Text style={styles.deckTitle}>{item.name}</Text>
           <Text style={styles.deckSubtitle}>{item.cardCount} cards</Text>
           <View style={styles.tagsContainer}>
-            {item.tags.slice(0, 2).map(tag => (
+            {(item.tags || []).slice(0, 2).map(tag => (
               <View key={tag} style={styles.tagBadge}>
                 <Text style={styles.tagText}>{tag}</Text>
               </View>

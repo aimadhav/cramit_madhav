@@ -106,7 +106,8 @@ function AppNavigatorAndDataHandler() {
             ...deck, 
             createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date().toISOString(),
             updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date().toISOString(),
-            cardCount: deck._count?.flashcards ?? 0
+            cardCount: deck._count?.flashcards ?? 0,
+            tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : []
         }));
         
         // Use publicDecksResult directly, which is a dependency of this effect
@@ -115,7 +116,8 @@ function AppNavigatorAndDataHandler() {
             ...deck,
             createdAt: deck.createdAt ? new Date(deck.createdAt).toISOString() : new Date().toISOString(),
             updatedAt: deck.updatedAt ? new Date(deck.updatedAt).toISOString() : new Date().toISOString(),
-            cardCount: deck._count?.flashcards ?? 0
+            cardCount: deck._count?.flashcards ?? 0,
+            tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : []
         }));
 
         console.log("[AppNavigatorAndDataHandler] Processed user decks:", processedUserDecks.length);

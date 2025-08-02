@@ -16,12 +16,16 @@
     "test:ui": "cross-env NODE_ENV=test vitest --ui",
     "start-web": "expo start --web --tunnel",
     "start-web-dev": "DEBUG=expo* expo start --web --tunnel",
-    "coverage": "cross-env NODE_ENV=test vitest run --coverage"
+    "coverage": "cross-env NODE_ENV=test vitest run --coverage",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
     "@hono/trpc-server": "0.3.4",
-    "@prisma/client": "^6.8.2",
+    "@prisma/client": "^6.13.0",
     "@react-native-async-storage/async-storage": "2.1.2",
     "@react-native-community/netinfo": "^11.4.1",
     "@react-navigation/native": "^7.1.6",
@@ -56,6 +60,7 @@
     "katex": "^0.16.22",
     "lucide-react-native": "^0.511.0",
     "nativewind": "^4.1.23",
+    "prisma": "^6.13.0",
     "process": "^0.11.10",
     "react": "19.0.0",
     "react-dom": "19.0.0",
@@ -87,7 +92,7 @@
     "cross-env": "^7.0.3",
     "dotenv": "^16.5.0",
     "next": "^15.1.8",
-    "prisma": "^6.8.2",
+    "tsx": "^4.20.3",
     "typescript": "~5.8.3",
     "vite": "^6.3.5",
     "vitest": "^3.1.4"
