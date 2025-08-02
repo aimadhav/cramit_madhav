@@ -63,7 +63,7 @@ export default function StudySessionScreen() {
   const [showBack, setShowBack] = useState(false);
   const [studyTime, setStudyTime] = useState(0);
   const [sessionStartTime] = useState(Date.now());
-  const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | 'up' | null>(null);
+  const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | 'up' | 'down' | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRating, setIsRating] = useState(false);
   const [isBookmarking, setIsBookmarking] = useState(false);
@@ -386,13 +386,17 @@ export default function StudySessionScreen() {
         cardBorderColor.value = colors.success;
         runOnJS(setSwipeDirection)('right');
       } else if (translateX.value < -SWIPE_THRESHOLD) {
-        // Swiping left (hard)
-        cardBorderColor.value = colors.warning;
+        // Swiping left (good)
+        cardBorderColor.value = colors.primary;
         runOnJS(setSwipeDirection)('left');
       } else if (translateY.value < -SWIPE_THRESHOLD) {
-        // Swiping up (delete)
+        // Swiping up (again/failure)
         cardBorderColor.value = colors.error;
         runOnJS(setSwipeDirection)('up');
+      } else if (translateY.value > SWIPE_THRESHOLD) {
+        // Swiping down (delete)
+        cardBorderColor.value = colors.gray[600];
+        runOnJS(setSwipeDirection)('down');
       } else {
         cardBorderColor.value = colors.gray[200];
         runOnJS(setSwipeDirection)(null);
@@ -411,15 +415,22 @@ export default function StudySessionScreen() {
           }
         });
       } else if (translateX.value < -SWIPE_THRESHOLD) {
-        // Swipe left - Hard
+        // Swipe left - Good (normal correct)
         translateX.value = withTiming(-SCREEN_WIDTH * 1.5, swipeOffAnimationConfig, (finished) => {
           if (finished) {
-            runOnJS(handleRateCard)('hard');
+            runOnJS(handleRateCard)('good');
           }
         });
       } else if (translateY.value < -SWIPE_THRESHOLD && swipeDirection === 'up') {
-        // Swipe up - Delete (only if swipeDirection was 'up')
+        // Swipe up - Again (failure)
         translateY.value = withTiming(-SCREEN_HEIGHT * 1.5, swipeOffAnimationConfig, (finished) => {
+          if (finished) {
+            runOnJS(handleRateCard)('again');
+          }
+        });
+      } else if (translateY.value > SWIPE_THRESHOLD && swipeDirection === 'down') {
+        // Swipe down - Delete
+        translateY.value = withTiming(SCREEN_HEIGHT * 1.5, swipeOffAnimationConfig, (finished) => {
           if (finished) {
             runOnJS(handleDeleteCard)();
           }
@@ -738,17 +749,20 @@ export default function StudySessionScreen() {
           
           <View style={styles.swipeHintContainer}>
             {swipeDirection === 'left' && (
-              <Text style={[styles.swipeHint, styles.hardHint]}>Forgot</Text>
+              <Text style={[styles.swipeHint, styles.goodHint]}>Good</Text>
             )}
             {swipeDirection === 'right' && (
               <Text style={[styles.swipeHint, styles.easyHint]}>Easy</Text>
             )}
             {swipeDirection === 'up' && (
+              <Text style={[styles.swipeHint, styles.againHint]}>Again</Text>
+            )}
+            {swipeDirection === 'down' && (
               <Text style={[styles.swipeHint, styles.deleteHint]}>Delete</Text>
             )}
             {!swipeDirection && (
               <Text style={[styles.swipeInstructions, { textAlign: 'center' }]}>
-                Swipe left for Forgot, right for Easy, up to Delete
+                ← Good • → Easy • ↑ Again • ↓ Delete
               </Text>
             )}
           </View>
@@ -948,14 +962,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
   },
-  hardHint: {
-    color: colors.warning,
+  goodHint: {
+    color: colors.primary,
   },
   easyHint: {
     color: colors.success,
   },
-  deleteHint: {
+  againHint: {
     color: colors.error,
+  },
+  deleteHint: {
+    color: colors.gray[600],
   },
   swipeInstructions: {
     fontSize: 14,

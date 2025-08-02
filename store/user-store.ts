@@ -33,6 +33,7 @@ interface UserState {
   logout: () => Promise<void>;
   updateUser: (userData: Partial<AppUser>) => void;
   updateStudyStats: (studyTime: number, cardsStudied: number) => void;
+  resetUserProgress: () => void;
   checkAuthStatus: () => Promise<void>;
   clearError: () => void;
   shouldRefreshToken: () => boolean;
@@ -213,6 +214,21 @@ export const useUserStore = create<UserState>()(
             updatedAt: now,
           },
         }));
+      },
+      resetUserProgress: () => {
+        set(state => ({
+          user: state.user ? {
+            ...state.user,
+            studyStats: {
+              totalCardsStudied: 0,
+              totalTimeStudied: 0,
+              streakDays: 0,
+              lastStudyDate: null,
+            },
+            updatedAt: Date.now(),
+          } : state.user,
+        }));
+        console.log("[UserStore] User progress has been reset.");
       },
       clearError: () => {
         set({ error: null });
