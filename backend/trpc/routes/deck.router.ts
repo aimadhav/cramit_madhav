@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createTRPCRouter, publicProcedure, protectedProcedure } from '../create-context';
+import { createTRPCRouter, publicProcedure } from '../create-context';
 import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
@@ -17,22 +17,43 @@ export const deckRouter = createTRPCRouter({
       const limit = input?.limit ?? 10;
       const { cursor, tags, subject } = input ?? {};
       
-      return ctx.prisma.deck.findMany({
+      const whereClause: Prisma.DeckWhereInput = {
+        isPublic: true, // Ensure only public decks are listed
+        AND: [],
+      };
+
+      if (tags && tags.length > 0) {
+        (whereClause.AND as Prisma.DeckWhereInput[]).push({ tags: { hasSome: tags } });
+      }
+      if (subject) {
+        (whereClause.AND as Prisma.DeckWhereInput[]).push({ subject: { contains: subject, mode: 'insensitive' } });
+      }
+      // If AND array is empty, it can be omitted, Prisma handles it.
+      if ((whereClause.AND as Prisma.DeckWhereInput[]).length === 0) {
+        delete whereClause.AND;
+      }
+
+      const decks = await ctx.prisma.deck.findMany({
         take: limit + 1, 
         cursor: cursor ? { id: cursor } : undefined,
-        where: {
-          AND: [
-            tags ? { tags: { hasSome: tags } } : {},
-            subject ? { subject: { contains: subject, mode: 'insensitive' } } : {},
-          ],
+        where: whereClause,
+        include: {
+          _count: {
+            select: { flashcards: true },
+          },
         },
         orderBy: {
           createdAt: 'desc',
         },
       });
+      
+      return decks.map(deck => ({
+        ...deck,
+        tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : [],
+      }));
     }),
 
-  listUserDecks: protectedProcedure
+  listUserDecks: publicProcedure
     .input(
       z.object({
         limit: z.number().min(1).max(100).nullish(),
@@ -42,21 +63,31 @@ export const deckRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const limit = input?.limit ?? 10;
       const { cursor } = input ?? {};
-      const userIdAuth = ctx.user.id; 
+      const userIdAuth = "guest-user"; 
 
-      return ctx.prisma.deck.findMany({
+      const decks = await ctx.prisma.deck.findMany({
         take: limit + 1,
         cursor: cursor ? { id: cursor } : undefined,
         where: {
           userId: userIdAuth, 
         },
+        include: {
+          _count: {
+            select: { flashcards: true },
+          },
+        },
         orderBy: {
           updatedAt: 'desc',
         },
       });
+      
+      return decks.map(deck => ({
+        ...deck,
+        tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : [],
+      }));
     }),
   
-  create: protectedProcedure
+  create: publicProcedure
     .input(
       z.object({
         name: z.string().min(1).max(100),
@@ -70,13 +101,25 @@ export const deckRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const userIdAuth = ctx.user.id; 
-      return ctx.prisma.deck.create({
+      const userIdAuth = "guest-user"; 
+      const { tags, ...restInput } = input;
+      const deck = await ctx.prisma.deck.create({
         data: {
-          ...input,
+          ...restInput,
+          tagsJson: tags ? JSON.stringify(tags) : "[]",
           userId: userIdAuth, 
         },
+        include: {
+          _count: {
+            select: { flashcards: true },
+          },
+        },
       });
+      
+      return {
+        ...deck,
+        tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : [],
+      };
     }),
 
   getById: publicProcedure
@@ -105,7 +148,7 @@ export const deckRouter = createTRPCRouter({
       return deck;
     }),
 
-  update: protectedProcedure
+  update: publicProcedure
     .input(
       z.object({
         id: z.string(),
@@ -121,7 +164,7 @@ export const deckRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, tags, ...otherData } = input;
-      const userIdAuth = ctx.user.id; 
+      const userIdAuth = "guest-user"; 
 
       const deck = await ctx.prisma.deck.findUnique({
         where: { id },
@@ -131,9 +174,10 @@ export const deckRouter = createTRPCRouter({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Deck not found' });
       }
 
-      if (deck.userId !== userIdAuth) { 
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only update your own decks' });
-      }
+      // Auth check disabled for now
+      // if (deck.userId !== userIdAuth) { 
+      //   throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only update your own decks' });
+      // }
 
       const dataToUpdate: Prisma.DeckUpdateInput = { ...otherData };
       if (tags !== undefined) {
@@ -146,10 +190,10 @@ export const deckRouter = createTRPCRouter({
       });
     }),
 
-  delete: protectedProcedure
+  delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const userIdAuth = ctx.user.id; 
+      const userIdAuth = "guest-user"; 
       const deck = await ctx.prisma.deck.findUnique({
         where: { id: input.id },
       });
@@ -158,13 +202,93 @@ export const deckRouter = createTRPCRouter({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Deck not found' });
       }
 
-      if (deck.userId !== userIdAuth) { 
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own decks' });
-      }
+      // Auth check disabled for now
+      // if (deck.userId !== userIdAuth) { 
+      //   throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own decks' });
+      // }
       
       await ctx.prisma.deck.delete({
         where: { id: input.id },
       });
       return { success: true, message: 'Deck deleted successfully' };
+    }),
+
+  studyPublicDeck: publicProcedure
+    .input(z.object({ deckId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = "guest-user";
+      const { deckId } = input;
+
+      // 1. Find the public deck and include its flashcards
+      const publicDeck = await ctx.prisma.deck.findFirst({
+        where: {
+          id: deckId,
+          isPublic: true,
+        },
+        include: {
+          flashcards: { // Select only flashcard IDs to avoid overfetching
+            select: { id: true }
+          },
+        },
+      });
+
+      if (!publicDeck) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `Public deck with ID ${deckId} not found.`,
+        });
+      }
+
+      if (publicDeck.flashcards.length === 0) {
+        // Optional: Handle case where public deck has no flashcards
+        // Could return a specific message or just proceed (will result in 0 statuses created)
+        // For now, we just proceed.
+      }
+
+      // 2. Create UserFlashcardStatus entries for each flashcard in the public deck for the current user
+      //    Use upsert to avoid issues if the user already has a status for some of these cards
+      //    (e.g., if they are re-adding a deck or had partial progress).
+      //    The `create` part will use default SRS values.
+      //    The `update` part here is empty, meaning if they already have a status, we don't change it.
+      //    You could modify `update` to reset progress if desired when re-adding.
+      try {
+        await ctx.prisma.$transaction(
+          publicDeck.flashcards.map((flashcard) =>
+            ctx.prisma.userFlashcardStatus.upsert({
+              where: {
+                userId_flashcardId: {
+                  userId: userId,
+                  flashcardId: flashcard.id,
+                },
+              },
+              create: {
+                userId: userId,
+                flashcardId: flashcard.id,
+                // SRS fields like interval, dueDate, etc., will get their default values from the schema
+              },
+              update: { 
+                // If you want to reset progress when re-adding, you could set:
+                // isDeleted: false, // Un-delete if it was soft-deleted
+                // dueDate: new Date(), // Reset due date
+                // interval: 1, // Reset interval
+                // easeFactor: 2.5, // Reset ease factor
+                // repetitions: 0, // Reset repetitions
+                // isLearned: false, // Reset learned status
+                // lastReviewed: null // Reset last reviewed
+                // For now, we leave update empty to preserve existing progress if any.
+                isDeleted: false, // Ensure it's not marked as deleted if user is re-adding
+              },
+            })
+          )
+        );
+        return { success: true, message: `Deck "${publicDeck.name}" added to your study list.` };
+      } catch (error) {
+        console.error("Error adding public deck to user study list:", error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Could not add deck to your study list. Please try again.',
+          cause: error,
+        });
+      }
     }),
 });

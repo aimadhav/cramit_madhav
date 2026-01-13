@@ -1,78 +1,63 @@
 import { FetchCreateContextFnOptions } from "@trpc/server/adapters/fetch";
 import { initTRPC, TRPCError } from "@trpc/server";
-import superjson from "superjson";
-import { PrismaClient } from "@prisma/client";
-import { createClient, SupabaseClient, User as SupabaseUser } from "@supabase/supabase-js";
+import type { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from '../prisma/client';
+import superjson from 'superjson';
 
-// Initialize Prisma Client (global instance)
-const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
-});
-
-// Initialize Supabase Client options (from .env)
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error("Supabase URL or Anon Key is not defined in .env");
-}
-
-// Helper function to get user from JWT
-const getUserFromHeader = async (
-  req: FetchCreateContextFnOptions["req"],
-  supabase: SupabaseClient
-): Promise<SupabaseUser | null> => {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader) {
-    return null;
-  }
-  const token = authHeader.split("Bearer ")[1];
-  if (!token) {
-    return null;
-  }
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error) {
-    // console.error("Error getting user from token:", error.message); // Optional: log error
-    return null;
-  }
-  return user;
-};
-
-// Define the Context type explicitly
+// Define the Context type with optional user auth
 export type Context = {
   req: FetchCreateContextFnOptions["req"];
   prisma: PrismaClient;
-  supabase: SupabaseClient;
-  user: SupabaseUser | null;
   timestamp: number;
+  user?: {
+    id: string;
+    email: string;
+    name: string | null;
+    isPremium: boolean;
+    isAdmin: boolean;
+  };
 };
 
-// Context creation function
+// Context creation function with basic auth support
 export const createContext = async (opts: FetchCreateContextFnOptions): Promise<Context> => {
-  // Create a new Supabase client for each request
-  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
-
-  const user = await getUserFromHeader(opts.req, supabase);
+  const currentPrismaClient = getPrismaClient();
   const timestamp = Date.now();
 
-  // Note: __manuallyParsedInput is added by the wrapper in [trpc]+api.ts
-  // So the object returned here doesn't strictly need it, but the type Context does.
-  return { req: opts.req, prisma, supabase, user, timestamp };
+  // Simple auth: check for Authorization header or use guest user
+  const authHeader = opts.req.headers.get('authorization');
+  let user = undefined;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    // For now, any valid token gets the guest user
+    // In production, this would validate the JWT and fetch the actual user
+    const token = authHeader.substring(7);
+    if (token) {
+      try {
+        const guestUser = await currentPrismaClient.user.findUnique({
+          where: { id: "guest-user" }
+        });
+        if (guestUser) {
+          user = {
+            id: guestUser.id,
+            email: guestUser.email,
+            name: guestUser.name,
+            isPremium: guestUser.isPremium,
+            isAdmin: guestUser.isAdmin,
+          };
+        }
+      } catch (error) {
+        console.log("Error fetching user:", error);
+      }
+    }
+  }
+
+  return { req: opts.req, prisma: currentPrismaClient, timestamp, user };
 };
 
 // Initialize tRPC
 // The context type is now explicitly defined for initTRPC
 const t = initTRPC.context<Context>().create({
-  // transformer: superjson, // Temporarily commented out for debugging.
-  // Enabling superjson seems to cause issues with POST request body parsing
-  // in conjunction with fetchRequestHandler in Expo API Routes, leading to
-  // Zod errors (expected: "object", received: "undefined").
+  // transformer: superjson, // Commented out superjson transformer
   errorFormatter({ shape, error }) {
     return {
       ...shape,
@@ -90,21 +75,18 @@ const t = initTRPC.context<Context>().create({
 export const createTRPCRouter = t.router;
 export const publicProcedure = t.procedure;
 
-// Middleware for protected routes
-const isAuthenticated = t.middleware(async ({ ctx, next }) => {
+// Protected procedure that requires authentication
+export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
   if (!ctx.user) {
     throw new TRPCError({
       code: "UNAUTHORIZED",
-      message: "Not authenticated",
+      message: "Authentication required",
     });
   }
   return next({
     ctx: {
-      // Pass down context, ensuring `user` is typed as non-null for protected procedures
       ...ctx,
-      user: ctx.user, // TypeScript now knows user is not null here
+      user: ctx.user, // now we know user is defined
     },
   });
 });
-
-export const protectedProcedure = t.procedure.use(isAuthenticated);

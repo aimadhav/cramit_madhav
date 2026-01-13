@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store'; 
+import { Platform } from 'react-native';
 
 export interface AppUser {
   id: string;
@@ -23,16 +24,19 @@ export interface AppUser {
 
 interface UserState {
   user: AppUser | null;
-  sessionToken: string | null; 
-  isLoading: boolean; 
+  sessionToken: string | null;
+  tokenExpiry: number | null;
+  isLoading: boolean;
   error: string | null;
 
-  setSession: (userData: AppUser, token: string) => void; 
-  logout: () => Promise<void>; 
+  setSession: (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => void;
+  logout: () => Promise<void>;
   updateUser: (userData: Partial<AppUser>) => void;
   updateStudyStats: (studyTime: number, cardsStudied: number) => void;
-  checkAuthStatus: () => Promise<void>; 
+  resetUserProgress: () => void;
+  checkAuthStatus: () => Promise<void>;
   clearError: () => void;
+  shouldRefreshToken: () => boolean;
 }
 
 const defaultUserInitialState: AppUser = {
@@ -52,24 +56,55 @@ const defaultUserInitialState: AppUser = {
   ownedDecks: [],
 };
 
-const TOKEN_STORAGE_KEY = 'sessionToken';
+export const TOKEN_STORAGE_KEY = 'sessionToken';
+export const REFRESH_TOKEN_STORAGE_KEY = 'sessionRefreshToken';
 
 export const useUserStore = create<UserState>()(
   persist(
     (set, get) => ({
       user: defaultUserInitialState,
-      sessionToken: null, 
+      sessionToken: null,
+      tokenExpiry: null,
       isLoading: false,
       error: null,
 
-      setSession: (userData, token) => {
-        set({ 
-          user: { ...userData, isLoggedIn: true }, 
-          sessionToken: token, 
-          isLoading: false, 
-          error: null 
+      setSession: async (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => {
+        set({
+          user: { ...userData, isLoggedIn: true },
+          sessionToken: accessToken,
+          tokenExpiry: expiresAt || null,
+          isLoading: false,
+          error: null
         });
-        SecureStore.setItemAsync(TOKEN_STORAGE_KEY, token); 
+        if (Platform.OS === 'web') {
+          localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+          if (expiresAt) {
+            localStorage.setItem('tokenExpiry', expiresAt.toString());
+          }
+          if (refreshToken) {
+            localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+          } else {
+            localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+          }
+        } else {
+          await SecureStore.setItemAsync(TOKEN_STORAGE_KEY, accessToken);
+          if (expiresAt) {
+            await SecureStore.setItemAsync('tokenExpiry', expiresAt.toString());
+          }
+          if (refreshToken) {
+            await SecureStore.setItemAsync(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+          } else {
+            await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          }
+        }
+      },
+
+      shouldRefreshToken: () => {
+        const state = get();
+        if (!state.tokenExpiry || !state.sessionToken) return false;
+        
+        const FIVE_MINUTES = 5 * 60 * 1000;
+        return Date.now() + FIVE_MINUTES >= state.tokenExpiry;
       },
 
       logout: async () => {
@@ -79,28 +114,58 @@ export const useUserStore = create<UserState>()(
           isLoading: false, 
           error: null 
         });
+        if (Platform.OS === 'web') {
+          localStorage.removeItem(TOKEN_STORAGE_KEY);
+          localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+        } else {
         await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+          await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+        }
       },
       
       checkAuthStatus: async () => {
         set({ isLoading: true });
         try {
-          const token = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
-          if (token) {
+          let accessToken: string | null = null;
+          let refreshToken: string | null = null;
+
+          if (Platform.OS === 'web') {
+            accessToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+            refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+          } else {
+            accessToken = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+            refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          }
+
+          if (accessToken) {
             const persistedUser = get().user; 
             set({ 
-              sessionToken: token, 
+              sessionToken: accessToken, 
               user: persistedUser && persistedUser.id !== 'guest-user' && persistedUser.isLoggedIn 
                     ? { ...persistedUser, isLoggedIn: true } 
-                    : defaultUserInitialState, 
+                    : { ...defaultUserInitialState, isLoggedIn: true }, 
               isLoading: false 
             });
           } else {
             set({ user: defaultUserInitialState, sessionToken: null, isLoading: false });
+            if (Platform.OS === 'web') {
+              localStorage.removeItem(TOKEN_STORAGE_KEY);
+              localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+            } else {
+              await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+              await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+            }
           }
         } catch (e) {
           console.error("Failed to check auth status", e);
           set({ user: defaultUserInitialState, sessionToken: null, isLoading: false, error: 'Auth check failed' });
+          if (Platform.OS === 'web') {
+            localStorage.removeItem(TOKEN_STORAGE_KEY);
+            localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+          } else {
+            await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+            await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          }
         }
       },
 
@@ -149,6 +214,21 @@ export const useUserStore = create<UserState>()(
             updatedAt: now,
           },
         }));
+      },
+      resetUserProgress: () => {
+        set(state => ({
+          user: state.user ? {
+            ...state.user,
+            studyStats: {
+              totalCardsStudied: 0,
+              totalTimeStudied: 0,
+              streakDays: 0,
+              lastStudyDate: null,
+            },
+            updatedAt: Date.now(),
+          } : state.user,
+        }));
+        console.log("[UserStore] User progress has been reset.");
       },
       clearError: () => {
         set({ error: null });

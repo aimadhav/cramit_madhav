@@ -12,11 +12,13 @@ import {
   ChevronRight,
   Shield,
   Trash2,
-  Server
+  Server,
+  RotateCcw
 } from "lucide-react-native";
 
 import colors from "@/constants/colors";
 import { useUserStore } from "@/store/user-store";
+import { useFlashcardStore } from "@/store/flashcard-store";
 import BackendStatus from "@/components/BackendStatus";
 
 export default function SettingsScreen() {
@@ -24,6 +26,8 @@ export default function SettingsScreen() {
   const user = useUserStore(state => state.user);
   const logout = useUserStore(state => state.logout);
   const updateUser = useUserStore(state => state.updateUser);
+  const resetUserProgress = useUserStore(state => state.resetUserProgress);
+  const resetAllProgress = useFlashcardStore(state => state.resetAllProgress);
   
   const [darkMode, setDarkMode] = React.useState(false);
   const [notifications, setNotifications] = React.useState(true);
@@ -49,6 +53,35 @@ export default function SettingsScreen() {
     );
   };
   
+  const handleResetProgress = () => {
+    Alert.alert(
+      "Reset Progress",
+      "Are you sure you want to reset all your learning progress? This will:\n\n• Reset all flashcard intervals and repetitions\n• Clear your study stats and streaks\n• Remove all spaced repetition data\n\nThis action cannot be undone.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Reset Progress",
+          onPress: () => {
+            // Reset flashcard progress (intervals, repetitions, etc.)
+            resetAllProgress();
+            // Reset user study stats (total cards studied, streaks, etc.)
+            resetUserProgress();
+            
+            Alert.alert(
+              "Progress Reset",
+              "Your learning progress has been successfully reset. You can start fresh with all your flashcards!",
+              [{ text: "OK" }]
+            );
+          },
+          style: "destructive"
+        }
+      ]
+    );
+  };
+
   const handleDeleteAccount = () => {
     Alert.alert(
       "Delete Account",
@@ -207,6 +240,16 @@ export default function SettingsScreen() {
           
           <TouchableOpacity 
             style={styles.settingItem}
+            onPress={handleResetProgress}
+          >
+            <View style={[styles.settingIconContainer, styles.resetIcon]}>
+              <RotateCcw size={20} color={colors.warning} />
+            </View>
+            <Text style={[styles.settingText, styles.resetText]}>Reset Progress</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.settingItem}
             onPress={handleLogout}
           >
             <View style={[styles.settingIconContainer, styles.logoutIcon]}>
@@ -321,6 +364,12 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     color: colors.textDark,
+  },
+  resetIcon: {
+    backgroundColor: colors.gray[200],
+  },
+  resetText: {
+    color: colors.warning,
   },
   logoutIcon: {
     backgroundColor: colors.gray[200],

@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Image } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { X, Plus, Tag, Image as ImageIcon, FileText, ArrowLeft } from "lucide-react-native";
+import { X, Plus, Tag, ImageIcon, Save, ArrowLeft } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Platform } from "react-native";
 
@@ -10,23 +10,15 @@ import colors from "@/constants/colors";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { ContentType } from "@/types";
 
-export default function AddCardScreen() {
-  const { id: routeDeckId } = useLocalSearchParams<{ id: string }>();
+export default function EditCardScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   
-  const decks = useFlashcardStore(state => state.decks);
-  const tempIdToRealIdMap = useFlashcardStore(state => state.tempIdToRealIdMap);
-  const addFlashcard = useFlashcardStore(state => state.addFlashcard);
+  const flashcards = useFlashcardStore(state => state.flashcards);
+  const updateFlashcard = useFlashcardStore(state => state.updateFlashcard);
+  const pendingOperations = useFlashcardStore(state => state.pendingOperations);
   
-  let deck = decks.find(d => d.id === routeDeckId);
-
-  if (!deck && routeDeckId && routeDeckId.startsWith('deck-temp-')) {
-    const realId = tempIdToRealIdMap && tempIdToRealIdMap[routeDeckId];
-    if (realId) {
-      console.log(`[AddCardScreen] Deck not found with tempId ${routeDeckId}, but realId ${realId} found in map. Attempting to find with realId.`);
-      deck = decks.find(d => d.id === realId);
-    }
-  }
+  const card = flashcards.find(c => c.id === id);
   
   const [front, setFront] = useState("");
   const [back, setBack] = useState("");
@@ -35,11 +27,32 @@ export default function AddCardScreen() {
   const [contentType, setContentType] = useState<ContentType>("text");
   const [frontMediaUrl, setFrontMediaUrl] = useState<string | null>(null);
   const [backMediaUrl, setBackMediaUrl] = useState<string | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
   
-  if (!deck) {
+  // Check if there are any pending operations for this card
+  const isPending = Object.entries(pendingOperations).some(([key, op]) => {
+    if (op.type === 'update' && key === id) return true;
+    return false;
+  });
+
+  useEffect(() => {
+    if (card) {
+      setFront(card.front);
+      setBack(card.back);
+      setTags(card.tags || []);
+      setContentType(card.contentType || "text");
+      // Handle existing media URLs - assume first image is front, second is back
+      if (card.mediaUrls && card.mediaUrls.length > 0) {
+        setFrontMediaUrl(card.mediaUrls[0] || null);
+        setBackMediaUrl(card.mediaUrls[1] || null);
+      }
+    }
+  }, [card]);
+  
+  if (!card) {
     return (
       <View style={styles.notFoundContainer}>
-        <Text style={styles.notFoundText}>Deck not found</Text>
+        <Text style={styles.notFoundText}>Card not found</Text>
         <TouchableOpacity 
           style={styles.notFoundBackButton}
           onPress={() => router.back()}
@@ -62,7 +75,7 @@ export default function AddCardScreen() {
   };
   
   const handlePickImage = async (side: 'front' | 'back') => {
-    console.log(`[AddCard] handlePickImage called for ${side}, Platform: ${Platform.OS}`);
+    console.log(`[EditCard] handlePickImage called for ${side}, Platform: ${Platform.OS}`);
     
     if (Platform.OS === 'web') {
       Alert.alert("Not available", "This feature is not available on web");
@@ -72,27 +85,25 @@ export default function AddCardScreen() {
     try {
       // Request permissions first
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      console.log('[AddCard] Permission result:', permissionResult);
+      console.log('[EditCard] Permission result:', permissionResult);
       
       if (permissionResult.granted === false) {
         Alert.alert("Permission denied", "You've refused to allow this app to access your photos!");
         return;
       }
 
-      console.log('[AddCard] Launching image picker...');
-      console.log('[AddCard] Available ImagePicker options:', Object.keys(ImagePicker));
-      
+      console.log('[EditCard] Launching image picker...');
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions?.Images || 'Images',
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
       });
       
-      console.log('[AddCard] Image picker result:', result);
+      console.log('[EditCard] Image picker result:', result);
       
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        console.log(`[AddCard] Setting ${side} image:`, result.assets[0].uri);
+        console.log(`[EditCard] Setting ${side} image:`, result.assets[0].uri);
         if (side === 'front') {
           setFrontMediaUrl(result.assets[0].uri);
         } else {
@@ -101,12 +112,12 @@ export default function AddCardScreen() {
         setContentType("mixed");
       }
     } catch (error) {
-      console.error('[AddCard] Error picking image:', error);
+      console.error('[EditCard] Error picking image:', error);
       Alert.alert("Error", "Failed to pick image. Please try again.");
     }
   };
   
-  const handleAddCard = async () => {
+  const handleUpdateCard = async () => {
     if (!front.trim()) {
       Alert.alert("Error", "Please enter front side content");
       return;
@@ -122,43 +133,33 @@ export default function AddCardScreen() {
     if (backMediaUrl) mediaUrls.push(backMediaUrl);
     
     try {
-      const newCardIdOrTempId = await addFlashcard({
+      setIsUpdating(true);
+      await updateFlashcard(id, {
         front: front.trim(),
         back: back.trim(),
         contentType,
-        tags: tags.length > 0 ? tags : ((deck.tags || []).slice(0, 1) || []),
-        deckId: deck.id,
+        tags: tags.length > 0 ? tags : card.tags,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined
       });
       
-      console.log(`[AddCardScreen] addFlashcard call completed. Returned ID/TempID: ${newCardIdOrTempId}`);
-
       Alert.alert(
         "Success",
-        "Card added successfully!",
+        "Card updated successfully!",
         [
           {
-            text: "Add Another",
-            onPress: () => {
-              setFront("");
-              setBack("");
-              setFrontMediaUrl(null);
-              setBackMediaUrl(null);
-              setContentType("text");
-            }
-          },
-          {
-            text: "Done",
+            text: "OK",
             onPress: () => router.back()
           }
         ]
       );
     } catch (error: any) {
-      console.error("[AddCardScreen] Error adding flashcard:", error);
+      console.error("[EditCardScreen] Error updating flashcard:", error);
       Alert.alert(
-        "Error Adding Card",
-        error.message || "An unexpected error occurred while adding the card. Please try again."
+        "Error Updating Card",
+        error.message || "An unexpected error occurred while updating the card. Please try again."
       );
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -166,7 +167,7 @@ export default function AddCardScreen() {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Stack.Screen 
         options={{
-          title: "Add Card",
+          title: "Edit Card",
           headerShown: false,
         }} 
       />
@@ -174,18 +175,20 @@ export default function AddCardScreen() {
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.backButton}
-          onPress={() => router.back()}
+          onPress={() => !isUpdating && router.back()}
+          disabled={isUpdating}
         >
-          <ArrowLeft size={24} color={colors.textDark} />
+          <ArrowLeft size={24} color={isUpdating ? colors.gray[400] : colors.textDark} />
         </TouchableOpacity>
         
-        <Text style={styles.headerTitle}>Add Card</Text>
+        <Text style={styles.headerTitle}>Edit Card</Text>
         
         <TouchableOpacity 
           style={styles.closeButton}
-          onPress={() => router.back()}
+          onPress={() => !isUpdating && router.back()}
+          disabled={isUpdating}
         >
-          <X size={24} color={colors.textDark} />
+          <X size={24} color={isUpdating ? colors.gray[400] : colors.textDark} />
         </TouchableOpacity>
       </View>
       
@@ -193,10 +196,6 @@ export default function AddCardScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.deckInfo}>
-          <Text style={styles.deckName}>Deck: {deck.name}</Text>
-        </View>
-        
         <View style={styles.formGroup}>
           <Text style={styles.label}>Front Side</Text>
           <TextInput
@@ -207,6 +206,7 @@ export default function AddCardScreen() {
             multiline
             numberOfLines={4}
             placeholderTextColor={colors.gray[400]}
+            editable={!isUpdating && !isPending}
           />
           <Text style={styles.helperText}>
             Tip: You can use LaTeX by wrapping it in $ symbols, e.g. $E = mc^2$
@@ -217,10 +217,8 @@ export default function AddCardScreen() {
             <Text style={styles.imageSectionLabel}>Front Image (Optional)</Text>
             <TouchableOpacity 
               style={styles.imagePickerButton}
-              onPress={() => {
-                console.log('[AddCard] Button pressed for front image');
-                handlePickImage('front');
-              }}
+              onPress={() => handlePickImage('front')}
+              disabled={isUpdating || isPending}
             >
               {frontMediaUrl ? (
                 <Image 
@@ -238,6 +236,7 @@ export default function AddCardScreen() {
               <TouchableOpacity 
                 style={styles.removeImageButton}
                 onPress={() => setFrontMediaUrl(null)}
+                disabled={isUpdating || isPending}
               >
                 <Text style={styles.removeImageText}>Remove Image</Text>
               </TouchableOpacity>
@@ -255,6 +254,7 @@ export default function AddCardScreen() {
             multiline
             numberOfLines={4}
             placeholderTextColor={colors.gray[400]}
+            editable={!isUpdating && !isPending}
           />
           
           {/* Back Image Section */}
@@ -262,10 +262,8 @@ export default function AddCardScreen() {
             <Text style={styles.imageSectionLabel}>Back Image (Optional)</Text>
             <TouchableOpacity 
               style={styles.imagePickerButton}
-              onPress={() => {
-                console.log('[AddCard] Button pressed for back image');
-                handlePickImage('back');
-              }}
+              onPress={() => handlePickImage('back')}
+              disabled={isUpdating || isPending}
             >
               {backMediaUrl ? (
                 <Image 
@@ -283,6 +281,7 @@ export default function AddCardScreen() {
               <TouchableOpacity 
                 style={styles.removeImageButton}
                 onPress={() => setBackMediaUrl(null)}
+                disabled={isUpdating || isPending}
               >
                 <Text style={styles.removeImageText}>Remove Image</Text>
               </TouchableOpacity>
@@ -299,8 +298,8 @@ export default function AddCardScreen() {
                 contentType === "text" && styles.activeContentTypeButton
               ]}
               onPress={() => setContentType("text")}
+              disabled={isUpdating || isPending}
             >
-              <FileText size={20} color={contentType === "text" ? "white" : colors.textDark} />
               <Text style={[
                 styles.contentTypeText,
                 contentType === "text" && styles.activeContentTypeText
@@ -313,8 +312,8 @@ export default function AddCardScreen() {
                 contentType === "mixed" && styles.activeContentTypeButton
               ]}
               onPress={() => setContentType("mixed")}
+              disabled={isUpdating || isPending}
             >
-              <FileText size={20} color={contentType === "mixed" ? "white" : colors.textDark} />
               <Text style={[
                 styles.contentTypeText,
                 contentType === "mixed" && styles.activeContentTypeText
@@ -327,26 +326,12 @@ export default function AddCardScreen() {
                 contentType === "latex" && styles.activeContentTypeButton
               ]}
               onPress={() => setContentType("latex")}
+              disabled={isUpdating || isPending}
             >
-              <FileText size={20} color={contentType === "latex" ? "white" : colors.textDark} />
               <Text style={[
                 styles.contentTypeText,
                 contentType === "latex" && styles.activeContentTypeText
               ]}>LaTeX</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[
-                styles.contentTypeButton,
-                contentType === "image" && styles.activeContentTypeButton
-              ]}
-              onPress={() => setContentType("image")}
-            >
-              <ImageIcon size={20} color={contentType === "image" ? "white" : colors.textDark} />
-              <Text style={[
-                styles.contentTypeText,
-                contentType === "image" && styles.activeContentTypeText
-              ]}>Image</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -367,12 +352,14 @@ export default function AddCardScreen() {
               onChangeText={setCurrentTag}
               onSubmitEditing={handleAddTag}
               placeholderTextColor={colors.gray[400]}
+              editable={!isUpdating && !isPending}
             />
             <TouchableOpacity 
               style={styles.addTagButton}
               onPress={handleAddTag}
+              disabled={isUpdating || isPending}
             >
-              <Plus size={20} color={colors.primary} />
+              <Plus size={20} color={isUpdating || isPending ? colors.gray[300] : colors.primary} />
             </TouchableOpacity>
           </View>
           
@@ -383,8 +370,9 @@ export default function AddCardScreen() {
                 <TouchableOpacity 
                   style={styles.removeTagButton}
                   onPress={() => handleRemoveTag(tag)}
+                  disabled={isUpdating || isPending}
                 >
-                  <X size={14} color={colors.textDark} />
+                  <X size={14} color={isUpdating || isPending ? colors.gray[400] : colors.textDark} />
                 </TouchableOpacity>
               </View>
             ))}
@@ -395,10 +383,14 @@ export default function AddCardScreen() {
         </View>
         
         <TouchableOpacity 
-          style={styles.addButton}
-          onPress={handleAddCard}
+          style={[styles.updateButton, (isUpdating || isPending) && styles.updateButtonDisabled]}
+          onPress={handleUpdateCard}
+          disabled={isUpdating || isPending}
         >
-          <Text style={styles.addButtonText}>Add Card</Text>
+          <Save size={20} color="white" style={styles.updateButtonIcon} />
+          <Text style={styles.updateButtonText}>
+            {isUpdating ? "Updating Card..." : "Update Card"}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -453,17 +445,6 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
   },
-  deckInfo: {
-    marginBottom: 20,
-    padding: 16,
-    backgroundColor: colors.gray[100],
-    borderRadius: 8,
-  },
-  deckName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: colors.textDark,
-  },
   formGroup: {
     marginBottom: 20,
   },
@@ -511,7 +492,6 @@ const styles = StyleSheet.create({
   contentTypeText: {
     fontSize: 14,
     color: colors.textDark,
-    marginTop: 4,
   },
   activeContentTypeText: {
     color: "white",
@@ -521,7 +501,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.gray[200],
     borderRadius: 8,
-    height: 160,
+    height: 120,
     justifyContent: "center",
     alignItems: "center",
     overflow: "hidden",
@@ -530,7 +510,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   imagePickerText: {
-    fontSize: 16,
+    fontSize: 14,
     color: colors.primary,
     marginTop: 8,
   },
@@ -595,15 +575,23 @@ const styles = StyleSheet.create({
     color: colors.textLight,
     fontStyle: "italic",
   },
-  addButton: {
+  updateButton: {
+    flexDirection: 'row',
     backgroundColor: colors.primary,
     paddingVertical: 16,
     borderRadius: 8,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 20,
     marginBottom: 40,
   },
-  addButtonText: {
+  updateButtonDisabled: {
+    backgroundColor: colors.gray[300],
+  },
+  updateButtonIcon: {
+    marginRight: 8,
+  },
+  updateButtonText: {
     fontSize: 16,
     fontWeight: "600",
     color: "white",

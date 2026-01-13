@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { 
   StyleSheet, 
   Text, 
@@ -13,7 +13,7 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { X, RotateCw, Clock, ArrowLeft, ArrowRight, Maximize2, Bookmark } from "lucide-react-native";
+import { X, RotateCw, Clock, ArrowLeft, ArrowRight, Maximize2, Bookmark, Trash2 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useSharedValue,
@@ -56,14 +56,17 @@ export default function StudySessionScreen() {
   const markSessionAsCompleted = useFlashcardStore(state => state.markSessionAsCompleted);
   const clearSessionJustCompleted = useFlashcardStore(state => state.clearSessionJustCompleted);
   const sessionJustCompletedDeckId = useFlashcardStore(state => state.sessionJustCompletedDeckId);
+  const pendingOperations = useFlashcardStore(state => state.pendingOperations);
   
   const updateStudyStats = useUserStore(state => state.updateStudyStats);
   
   const [showBack, setShowBack] = useState(false);
   const [studyTime, setStudyTime] = useState(0);
   const [sessionStartTime] = useState(Date.now());
-  const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | 'up' | null>(null);
+  const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | 'up' | 'down' | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRating, setIsRating] = useState(false);
+  const [isBookmarking, setIsBookmarking] = useState(false);
   const [forceRefresh, setForceRefresh] = useState(0);
   const [isSessionFinished, setIsSessionFinished] = useState(false);
   
@@ -71,6 +74,7 @@ export default function StudySessionScreen() {
   const [imageScale, setImageScale] = useState(1);
   const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
   const [isImageManipulationActive, setIsImageManipulationActive] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
   
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
@@ -92,6 +96,31 @@ export default function StudySessionScreen() {
   const dueCards = getDueFlashcardsForDeck(id);
   const studyProgressFromStore = useFlashcardStore(state => state.studyProgress);
   
+  // Ref to keep track of the latest studyProgress for cleanup
+  const studyProgressRef = useRef(studyProgressFromStore);
+  useEffect(() => {
+    studyProgressRef.current = studyProgressFromStore;
+  }, [studyProgressFromStore]);
+  
+  // Define handleNoCardsLeft before its usage
+  const handleNoCardsLeft = useCallback(() => {
+    console.log('[StudySessionScreen] handleNoCardsLeft: All cards session complete or deck empty.');
+    // The primary UI for "No cards left" is handled by the conditional JSX.
+    // This function will ensure the study session state in the store is cleaned up.
+    // It will NOT navigate back here, allowing the JSX to show the message and "Go Back" button.
+  }, []);
+  
+  // Check if there are any pending operations for the current card
+  const isPending = useMemo(() => {
+    if (!currentCard) return false;
+    return Object.entries(pendingOperations).some(([key, op]) => {
+      if (op.type === 'add' && key === currentCard.id) return true;
+      if (op.type === 'update' && key === currentCard.id) return true;
+      if (op.type === 'delete' && key === currentCard.id) return true;
+      return false;
+    });
+  }, [currentCard, pendingOperations]);
+  
   // Memoize screenOptions
   const screenOptions = useMemo(() => ({
     title: deck?.name || 'Study',
@@ -108,49 +137,43 @@ export default function StudySessionScreen() {
         <X size={24} color={colors.textDark} />
       </TouchableOpacity>
     ),
-  }), [deck, endStudySession, router]);
+  }), [deck, endStudySession, router, clearSessionJustCompleted]);
   
   // useEffect for handling "No Cards Left" and logging problematic states
   useEffect(() => {
-    // Reset session finished state if deck ID changes (new session)
-    runOnJS(setIsSessionFinished)(false);
-
     if (!isDeleting) {
-      // Condition 1: getCurrentCard() returned null (session queue might be exhausted or no session active)
-      // AND the store's studyProgress itself is null or indicates completion (cardsLeft is 0).
-      // AND there are genuinely no more due cards for this deck right now.
       if (!currentCard && 
           (!studyProgressFromStore || studyProgressFromStore.cardsLeft === 0) && 
           dueCards.length === 0) {
         
         console.log('[StudySessionScreen] handleNoCardsLeft triggered. Details:', {
           deckId: id,
-          currentCardFromStore: currentCard, // Expected to be null
-          studyProgressAtTrigger: studyProgressFromStore, // Log what the store thinks about progress
-          dueCardsFromStoreLength: dueCards.length, // Expected to be 0
+          currentCardFromStore: currentCard,
+          studyProgressAtTrigger: studyProgressFromStore,
+          dueCardsFromStoreLength: dueCards.length,
           dueCardsFromStoreContent: JSON.stringify(dueCards.map(c => c.id)),
           isDeletingState: isDeleting,
           forceRefreshCount: forceRefresh, 
           timestamp: new Date().toISOString(),
         });
-        handleNoCardsLeft();
+        
+        // Use requestAnimationFrame to defer the call
+        requestAnimationFrame(() => {
+          handleNoCardsLeft();
+        });
       } else if (!currentCard && studyProgressFromStore && studyProgressFromStore.cardsLeft > 0 && dueCards.length > 0) {
-        // This state is unusual: No current card object, but studyProgress claims cards are left, and dueCards exist.
-        // This could happen if the card queue in the store got desynced or a card ID was bad.
         console.warn('[StudySessionScreen] State: No current card object, but store progress/dueCards indicate cards should be available. Details:', {
           deckId: id,
-          currentCardFromStore: currentCard, // Expected to be null
+          currentCardFromStore: currentCard,
           studyProgressAtTrigger: studyProgressFromStore,
           dueCardsFromStoreLength: dueCards.length,
           dueCardsFromStoreContent: JSON.stringify(dueCards.map(c => c.id)),
           isDeletingState: isDeleting,
           timestamp: new Date().toISOString(),
         });
-         // Potentially force a session restart or a more graceful recovery if this state is hit.
-         // For now, just logging. Could also try to re-initiate study session after a delay.
       }
     }
-  }, [id, isDeleting, dueCards, currentCard, studyProgressFromStore]);
+  }, [id, isDeleting, dueCards, currentCard, studyProgressFromStore, handleNoCardsLeft, forceRefresh]);
   
   // This useEffect handles new session initialization regarding isSessionFinished
   useEffect(() => {
@@ -158,15 +181,27 @@ export default function StudySessionScreen() {
     if (sessionJustCompletedDeckId === id) {
       console.log('[StudySessionScreen] Deck ID effect: This deck was just completed. Setting isSessionFinished to true.');
       setIsSessionFinished(true);
+      // Trigger celebration
+      setTimeout(() => {
+        setShowCelebration(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }, 500);
     } else {
       console.log('[StudySessionScreen] Deck ID effect: New/different session or no session just completed. Setting isSessionFinished to false.');
       setIsSessionFinished(false);
-      // If the stored completed ID is for a *different* deck, clear it.
-      // If it was for *this* deck, it's already handled by setting isSessionFinished to true.
-      // If it was null, this does nothing.
-      if (sessionJustCompletedDeckId && sessionJustCompletedDeckId !== id) {
+      setShowCelebration(false);
+    }
+  }, [id, sessionJustCompletedDeckId]);
+
+  // Separate useEffect to handle clearing session completed state
+  useEffect(() => {
+    if (sessionJustCompletedDeckId && sessionJustCompletedDeckId !== id) {
+      // Defer this store update to avoid updates during render
+      const timeoutId = setTimeout(() => {
         clearSessionJustCompleted();
-      }
+      }, 0);
+      
+      return () => clearTimeout(timeoutId);
     }
   }, [id, sessionJustCompletedDeckId, clearSessionJustCompleted]);
   
@@ -182,13 +217,19 @@ export default function StudySessionScreen() {
   // End session when navigating away
   useEffect(() => {
     return () => {
+      // Use the ref to get the latest studyProgress at the time of unmount
+      const currentStudyProgress = studyProgressRef.current;
       const sessionDuration = Math.ceil((Date.now() - sessionStartTime) / 60000);
-      const cardsStudied = studyProgress?.cardsStudied || 0;
+      const cardsStudied = currentStudyProgress?.cardsStudied || 0;
       
+      requestAnimationFrame(() => {
       updateStudyStats(sessionDuration, cardsStudied);
       endStudySession();
+      });
     };
-  }, []);
+    // Dependencies should be stable functions/values that don't change often
+    // sessionStartTime is stable. updateStudyStats and endStudySession are store actions (should be stable).
+  }, [sessionStartTime, updateStudyStats, endStudySession]); 
 
   // Log current card's bookmark status when it changes
   useEffect(() => {
@@ -220,143 +261,106 @@ export default function StudySessionScreen() {
     imgTranslateY.value = 0;
   }, [currentCard?.id, imgScale, imgTranslateX, imgTranslateY]); // Added img animated values to dep array
   
-  const handleNoCardsLeft = () => {
-    console.log('[StudySessionScreen] handleNoCardsLeft: All cards session complete or deck empty.');
-    // The primary UI for "No cards left" is handled by the conditional JSX.
-    // This function will ensure the study session state in the store is cleaned up.
-    // It will NOT navigate back here, allowing the JSX to show the message and "Go Back" button.
-    
-    // endStudySession(); // We might still want to call this to clear studyProgress in the store.
-                     // However, if currentCard is null, the UI is already in the "empty" state.
-                     // Let's evaluate if this is strictly needed or if the natural end of session (no current card) is enough.
-                     // For now, let's rely on the UI's back button to trigger router.back(), 
-                     // and the main component's unmount effect to call endStudySession.
-
-    // Alert.alert(
-    //   "No Cards Left",
-    //   "You've completed all cards in this deck!",
-    //   [
-    //     {
-    //       text: "OK",
-    //       onPress: () => {
-    //         // endStudySession(); // Already called or will be called on unmount
-    //         // router.back(); // Let the UI button handle this
-    //       }
-    //     }
-    //   ]
-    // );
-  };
+  useEffect(() => {
+    // This effect runs when currentCard (specifically its id) changes,
+    // or when the component mounts with an initial card.
+    if (currentCard) { 
+        console.log(`[StudySessionScreen] New card detected (ID: ${currentCard.id}), resetting card position and style.`);
+        translateX.value = withSpring(0); 
+        translateY.value = withSpring(0);
+        rotate.value = withTiming(0); // Rotation usually better withTiming for a direct reset
+        cardBorderColor.value = withTiming(colors.gray[200]); // Reset border color for new card
+    }
+    // Ensure the front of the card is shown when a new card loads
+    setShowBack(false); 
+  }, [currentCard?.id]); // Key dependency
   
-  const handleRateCard = (rating: DifficultyRating) => {
-    if (!currentCard) {
-      console.warn("[StudySessionScreen] handleRateCard called with no currentCard. This shouldn't happen.");
+  const handleRateCard = useCallback(async (rating: DifficultyRating) => {
+    if (!currentCard || isRating || isPending) return;
+
+    setIsRating(true);
+    const cardIdToRate = currentCard.id; // Capture ID before potential optimistic changes
+
+    // Add haptic feedback based on rating
+    if (rating === 'good' || rating === 'easy') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } else if (rating === 'hard') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else { // 'again'
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    }
+
+    // Initiate store action but don't await here for UI speed.
+    // Handle promise for error logging/potential non-blocking UI feedback.
+    rateCard(cardIdToRate, rating)
+      .catch((error) => {
+        console.error("Error in handleRateCard (background sync):", error);
+        // Optionally: Show a non-blocking toast message here if sync fails
+        // Alert.alert("Sync Error", "Failed to sync rating with server.");
+      });
+
+    // Optimistically get the next card immediately
+    const nextCard = getNextCard(); 
+    
+    setShowBack(false); // Reset flip state for the new card (if any)
+    setSwipeDirection(null); // Reset swipe direction hint
+    // Note: setIsRating(false) will be called in the finally block if we re-introduce it,
+    // or can be called here if we are sure the critical path is done.
+    // For now, let's ensure it's reset.
+    setIsRating(false);
+  }, [currentCard, isRating, isPending, rateCard, getNextCard, setShowBack, setSwipeDirection]);
+  
+  const handleDeleteCard = useCallback(async () => {
+    // Always call setIsDeleting at the start to maintain hook order
+    setIsDeleting(true);
+
+    // Early return if conditions are not met
+    if (!currentCard || isPending) {
+      setIsDeleting(false);
       return;
     }
 
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    // Store card ID before any async operations
+    const cardIdToDelete = currentCard.id;
 
-    const cardIdToRate = currentCard.id;
-    
-    // Action 1: Rate the card in the store
-    rateCard(cardIdToRate, rating);
-    
-    // Action 2: Tell the store to advance its internal pointer/progress & get what it thinks is next.
-    const nextCardFromStoreAfterUpdate = getNextCard();
-
-    // Reset UI elements that are independent of card content
+    // Reset UI states first
     setShowBack(false);
-    setSwipeDirection(null);
-    setImageScale(1);
-    setImagePosition({ x: 0, y: 0 });
-    imgScale.value = 1;
-    imgTranslateX.value = 0;
-    imgTranslateY.value = 0;
-    
-    // Action 3: Force a re-render of this component.
-    // In the next render, the main `currentCard` const will be updated via `getCurrentCard()`,
-    // and the useEffect will evaluate the end-of-session condition.
 
-    // Conditional reset of animated values:
-    if (nextCardFromStoreAfterUpdate) {
-      // If the store says there IS a next card, reset the swiped card's container to the center 
-      // so the new card appears correctly.
-      translateX.value = withSpring(0, { damping: 20, stiffness: 90 });
-      translateY.value = withSpring(0, { damping: 20, stiffness: 90 });
-      rotate.value = withTiming(0);
-      cardBorderColor.value = colors.gray[200];
-    } else {
-      // If the store says there is NO next card (session queue ended),
-      // then *do not* reset the translateX/Y. The card that was just swiped off should stay off.
-      // The re-render (due to forceRefresh) will result in the card container being hidden by JSX logic.
-      console.log('[StudySessionScreen] Last card in session swiped. Position not reset. UI will update to hide card area.');
-      // We might still want to reset rotation and border for visual consistency if it were to briefly appear.
-      rotate.value = withTiming(0); // Keep rotation reset
-      cardBorderColor.value = colors.gray[200]; // Keep border reset
+    // Delete immediately without confirmation
+    try {
+      await deleteFlashcard(cardIdToDelete);
+      // Get next card after successful deletion
+      getNextCard();
+      // Add haptic feedback for successful deletion
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (error) {
+      console.error("Error in handleDeleteCard:", error);
+      Alert.alert(
+        "Error",
+        "Failed to delete card. Please try again.",
+        [{ text: "OK" }]
+      );
+    } finally {
+      setIsDeleting(false);
     }
-    
-    if (!nextCardFromStoreAfterUpdate) {
-      setIsSessionFinished(true);
-      markSessionAsCompleted(id);
-    }
-  };
+  }, [currentCard, isPending, deleteFlashcard, getNextCard, setShowBack, setIsDeleting]);
   
-  const handleDeleteCard = () => {
-    if (!currentCard) return;
-    
-    Alert.alert(
-      "Delete Card",
-      "Are you sure you want to delete this card? This action cannot be undone.",
-      [
-        {
-          text: "Cancel",
-          style: "cancel"
-        },
-        {
-          text: "Delete",
-          onPress: () => {
-            setIsDeleting(true);
-            const cardId = currentCard.id;
-            deleteFlashcard(cardId);
-            
-            setShowBack(false);
-            translateX.value = 0;
-            translateY.value = 0;
-            rotate.value = 0;
-            setSwipeDirection(null);
-            
-            setImageScale(1);
-            setImagePosition({ x: 0, y: 0 });
-            imgScale.value = 1;
-            imgTranslateX.value = 0;
-            imgTranslateY.value = 0;
-            
-            setTimeout(() => {
-              setForceRefresh(prev => prev + 1);
-              
-              const remainingDueCards = getDueFlashcardsForDeck(id);
-              if (remainingDueCards.length === 0) {
-                Alert.alert(
-                  "No Cards Left",
-                  "You've completed all cards in this deck.",
-                  [
-                    {
-                      text: "OK",
-                      onPress: () => router.back()
-                    }
-                  ]
-                );
-              }
-              
-              setIsDeleting(false);
-            }, 100);
-          },
-          style: "destructive"
-        }
-      ]
-    );
-  };
+  const handleToggleBookmark = useCallback(async () => {
+    if (!currentCard || isBookmarking || isPending) return;
+
+    try {
+      setIsBookmarking(true);
+      await toggleBookmark(currentCard.id);
+    } catch (error) {
+      Alert.alert(
+        "Error",
+        "Failed to update bookmark. Please try again.",
+        [{ text: "OK" }]
+      );
+    } finally {
+      setIsBookmarking(false);
+    }
+  }, [currentCard, isBookmarking, isPending, toggleBookmark, setIsBookmarking]);
   
   // Gesture handler for swipe
   const gesture = Gesture.Pan()
@@ -382,13 +386,17 @@ export default function StudySessionScreen() {
         cardBorderColor.value = colors.success;
         runOnJS(setSwipeDirection)('right');
       } else if (translateX.value < -SWIPE_THRESHOLD) {
-        // Swiping left (hard)
-        cardBorderColor.value = colors.warning;
+        // Swiping left (good)
+        cardBorderColor.value = colors.primary;
         runOnJS(setSwipeDirection)('left');
       } else if (translateY.value < -SWIPE_THRESHOLD) {
-        // Swiping up (delete)
+        // Swiping up (again/failure)
         cardBorderColor.value = colors.error;
         runOnJS(setSwipeDirection)('up');
+      } else if (translateY.value > SWIPE_THRESHOLD) {
+        // Swiping down (delete)
+        cardBorderColor.value = colors.gray[600];
+        runOnJS(setSwipeDirection)('down');
       } else {
         cardBorderColor.value = colors.gray[200];
         runOnJS(setSwipeDirection)(null);
@@ -407,15 +415,22 @@ export default function StudySessionScreen() {
           }
         });
       } else if (translateX.value < -SWIPE_THRESHOLD) {
-        // Swipe left - Hard
+        // Swipe left - Good (normal correct)
         translateX.value = withTiming(-SCREEN_WIDTH * 1.5, swipeOffAnimationConfig, (finished) => {
           if (finished) {
-            runOnJS(handleRateCard)('hard');
+            runOnJS(handleRateCard)('good');
           }
         });
       } else if (translateY.value < -SWIPE_THRESHOLD && swipeDirection === 'up') {
-        // Swipe up - Delete (only if swipeDirection was 'up')
+        // Swipe up - Again (failure)
         translateY.value = withTiming(-SCREEN_HEIGHT * 1.5, swipeOffAnimationConfig, (finished) => {
+          if (finished) {
+            runOnJS(handleRateCard)('again');
+          }
+        });
+      } else if (translateY.value > SWIPE_THRESHOLD && swipeDirection === 'down') {
+        // Swipe down - Delete
+        translateY.value = withTiming(SCREEN_HEIGHT * 1.5, swipeOffAnimationConfig, (finished) => {
           if (finished) {
             runOnJS(handleDeleteCard)();
           }
@@ -691,6 +706,19 @@ export default function StudySessionScreen() {
                             )
                           ))}
                         </View>
+                        
+                        {currentCard && currentCard.mediaUrls && currentCard.mediaUrls.length > 1 && currentCard.mediaUrls[1] && (
+                          <View style={styles.imageContainer}>
+                            <GestureDetector gesture={Gesture.Simultaneous(imageGestures, doubleTapGesture)}>
+                              <Animated.Image 
+                                source={{ uri: currentCard.mediaUrls[1] }}
+                                style={[styles.cardImage, imageStyle]}
+                                resizeMode="contain"
+                              />
+                            </GestureDetector>
+                            <Text style={styles.imageHint}>Pinch to zoom • Drag to move • Double tap to reset</Text>
+                          </View>
+                        )}
                       </>
                     )}
                   </ScrollView>
@@ -711,12 +739,7 @@ export default function StudySessionScreen() {
                 {/* Bookmark icon (placeholder) */}
                 <TouchableOpacity 
                   style={styles.bookmarkButton}
-                  onPress={() => {
-                    if (currentCard) {
-                      toggleBookmark(currentCard.id);
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    }
-                  }}
+                  onPress={handleToggleBookmark}
                 >
                   <Bookmark size={22} color={currentCard?.isBookmarked ? colors.primary : colors.gray[400]} fill={currentCard?.isBookmarked ? colors.primary : 'none'} />
                 </TouchableOpacity>
@@ -726,17 +749,20 @@ export default function StudySessionScreen() {
           
           <View style={styles.swipeHintContainer}>
             {swipeDirection === 'left' && (
-              <Text style={[styles.swipeHint, styles.hardHint]}>Hard</Text>
+              <Text style={[styles.swipeHint, styles.goodHint]}>Good</Text>
             )}
             {swipeDirection === 'right' && (
               <Text style={[styles.swipeHint, styles.easyHint]}>Easy</Text>
             )}
             {swipeDirection === 'up' && (
+              <Text style={[styles.swipeHint, styles.againHint]}>Again</Text>
+            )}
+            {swipeDirection === 'down' && (
               <Text style={[styles.swipeHint, styles.deleteHint]}>Delete</Text>
             )}
             {!swipeDirection && (
               <Text style={[styles.swipeInstructions, { textAlign: 'center' }]}>
-                Swipe left for Hard, right for Easy, up to Delete
+                ← Good • → Easy • ↑ Again • ↓ Delete
               </Text>
             )}
           </View>
@@ -748,6 +774,35 @@ export default function StudySessionScreen() {
             </View>
           </View>
         </> 
+      )}
+      
+      {/* Celebration Modal */}
+      {showCelebration && (
+        <View style={styles.celebrationOverlay}>
+          <Animated.View style={[styles.celebrationModal, {
+            transform: [{ scale: showCelebration ? 1 : 0 }]
+          }]}>
+            <Text style={styles.celebrationEmoji}>🎉</Text>
+            <Text style={styles.celebrationTitle}>Fantastic!</Text>
+            <Text style={styles.celebrationSubtitle}>
+              You've completed your study session!
+            </Text>
+            <Text style={styles.celebrationStats}>
+              {studyProgress?.cardsStudied || 0} cards studied
+            </Text>
+            <TouchableOpacity 
+              style={styles.celebrationButton}
+              onPress={() => {
+                setShowCelebration(false);
+                clearSessionJustCompleted();
+                endStudySession();
+                router.back();
+              }}
+            >
+              <Text style={styles.celebrationButtonText}>Awesome! 🚀</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
       )}
     </SafeAreaView>
   );
@@ -907,14 +962,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
   },
-  hardHint: {
-    color: colors.warning,
+  goodHint: {
+    color: colors.primary,
   },
   easyHint: {
     color: colors.success,
   },
-  deleteHint: {
+  againHint: {
     color: colors.error,
+  },
+  deleteHint: {
+    color: colors.gray[600],
   },
   swipeInstructions: {
     fontSize: 14,
@@ -958,5 +1016,78 @@ const styles = StyleSheet.create({
     left: 46, // Positioned to the right of the expand icon (12 + 22 + 6 + 6)
     padding: 6,
     zIndex: 20,
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  celebrationOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  celebrationModal: {
+    backgroundColor: colors.background,
+    borderRadius: 20,
+    padding: 30,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+    maxWidth: '80%',
+  },
+  celebrationEmoji: {
+    fontSize: 60,
+    marginBottom: 20,
+  },
+  celebrationTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: colors.primary,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  celebrationSubtitle: {
+    fontSize: 18,
+    color: colors.textDark,
+    marginBottom: 15,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  celebrationStats: {
+    fontSize: 16,
+    color: colors.textSecondary,
+    marginBottom: 25,
+    textAlign: 'center',
+  },
+  celebrationButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 30,
+    paddingVertical: 15,
+    borderRadius: 25,
+    shadowColor: colors.primary,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  celebrationButtonText: {
+    color: colors.background,
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 });

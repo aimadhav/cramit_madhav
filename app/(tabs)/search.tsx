@@ -99,7 +99,7 @@ export default function SearchScreen() {
         <Text style={styles.resultTitle}>{item.title}</Text>
         <Text style={styles.resultSubtitle}>{item.subtitle}</Text>
         <View style={styles.tagsContainer}>
-          {item.tags.slice(0, 3).map(tag => (
+          {(item.tags || []).slice(0, 3).map(tag => (
             <TouchableOpacity 
               key={tag} 
               style={styles.tagBadge}

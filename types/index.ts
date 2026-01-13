@@ -22,16 +22,18 @@ export interface Flashcard {
 export interface Deck {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   cardCount: number;
   tags: string[];
   isPremium: boolean;
-  price?: number;
-  createdAt: number;
-  updatedAt: number;
-  coverImage?: string;
-  subject?: string;
-  chapter?: string;
+  price?: number | null;
+  createdAt: string;
+  updatedAt: string;
+  coverImage?: string | null;
+  subject?: string | null;
+  chapter?: string | null;
+  userId: string;
+  isPublic: boolean;
 }
 
 export interface StudySession {
