@@ -129,4 +129,28 @@ export const authRouter = createTRPCRouter({
       }
       return { message: 'Successfully signed out' };
     }),
+
+  refreshSession: publicProcedure
+    .input(
+      z.object({
+        refreshToken: z.string(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { data, error } = await ctx.supabase.auth.refreshSession({
+        refresh_token: input.refreshToken,
+      });
+
+      if (error || !data.session || !data.user) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: error?.message || "Failed to refresh session.",
+        });
+      }
+
+      return {
+        session: data.session,
+        user: data.user,
+      };
+    }),
 });

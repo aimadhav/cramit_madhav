@@ -1,7 +1,8 @@
 import { createTRPCReact, httpBatchLink, loggerLink } from '@trpc/react-query';
+import { createTRPCClient } from '@trpc/client';
 import type { AppRouter } from '../backend/trpc/app-router';
 import { Platform, Alert } from 'react-native';
-import { useUserStore, REFRESH_TOKEN_STORAGE_KEY, TOKEN_STORAGE_KEY, AppUser } from '../store/user-store';
+import { useUserStore, REFRESH_TOKEN_STORAGE_KEY, TOKEN_STORAGE_KEY, OFFLINE_MODE_TOKEN, AppUser } from '../store/user-store';
 import Constants from "expo-constants";
 import * as SecureStore from 'expo-secure-store';
 import { TRPCClientError, TRPCLink, Operation } from "@trpc/client";
@@ -13,49 +14,41 @@ import { TRPCResponse, TRPCErrorShape } from "@trpc/server/rpc";
 export const trpc = createTRPCReact<AppRouter>();
 
 const getBaseUrl = () => {
-  // 1. Always prioritize EXPO_PUBLIC_API_URL if available
+  // Always prioritize EXPO_PUBLIC_API_URL if available
   if (process.env.EXPO_PUBLIC_API_URL) {
-    console.log('[TRPC Client] Using EXPO_PUBLIC_API_URL:', process.env.EXPO_PUBLIC_API_URL);
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
-  // 2. Browser-specific relative path if no EXPO_PUBLIC_API_URL
+  // Browser-specific relative path if no EXPO_PUBLIC_API_URL
   if (typeof window !== "undefined") {
-    console.log('[TRPC Client] Web environment, EXPO_PUBLIC_API_URL not set. Using relative path for API.');
     return ""; // browser should use relative path
   }
 
-  // 3. Native-specific fallbacks
-  const localhost = Constants.expoConfig?.hostUri?.split(':')[0] || 'localhost';
-  
-  if (Platform.OS === "android" || Platform.OS === "ios") {
-    const apiUrl = `http://${localhost}:8081`; 
-  console.warn(
-      `[TRPC Client] Native environment, EXPO_PUBLIC_API_URL not set. Using guessed API URL: ${apiUrl}. Ensure this is correct or set EXPO_PUBLIC_API_URL.`
-    );
+  // Native-specific fallbacks (Expo Go)
+  const localhost = Constants.expoConfig?.hostUri?.split(':')[0];
+  if (localhost) {
+    const apiUrl = `http://${localhost}:8081`;
+    console.log(`[TRPC Client] Detected Expo Go host: ${apiUrl}`);
     return apiUrl;
   }
-  
-  // 4. Default for other platforms (should ideally not be reached if web/native handled)
-  const defaultApiUrl = `http://${localhost}:8081`;
-  console.log('[TRPC Client] Other platform/environment, EXPO_PUBLIC_API_URL not set. Using default API URL:', defaultApiUrl);
-  return defaultApiUrl;
+
+  // Last resort fallback
+  const fallbackUrl = 'http://localhost:8081';
+  console.warn(
+    `[TRPC Client] Could not detect Expo Go hostUri. Falling back to ${fallbackUrl}. Ensure EXPO_PUBLIC_API_URL is set if this is incorrect.`
+  );
+  return fallbackUrl;
 };
 
 // Function to get the current access token
 const getToken = async () => {
-  console.log('[TRPC Client] getToken called.');
   try {
     if (Platform.OS === 'web') {
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-      console.log(`[TRPC Client] getToken (web): localStorage.getItem(${TOKEN_STORAGE_KEY}) returned:`, token ? "token_found_not_empty" : "null_or_empty");
-      return token;
+      return localStorage.getItem(TOKEN_STORAGE_KEY);
     } else {
-      const token = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
-      console.log(`[TRPC Client] getToken (native): SecureStore.getItemAsync(${TOKEN_STORAGE_KEY}) returned:`, token ? "token_found_not_empty" : "null_or_empty");
-      return token;
+      return await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
     }
-  } catch (e) { // Catch potential errors from localStorage or SecureStore
+  } catch (e) {
     console.error("Error getting token:", e);
     return null;
   }
@@ -63,18 +56,13 @@ const getToken = async () => {
 
 // Function to get the current refresh token
 const getRefreshToken = async () => {
-  console.log('[TRPC Client] getRefreshToken called.');
   try {
     if (Platform.OS === 'web') {
-      const refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
-      console.log(`[TRPC Client] getRefreshToken (web): localStorage.getItem(${REFRESH_TOKEN_STORAGE_KEY}) returned:`, refreshToken ? "token_found_not_empty" : "null_or_empty");
-      return refreshToken;
+      return localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
     } else {
-      const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
-      console.log(`[TRPC Client] getRefreshToken (native): SecureStore.getItemAsync(${REFRESH_TOKEN_STORAGE_KEY}) returned:`, refreshToken ? "token_found_not_empty" : "null_or_empty");
-      return refreshToken;
+      return await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
     }
-  } catch (e) { // Catch potential errors
+  } catch (e) {
     console.error("Error getting refresh token:", e);
     return null;
   }
@@ -82,7 +70,7 @@ const getRefreshToken = async () => {
 
 let isRefreshingToken = false;
 let refreshTokenPromise: Promise<void> | null = null;
-let tokenRefreshTimeout: NodeJS.Timeout | null = null;
+let tokenRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Function to schedule token refresh
 const scheduleTokenRefresh = (expiresAt: number) => {
@@ -100,12 +88,12 @@ const scheduleTokenRefresh = (expiresAt: number) => {
         try {
           const refreshToken = await getRefreshToken();
           if (!refreshToken) {
-            console.log('[Token Refresh] No refresh token available');
+  
             await logout();
             return;
           }
 
-          console.log('[Token Refresh] Proactively refreshing token...');
+
           const freshSessionData = await trpcClient.auth.refreshSession.mutate({
             refreshToken,
           });
@@ -169,7 +157,12 @@ const authLink: TRPCLink<AppRouter> = () => {
           observer.next(result);
         },
         error: async (err: TRPCClientError<AppRouter>) => {
-          const { logout, setSession, user, shouldRefreshToken } = useUserStore.getState();
+          const { logout, setSession, user, shouldRefreshToken, sessionToken } = useUserStore.getState();
+
+          if (sessionToken === OFFLINE_MODE_TOKEN) {
+            observer.error(err);
+            return;
+          }
 
           if (err instanceof TRPCClientError && err.data?.code === 'UNAUTHORIZED') {
             console.warn('[TRPC AuthLink] Unauthorized error detected:', err.message);
@@ -185,7 +178,7 @@ const authLink: TRPCLink<AppRouter> = () => {
                 try {
                   const currentRefreshToken = await getRefreshToken();
                   if (!currentRefreshToken) {
-                    console.log('[TRPC AuthLink] No refresh token found. Logging out.');
+
                     Alert.alert(
                       "Session Expired",
                       "Your session has expired. Please log in again.",
@@ -195,13 +188,13 @@ const authLink: TRPCLink<AppRouter> = () => {
                     throw new TRPCClientError('No refresh token available');
                   }
 
-                  console.log('[TRPC AuthLink] Attempting to refresh token...');
+
                   const freshSessionData = await trpcClient.auth.refreshSession.mutate({
                     refreshToken: currentRefreshToken,
                   });
 
                   if (freshSessionData.session && freshSessionData.user) {
-                    console.log('[TRPC AuthLink] Token refresh successful. Updating session.');
+
                     const currentUserData = user || ({} as Partial<AppUser>);
                     const updatedAppUser: AppUser = {
                       id: freshSessionData.user.id,
@@ -248,7 +241,7 @@ const authLink: TRPCLink<AppRouter> = () => {
                 } finally {
                   isRefreshingToken = false;
                   refreshTokenPromise = null;
-                  console.log('[TRPC AuthLink] Token refresh process finished.');
+
                 }
               })();
             }
@@ -256,7 +249,7 @@ const authLink: TRPCLink<AppRouter> = () => {
             if (refreshTokenPromise) {
               try {
                 await refreshTokenPromise;
-                console.log('[TRPC AuthLink] Retrying operation after token refresh:', op.path);
+
                 next(op).subscribe(observer);
                 return;
               } catch (retryError: any) {
@@ -274,7 +267,7 @@ const authLink: TRPCLink<AppRouter> = () => {
   };
 };
 
-export const trpcClient = trpc.createClient({
+export const trpcClient = createTRPCClient<AppRouter>({
   links: [
     loggerLink({
       enabled: (opts) =>
@@ -286,32 +279,14 @@ export const trpcClient = trpc.createClient({
     httpBatchLink({
       url: `${getBaseUrl()}/api/trpc`,
       async headers() {
-        console.log('[TRPC Client] httpBatchLink: headers function called.');
         const token = await getToken();
-        if (token) {
-          console.log('[TRPC Client] httpBatchLink: Token found, adding Authorization header.');
+        if (token && token !== OFFLINE_MODE_TOKEN) {
           return {
             Authorization: `Bearer ${token}`,
           };
         }
-        console.warn('[TRPC Client] httpBatchLink: No token found. Authorization header will be missing.');
         return {};
       },
     }),
   ],
 });
-
-// The TRPCProvider component will be used in your _app.tsx or root layout
-// Example for app/_layout.tsx:
-// import { trpc, trpcClient } from '../utils/trpc';
-// import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-// ...
-// const [queryClient] = useState(() => new QueryClient());
-// ...
-// return (
-//   <trpc.Provider client={trpcClient} queryClient={queryClient}>
-//     <QueryClientProvider client={queryClient}>
-//       {/* Your app's navigation stack */}
-//     </QueryClientProvider>
-//   </trpc.Provider>
-// );

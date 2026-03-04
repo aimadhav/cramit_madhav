@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
-import { trpc } from '@/lib/trpc';
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity } from "react-native";
+import { Text } from "@/components/AppText";;
+import { trpc } from '@/utils/trpc';
 import colors from '@/constants/colors';
 
 export default function BackendStatus() {

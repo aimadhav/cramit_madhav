@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 enum ContentType {
@@ -16,6 +16,8 @@ enum ContentType {
   latex
   audio
   mixed
+
+  @@map("content_type")
 }
 
 model User {
@@ -23,85 +25,91 @@ model User {
   email     String   @unique
   name      String?
   phone     String?
-  isPremium Boolean  @default(false)
-  isAdmin   Boolean  @default(false)
+  isPremium Boolean  @default(false) @map("is_premium")
+  isAdmin   Boolean  @default(false) @map("is_admin")
   
   // Study stats
-  totalCardsStudied Int @default(0)
-  totalTimeStudied  Int @default(0) // in minutes
-  streakDays        Int @default(0)
-  lastStudyDate     DateTime?
+  totalCardsStudied Int @default(0) @map("total_cards_studied")
+  totalTimeStudied  Int @default(0) @map("total_time_studied") // in minutes
+  streakDays        Int @default(0) @map("streak_days")
+  lastStudyDate     DateTime?       @map("last_study_date")
   
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
   
   // Relations
   decks             Deck[]
   flashcardStatuses UserFlashcardStatus[]
   studySessions     StudySession[]
+
+  @@map("users")
 }
 
 model Deck {
   id          String    @id @default(cuid())
   name        String
   description String?
-  tagsJson    String    @default("[]") // JSON array of strings
-  isPremium   Boolean   @default(false)
-  isPublic    Boolean   @default(false)
+  tagsJson    String    @default("[]") @map("tags_json") // JSON array of strings
+  isPremium   Boolean   @default(false) @map("is_premium")
+  isPublic    Boolean   @default(false) @map("is_public")
   price       Float?
-  coverImage  String?
+  coverImage  String?   @map("cover_image")
   subject     String?
   chapter     String?
   
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt      @map("updated_at")
   
   // Relations
-  userId      String
+  userId      String    @map("user_id")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   flashcards  Flashcard[]
 
   @@index([isPublic])
   @@index([subject])
   @@index([isPremium])
+  @@map("decks")
 }
 
 model Flashcard {
   id          String      @id @default(cuid())
   front       String
   back        String
-  contentType ContentType @default(text)
-  mediaUrlsJson String    @default("[]") // JSON array of strings
-  tagsJson    String      @default("[]") // JSON array of strings
+  contentType ContentType @default(text) @map("content_type")
+  mediaUrlsJson String    @default("[]") @map("media_urls_json") // JSON array of strings
+  tagsJson    String      @default("[]") @map("tags_json") // JSON array of strings
   
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt      @map("updated_at")
   
   // Relations
-  deckId      String
+  deckId      String      @map("deck_id")
   deck        Deck        @relation(fields: [deckId], references: [id], onDelete: Cascade)
   userStatuses UserFlashcardStatus[]
+
+  @@map("flashcards")
 }
 
 model UserFlashcardStatus {
   id           String    @id @default(cuid())
-  userId       String
-  flashcardId  String
+  userId       String    @map("user_id")
+  flashcardId  String    @map("flashcard_id")
   
   // Spaced Repetition System (SRS) fields
-  interval     Int       @default(1)     // Days until next review
-  easeFactor   Float     @default(2.5)   // How easy the card is
-  repetitions  Int       @default(0)     // Number of times reviewed
-  dueDate      DateTime  @default(now()) // When card is due for review
-  lastReviewed DateTime?                 // Last review timestamp
+  interval     Int       @default(1)     @map("interval") // Days until next review
+  stability    Float     @default(0.0)   @map("stability") // FSRS stability
+  difficulty   Float     @default(0.0)   @map("difficulty") // FSRS difficulty
+  repetitions  Int       @default(0)     @map("repetitions") // Number of times reviewed
+  dueDate      DateTime  @default(now()) @map("due_date") // When card is due for review
+  lastReviewed DateTime?                 @map("last_reviewed") // Last review timestamp
   
   // User-specific metadata
-  isBookmarked Boolean   @default(false)
-  isLearned    Boolean   @default(false)
-  isDeleted    Boolean   @default(false) // Soft delete from user's view
+  isBookmarked Boolean   @default(false) @map("is_bookmarked")
+  isLearned    Boolean   @default(false) @map("is_learned")
+  isDeleted    Boolean   @default(false) @map("is_deleted") // Soft delete from user's view
   
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt      @map("updated_at")
   
   // Relations
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -110,22 +118,24 @@ model UserFlashcardStatus {
   @@unique([userId, flashcardId])
   @@index([dueDate])
   @@index([userId, dueDate])
+  @@map("user_flashcard_statuses")
 }
 
 model StudySession {
   id           String    @id @default(cuid())
-  deckId       String
-  userId       String
-  startTime    DateTime  @default(now())
-  endTime      DateTime?
-  cardsStudied Int       @default(0)
-  cardsCorrect Int       @default(0)
+  deckId       String    @map("deck_id")
+  userId       String    @map("user_id")
+  startTime    DateTime  @default(now()) @map("start_time")
+  endTime      DateTime?                 @map("end_time")
+  cardsStudied Int       @default(0)     @map("cards_studied")
+  cardsCorrect Int       @default(0)     @map("cards_correct")
   
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime  @default(now()) @map("created_at")
   
   // Relations
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   @@index([userId])
   @@index([deckId])
+  @@map("study_sessions")
 }

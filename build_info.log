@@ -1,0 +1,6 @@
+env: load .env
+env: export EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_ANON_KEY DATABASE_URL
+Starting project at /home/prash/Desktop/minor
+› Port 8081 is running this app in another window
+  /home/prash/Desktop/minor (pid 132278)
+› Skipping dev server

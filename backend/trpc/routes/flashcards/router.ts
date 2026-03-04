@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createTRPCRouter, publicProcedure } from '../../create-context';
+import { createTRPCRouter, publicProcedure, protectedProcedure } from '../../create-context';
 import { TRPCError } from '@trpc/server';
 
 const createFlashcardInput = z.object({
@@ -14,7 +14,8 @@ const createFlashcardInput = z.object({
 const updateUserFlashcardStatusInput = z.object({
   flashcardId: z.string(),
   interval: z.number().int().positive().optional(),
-  easeFactor: z.number().positive().optional(),
+  stability: z.number().optional(),
+  difficulty: z.number().optional(),
   repetitions: z.number().int().nonnegative().optional(),
   dueDate: z.string().datetime({ offset: true, precision: 3 }).optional(),
   lastReviewed: z.string().datetime({ offset: true, precision: 3 }).optional(),
@@ -33,11 +34,11 @@ const updateFlashcardContentInput = z.object({
 });
 
 export const flashcardRouter = createTRPCRouter({
-  create: publicProcedure
+  create: protectedProcedure
     .input(createFlashcardInput)
     .mutation(async ({ ctx, input }) => {
       const { deckId, front, back, contentType, mediaUrls, tags } = input;
-      const userId = "guest-user";
+      const userId = ctx.user.id;
 
       // 1. Verify deck ownership
       const deck = await ctx.prisma.deck.findUnique({
@@ -51,13 +52,12 @@ export const flashcardRouter = createTRPCRouter({
         });
       }
 
-      // Auth check disabled for now
-      // if (deck.userId !== userId) {
-      //   throw new TRPCError({
-      //     code: 'FORBIDDEN',
-      //     message: 'You do not have permission to add flashcards to this deck.',
-      //   });
-      // }
+      if (deck.userId !== userId) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to add flashcards to this deck.',
+        });
+      }
 
       // 2. Create Flashcard and UserFlashcardStatus in a transaction
       try {
@@ -67,7 +67,7 @@ export const flashcardRouter = createTRPCRouter({
               deckId,
               front,
               back,
-              contentType,
+              contentType: (contentType as any),
               mediaUrlsJson: JSON.stringify(mediaUrls || []),
               tagsJson: JSON.stringify(tags || []),
             },
@@ -103,10 +103,10 @@ export const flashcardRouter = createTRPCRouter({
       }
     }),
 
-  updateUserStatus: publicProcedure
+  updateUserStatus: protectedProcedure
     .input(updateUserFlashcardStatusInput)
     .mutation(async ({ ctx, input }) => {
-      const userId = "guest-user";
+      const userId = ctx.user.id;
       const { flashcardId, ...updateDataRest } = input;
 
       // Manual date string to Date object conversion for Prisma
@@ -161,7 +161,8 @@ export const flashcardRouter = createTRPCRouter({
             ...updateDataForPrisma,
             // Set default values for required fields if not provided
             interval: updateDataForPrisma.interval ?? 1,
-            easeFactor: updateDataForPrisma.easeFactor ?? 2.5,
+            stability: updateDataForPrisma.stability ?? 0,
+            difficulty: updateDataForPrisma.difficulty ?? 0,
             repetitions: updateDataForPrisma.repetitions ?? 0,
             dueDate: updateDataForPrisma.dueDate ?? new Date(),
           },
@@ -179,6 +180,70 @@ export const flashcardRouter = createTRPCRouter({
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'Failed to update flashcard status.',
+          cause: error,
+        });
+      }
+    }),
+
+  // Batch update statuses (for syncing session progress at once)
+  batchUpdateUserStatus: protectedProcedure
+    .input(z.object({
+      ratings: z.array(z.object({
+        flashcardId: z.string(),
+        interval: z.number().int().positive().optional(),
+        stability: z.number().optional(),
+        difficulty: z.number().optional(),
+        repetitions: z.number().int().nonnegative().optional(),
+        dueDate: z.string().datetime({ offset: true, precision: 3 }).optional(),
+        lastReviewed: z.string().datetime({ offset: true, precision: 3 }).optional(),
+        isBookmarked: z.boolean().optional(),
+        isLearned: z.boolean().optional(),
+      })).min(1)
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const { ratings } = input;
+
+      console.log(`[batchUpdateUserStatus] Processing ${ratings.length} ratings for user ${userId}`);
+
+      try {
+        const results = await ctx.prisma.$transaction(
+          ratings.map((rating) => {
+            const { flashcardId, ...updateData } = rating;
+            
+            // Format dates
+            const dataToSet: any = { ...updateData };
+            if (updateData.dueDate) dataToSet.dueDate = new Date(updateData.dueDate);
+            if (updateData.lastReviewed) dataToSet.lastReviewed = new Date(updateData.lastReviewed);
+
+            return ctx.prisma.userFlashcardStatus.upsert({
+              where: {
+                userId_flashcardId: {
+                  userId,
+                  flashcardId,
+                },
+              },
+              create: {
+                userId,
+                flashcardId,
+                ...dataToSet,
+                interval: dataToSet.interval ?? 1,
+                stability: dataToSet.stability ?? 0,
+                difficulty: dataToSet.difficulty ?? 0,
+                repetitions: dataToSet.repetitions ?? 0,
+                dueDate: dataToSet.dueDate ?? new Date(),
+              },
+              update: dataToSet,
+            });
+          })
+        );
+
+        return { count: results.length, success: true };
+      } catch (error) {
+        console.error("Error in batch update:", error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Failed to sync session progress.',
           cause: error,
         });
       }
@@ -214,14 +279,12 @@ export const flashcardRouter = createTRPCRouter({
         cursor: cursor ? { id: cursor } : undefined,
         where: {
           deckId: deckId,
-          AND: [
-            tags && tags.length > 0 ? { tags: { hasSome: tags } } : {},
-          ],
+          // Note: tagsJson is a String field in Prisma, we can't use hasSome
+          // Omit tag filtering here for now.
         },
         orderBy: {
           createdAt: 'asc',
         },
-        // TODO: Later, if user is logged in, fetch and merge UserFlashcardStatus
       });
 
       let nextCursor: typeof cursor | undefined = undefined;
@@ -230,25 +293,45 @@ export const flashcardRouter = createTRPCRouter({
         nextCursor = nextItem!.id; // Use its ID as the next cursor
       }
 
-      // Fetch user status for guest-user
-      const userId = "guest-user";
-      const flashcardIds = flashcards.map(fc => fc.id);
-      const statuses = await ctx.prisma.userFlashcardStatus.findMany({
-        where: {
-          userId: userId,
-          flashcardId: { in: flashcardIds },
-          isDeleted: false, // Only include non-deleted statuses
-        },
-      });
+      // Fetch user status if user is logged in
+      const userId = ctx.user?.id;
+      let statuses: any[] = [];
+      
+      if (userId) {
+        const flashcardIds = flashcards.map(fc => fc.id);
+        statuses = await ctx.prisma.userFlashcardStatus.findMany({
+          where: {
+            userId: userId,
+            flashcardId: { in: flashcardIds },
+            isDeleted: false, // Only include non-deleted statuses
+          },
+        });
+      }
       
       const statusMap = new Map(statuses.map(s => [s.flashcardId, s]));
-      const flashcardsWithStatus = flashcards.map(fc => ({
-        ...fc,
-        tags: fc.tagsJson ? JSON.parse(fc.tagsJson) : [],
-        mediaUrls: fc.mediaUrlsJson ? JSON.parse(fc.mediaUrlsJson) : [],
-        userStatus: statusMap.get(fc.id),
-      }));
+      const flashcardsWithStatus = flashcards.map(fc => {
+        let tags = [];
+        let mediaUrls = [];
+        try {
+          tags = fc.tagsJson ? JSON.parse(fc.tagsJson) : [];
+        } catch (e) {
+          console.error(`[listByDeck] Error parsing tags for flashcard ${fc.id}:`, e);
+        }
+        try {
+          mediaUrls = fc.mediaUrlsJson ? JSON.parse(fc.mediaUrlsJson) : [];
+        } catch (e) {
+          console.error(`[listByDeck] Error parsing mediaUrls for flashcard ${fc.id}:`, e);
+        }
 
+        return {
+          ...fc,
+          tags,
+          mediaUrls,
+          userStatus: statusMap.get(fc.id),
+        };
+      });
+
+      console.log(`[listByDeck] Returning ${flashcardsWithStatus.length} cards for deck ${deckId}`);
       return {
         items: flashcardsWithStatus,
         nextCursor,
@@ -271,16 +354,14 @@ export const flashcardRouter = createTRPCRouter({
       }
 
       let userStatus: any | undefined = undefined; // Define userStatus outside
-      if (false) { // ctx.user disabled
+      if (ctx.user) {
         // If user is authenticated, try to fetch their specific status for this card
-        console.log(`[RouterLog] getById: Attempting to find UserFlashcardStatus for userId: ${ctx.user.id}, flashcardId: ${card.id}, isDeleted: false`);
         userStatus = await ctx.prisma.userFlashcardStatus.findUnique({
           where: {
             userId_flashcardId: { userId: ctx.user.id, flashcardId: card.id },
             isDeleted: false, // Ensure we only get active statuses
           },
         });
-        console.log(`[RouterLog] getById: Found UserFlashcardStatus:`, JSON.stringify(userStatus));
       }
 
       return { 
@@ -291,9 +372,9 @@ export const flashcardRouter = createTRPCRouter({
       };
     }),
 
-  getDueFlashcardsForUser: publicProcedure
+  getDueFlashcardsForUser: protectedProcedure
     .query(async ({ ctx }) => {
-      const userId = "guest-user";
+      const userId = ctx.user.id;
       const now = new Date();
 
       const dueFlashcardStatuses = await ctx.prisma.userFlashcardStatus.findMany({
@@ -316,10 +397,10 @@ export const flashcardRouter = createTRPCRouter({
       return dueFlashcardStatuses;
     }),
 
-  updateContent: publicProcedure
+  updateContent: protectedProcedure
     .input(updateFlashcardContentInput)
     .mutation(async ({ ctx, input }) => {
-      const userId = "guest-user";
+      const userId = ctx.user.id;
       const { flashcardId, front, back, contentType, mediaUrls, tags, targetDeckId } = input;
 
       const updateData: {
@@ -357,7 +438,7 @@ export const flashcardRouter = createTRPCRouter({
         // User is updating their own flashcard directly
         const updatedFlashcard = await ctx.prisma.flashcard.update({
           where: { id: flashcardId },
-          data: updateData,
+          data: updateData as any,
         });
         // If user is logged in, also fetch their status for this card
         const status = await ctx.prisma.userFlashcardStatus.findUnique({
@@ -417,7 +498,7 @@ export const flashcardRouter = createTRPCRouter({
             data: {
               front: updateData.front ?? originalFlashcard.front,
               back: updateData.back ?? originalFlashcard.back,
-              contentType: updateData.contentType ?? originalFlashcard.contentType,
+              contentType: (updateData.contentType ?? originalFlashcard.contentType) as any,
               mediaUrlsJson: updateData.mediaUrlsJson ?? originalFlashcard.mediaUrlsJson,
               tagsJson: updateData.tagsJson ?? originalFlashcard.tagsJson,
               deckId: finalTargetDeckId!,
@@ -434,7 +515,6 @@ export const flashcardRouter = createTRPCRouter({
 
           if (existingStatus) { // User was actively studying the original card
             newStatusData.interval = existingStatus.interval;
-            newStatusData.easeFactor = existingStatus.easeFactor;
             newStatusData.repetitions = existingStatus.repetitions;
             newStatusData.dueDate = existingStatus.dueDate; 
             newStatusData.lastReviewed = existingStatus.lastReviewed;
@@ -470,10 +550,10 @@ export const flashcardRouter = createTRPCRouter({
       }
     }),
 
-  delete: publicProcedure
+  delete: protectedProcedure
     .input(z.object({ flashcardId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const userId = "guest-user";
+      const userId = ctx.user.id;
       const { flashcardId } = input;
 
       const flashcard = await ctx.prisma.flashcard.findUnique({

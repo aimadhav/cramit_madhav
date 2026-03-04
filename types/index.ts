@@ -12,7 +12,8 @@ export interface Flashcard {
   updatedAt: number;
   // Spaced repetition data
   interval: number; // Days until next review
-  easeFactor: number; // How easy the card is (higher = easier)
+  stability: number; // FSRS stability
+  difficulty: number; // FSRS difficulty
   repetitions: number; // Number of times reviewed
   dueDate: number; // Timestamp when card is due for review
   lastReviewed: number | null; // Timestamp of last review
@@ -27,13 +28,14 @@ export interface Deck {
   tags: string[];
   isPremium: boolean;
   price?: number | null;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: number;
+  updatedAt: number;
   coverImage?: string | null;
   subject?: string | null;
   chapter?: string | null;
   userId: string;
   isPublic: boolean;
+  areCardsLoaded?: boolean;
 }
 
 export interface StudySession {

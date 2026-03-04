@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Platform } from "react-native";
+import { StyleSheet, View, TouchableOpacity, ScrollView, Platform } from "react-native";
+import { Text } from "@/components/AppText";;
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ArrowLeft, RotateCw, Bookmark } from "lucide-react-native";
@@ -12,14 +13,16 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 
-import colors from "@/constants/colors";
+import { useThemeColors } from "@/hooks/useThemeColors";
 import { useFlashcardStore } from "@/store/flashcard-store";
-import { extractLatex } from "@/utils/latex-renderer";
+import { containsLatex } from "@/utils/latex-renderer";
 import WebViewLatexBlock from "../../components/WebViewLatexBlock";
 
 export default function StudyCardDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const colors = useThemeColors();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
   
   const flashcards = useFlashcardStore(state => state.flashcards);
   const card = flashcards.find(c => c.id === id);
@@ -114,14 +117,16 @@ export default function StudyCardDetailScreen() {
     };
   });
   
-  const frontContent = extractLatex(card.front);
-  const backContent = extractLatex(card.back);
+  // Removed frontContent and backContent as extractLatex is no longer used
   
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <Stack.Screen 
         options={{
           title: "Card Details",
+          headerStyle: { backgroundColor: colors.background },
+          headerShadowVisible: false,
+          headerTintColor: colors.textDark,
           headerLeft: () => (
             <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: Platform.OS === 'ios' ? 16 : 0}}>
               <ArrowLeft size={24} color={colors.primary} />
@@ -161,13 +166,11 @@ export default function StudyCardDetailScreen() {
             <>
               <Text style={styles.cardSideLabel}>FRONT</Text>
               <View style={styles.contentContainer}>
-                {frontContent.map((part, index) => (
-                  part.type === 'latex' ? (
-                    <WebViewLatexBlock key={index} latex={part.content} />
-                  ) : (
-                    <Text key={index} style={styles.cardText}>{part.content}</Text>
-                  )
-                ))}
+                {containsLatex(card.front) ? (
+                  <WebViewLatexBlock latex={card.front} />
+                ) : (
+                  <Text style={styles.cardText}>{card.front}</Text>
+                )}
               </View>
               
               {card.mediaUrls && card.mediaUrls.length > 0 && card.mediaUrls[0] && (
@@ -190,13 +193,11 @@ export default function StudyCardDetailScreen() {
             <>
               <Text style={styles.cardSideLabel}>BACK</Text>
               <View style={styles.contentContainer}>
-                {backContent.map((part, index) => (
-                  part.type === 'latex' ? (
-                    <WebViewLatexBlock key={index} latex={part.content} />
-                  ) : (
-                    <Text key={index} style={styles.cardText}>{part.content}</Text>
-                  )
-                ))}
+                {containsLatex(card.back) ? (
+                  <WebViewLatexBlock latex={card.back} />
+                ) : (
+                  <Text style={styles.cardText}>{card.back}</Text>
+                )}
               </View>
               {/* Consider if back images are needed and how to handle them if card.mediaUrls has multiple items */}
             </>
@@ -215,7 +216,7 @@ export default function StudyCardDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -250,11 +251,11 @@ const styles = StyleSheet.create({
     flex: 1,
     marginHorizontal: 20,
     marginBottom: 20, // Added margin bottom for spacing from safe area
-    backgroundColor: "white",
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: colors.gray[200],
+    borderColor: colors.border,
     position: "relative",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },

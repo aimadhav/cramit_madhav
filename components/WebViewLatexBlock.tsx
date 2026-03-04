@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, StyleSheet, useColorScheme, Platform } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import WebView from 'react-native-webview';
+import { useThemeColors } from '@/hooks/useThemeColors';
 
 interface WebViewLatexBlockProps {
   latex: string;
@@ -10,13 +11,11 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
   const [webViewHeight, setWebViewHeight] = useState(50); 
   const webViewRef = useRef<WebView>(null);
   const [webViewKey, setWebViewKey] = useState(Date.now().toString());
-  const colorScheme = useColorScheme();
-  const theme = colorScheme === 'dark' ? 
-                { colors: { backgroundColor: '#121212', textColor: 'white' } } : 
-                { colors: { backgroundColor: 'white', textColor: 'black' } };
-  const { backgroundColor, textColor } = theme.colors;
+  const colors = useThemeColors();
 
-  const contentForMathJaxDisplay = latex;
+  // If the content was heuristic-flagged as LaTeX but lacks standard delimiters, auto-wrap it.
+  const hasDelimiters = /(\$\$|\$|\\\(|\\\[)/.test(latex);
+  const contentForMathJaxDisplay = hasDelimiters ? latex : `\\(${latex}\\)`;
   const scriptLatexStringLiteral = JSON.stringify(latex);
 
   const htmlContent = `
@@ -27,24 +26,32 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
     <style>
       body {
         margin: 0;
-        padding: 0;
-        background-color: ${backgroundColor};
-        color: ${textColor};
-        display: flex;
-        justify-content: flex-start; 
-        align-items: flex-start; 
-        min-height: 1px;
+        padding: 8px 16px; 
+        background-color: transparent; 
+        color: ${colors.textDark}; 
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 22px;
+        line-height: 1.45;
+        visibility: hidden; 
+        overflow-x: hidden;
+        overflow-y: hidden; 
       }
       #math-content {
           overflow-wrap: break-word; 
+          word-wrap: break-word;
           width: 100%; 
+          text-align: center;
+          white-space: pre-wrap; 
+      }
+      mjx-container svg {
+          max-width: 100%;
+          height: auto !important;
       }
     </style>
   </head>
   <body>
-    <div id="math-content">$$${contentForMathJaxDisplay}$$</div>
+    <div id="math-content">${contentForMathJaxDisplay}</div>
     <script type="text/javascript">
-      // This JS variable 'originalLatexPropValue' will hold the true value of the latex prop
       const originalLatexPropValue = ${scriptLatexStringLiteral};
 
       function sendMessage(type, data) {
@@ -53,18 +60,21 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
 
       function updateHeight() {
         setTimeout(function() {
-          var contentElement = document.getElementById('math-content');
-          var newHeight = contentElement ? contentElement.scrollHeight : document.body.scrollHeight;
-          newHeight = Math.max(newHeight, 20); 
+          var contentBlock = document.getElementById('math-content');
+          if (!contentBlock) return;
+          
+          var rect = contentBlock.getBoundingClientRect();
+          var exactHeight = Math.ceil(rect.height) + 16; 
+          exactHeight = Math.max(exactHeight, 30); 
+          
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'rendered_height',
-            height: newHeight,
+            height: exactHeight,
             latex: originalLatexPropValue 
           }));
-        }, 350); // Increased timeout slightly, was 350, can be tuned
+        }, 150); 
       }
 
-      // Initial message for debugging if script loads
       try {
         sendMessage('DEBUG_MSG', 'WebView script loaded. Latex prop for msg: ' + originalLatexPropValue);
       } catch(e) {
@@ -73,7 +83,6 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
 
       document.addEventListener('DOMContentLoaded', function() {
         sendMessage('dom_content_loaded', 'DOMContentLoaded event fired.');
-        updateHeight(); // updateHeight will be called after DOMContentLoaded
       });
 
       window.MathJax = {
@@ -90,9 +99,11 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
             MathJax.startup.defaultReady();
             sendMessage('mathjax_status', 'MathJax defaultReady executed. Typesetting should be complete.');
             try {
-              MathJax.typeset(); // Explicitly call typeset
+              MathJax.typeset(); 
+              document.body.style.visibility = 'visible'; 
               sendMessage('mathjax_status', 'MathJax.typeset() called.');
             } catch(e) {
+              document.body.style.visibility = 'visible';
               sendMessage('mathjax_status', 'Error calling MathJax.typeset(): ' + e.toString());
             }
             updateHeight();
@@ -104,8 +115,6 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
           processHtmlClass: 'tex2jax_process'
         }
       };
-
-      window.addEventListener('resize', updateHeight);
     </script>
     <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
   </body>
@@ -115,15 +124,17 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
   const handleMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-      console.log('[WebView Message]', data); 
 
-      // Compare received latex (which is originalLatexPropValue from script) with the component's original latex prop
       if (data.type === 'rendered_height' && data.latex === latex) {
-        setWebViewHeight(data.height + 15); // Add some padding
+        setWebViewHeight(prev => {
+          if (Math.abs(prev - data.height) > 2) {
+            return data.height;
+          }
+          return prev;
+        });
       } else if (data.type === 'ERROR') {
         console.error('[WebView Error]', data.data);
       }
-      // Other message types are for logging/debugging
     } catch (error) {
       console.error('Error parsing message from WebView:', error, event.nativeEvent.data);
     }

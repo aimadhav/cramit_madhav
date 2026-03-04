@@ -1,5 +1,6 @@
 import React from "react";
-import { StyleSheet, Text, View, TouchableOpacity, Switch, ScrollView, Alert } from "react-native";
+import { StyleSheet, View, TouchableOpacity, Switch, ScrollView, Alert } from "react-native";
+import { Text } from "@/components/AppText";;
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { 
@@ -16,33 +17,41 @@ import {
   RotateCcw
 } from "lucide-react-native";
 
-import colors from "@/constants/colors";
-import { useUserStore } from "@/store/user-store";
+import { useThemeColors } from "@/hooks/useThemeColors";
+import { useUserStore, OFFLINE_MODE_TOKEN } from "@/store/user-store";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import BackendStatus from "@/components/BackendStatus";
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const colors = useThemeColors();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
+
   const user = useUserStore(state => state.user);
+  const sessionToken = useUserStore(state => state.sessionToken);
   const logout = useUserStore(state => state.logout);
   const updateUser = useUserStore(state => state.updateUser);
   const resetUserProgress = useUserStore(state => state.resetUserProgress);
+  const themePreference = useUserStore(state => state.themePreference);
+  const setThemePreference = useUserStore(state => state.setThemePreference);
   const resetAllProgress = useFlashcardStore(state => state.resetAllProgress);
   
-  const [darkMode, setDarkMode] = React.useState(false);
+  const isOffline = sessionToken === OFFLINE_MODE_TOKEN;
+
+  const isDarkModeOn = themePreference === 'dark';
   const [notifications, setNotifications] = React.useState(true);
   
   const handleLogout = () => {
     Alert.alert(
-      "Logout",
-      "Are you sure you want to logout?",
+      isOffline ? "Exit Offline Mode" : "Logout",
+      isOffline ? "Are you sure you want to exit offline mode? You'll need internet access to sign back in." : "Are you sure you want to logout?",
       [
         {
           text: "Cancel",
           style: "cancel"
         },
         {
-          text: "Logout",
+          text: isOffline ? "Exit" : "Logout",
           onPress: () => {
             logout();
             router.replace("/");
@@ -83,6 +92,14 @@ export default function SettingsScreen() {
   };
 
   const handleDeleteAccount = () => {
+    if (isOffline) {
+      Alert.alert(
+        "Feature Unavailable",
+        "You cannot delete your account while in offline mode.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
     Alert.alert(
       "Delete Account",
       "Are you sure you want to delete your account? This action cannot be undone.",
@@ -104,8 +121,7 @@ export default function SettingsScreen() {
   };
   
   const toggleDarkMode = () => {
-    setDarkMode(!darkMode);
-    // In a real app, this would update the theme
+    setThemePreference(themePreference === 'dark' ? 'light' : 'dark');
   };
   
   const toggleNotifications = () => {
@@ -120,8 +136,8 @@ export default function SettingsScreen() {
           <Text style={styles.title}>Settings</Text>
         </View>
         
-        {/* Backend Status */}
-        <BackendStatus />
+        {/* Backend Status - Hidden in Offline Mode */}
+        {!isOffline && <BackendStatus />}
         
         {/* Profile Section */}
         <View style={styles.profileSection}>
@@ -132,12 +148,14 @@ export default function SettingsScreen() {
             <Text style={styles.profileName}>{user?.name}</Text>
             <Text style={styles.profileEmail}>{user?.email}</Text>
           </View>
-          <TouchableOpacity 
-            style={styles.editButton}
-            onPress={() => router.push("/profile/edit")}
-          >
-            <Text style={styles.editButtonText}>Edit</Text>
-          </TouchableOpacity>
+          {!isOffline && (
+            <TouchableOpacity 
+              style={styles.editButton}
+              onPress={() => router.push("/profile/edit" as any)}
+            >
+              <Text style={styles.editButtonText}>Edit</Text>
+            </TouchableOpacity>
+          )}
         </View>
         
         {/* Preferences Section */}
@@ -150,10 +168,10 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.settingText}>Dark Mode</Text>
             <Switch
-              value={darkMode}
+              value={isDarkModeOn}
               onValueChange={toggleDarkMode}
               trackColor={{ false: colors.gray[300], true: colors.primaryLight }}
-              thumbColor={darkMode ? colors.primary : colors.gray[100]}
+              thumbColor={isDarkModeOn ? colors.primary : colors.gray[100]}
             />
           </View>
           
@@ -170,42 +188,46 @@ export default function SettingsScreen() {
             />
           </View>
           
-          <View style={styles.settingItem}>
-            <View style={styles.settingIconContainer}>
-              <Server size={20} color={colors.textDark} />
-            </View>
-            <Text style={styles.settingText}>Sync with Server</Text>
-            <Switch
-              value={true}
-              trackColor={{ false: colors.gray[300], true: colors.primaryLight }}
-              thumbColor={colors.primary}
-            />
-          </View>
-        </View>
-        
-        {/* Subscription Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Subscription</Text>
-          
-          <TouchableOpacity 
-            style={styles.settingItem}
-            onPress={() => router.push("/subscription")}
-          >
-            <View style={styles.settingIconContainer}>
-              <CreditCard size={20} color={colors.textDark} />
-            </View>
-            <Text style={styles.settingText}>
-              {user?.isPremium ? "Manage Subscription" : "Upgrade to Premium"}
-            </Text>
-            <ChevronRight size={20} color={colors.gray[400]} />
-          </TouchableOpacity>
-          
-          {user?.isPremium && (
-            <View style={styles.premiumBadge}>
-              <Text style={styles.premiumText}>PRO</Text>
+          {!isOffline && (
+            <View style={styles.settingItem}>
+              <View style={styles.settingIconContainer}>
+                <Server size={20} color={colors.textDark} />
+              </View>
+              <Text style={styles.settingText}>Sync with Server</Text>
+              <Switch
+                value={true}
+                trackColor={{ false: colors.gray[300], true: colors.primaryLight }}
+                thumbColor={colors.primary}
+              />
             </View>
           )}
         </View>
+        
+        {/* Subscription Section */}
+        {!isOffline && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Subscription</Text>
+            
+            <TouchableOpacity 
+              style={styles.settingItem}
+              onPress={() => router.push("/subscription" as any)}
+            >
+              <View style={styles.settingIconContainer}>
+                <CreditCard size={20} color={colors.textDark} />
+              </View>
+              <Text style={styles.settingText}>
+                {user?.isPremium ? "Manage Subscription" : "Upgrade to Premium"}
+              </Text>
+              <ChevronRight size={20} color={colors.gray[400]} />
+            </TouchableOpacity>
+            
+            {user?.isPremium && (
+              <View style={styles.premiumBadge}>
+                <Text style={styles.premiumText}>PRO</Text>
+              </View>
+            )}
+          </View>
+        )}
         
         {/* Support Section */}
         <View style={styles.section}>
@@ -213,7 +235,7 @@ export default function SettingsScreen() {
           
           <TouchableOpacity 
             style={styles.settingItem}
-            onPress={() => router.push("/help")}
+            onPress={() => router.push("/help" as any)}
           >
             <View style={styles.settingIconContainer}>
               <HelpCircle size={20} color={colors.textDark} />
@@ -224,7 +246,7 @@ export default function SettingsScreen() {
           
           <TouchableOpacity 
             style={styles.settingItem}
-            onPress={() => router.push("/privacy")}
+            onPress={() => router.push("/privacy" as any)}
           >
             <View style={styles.settingIconContainer}>
               <Shield size={20} color={colors.textDark} />
@@ -255,7 +277,7 @@ export default function SettingsScreen() {
             <View style={[styles.settingIconContainer, styles.logoutIcon]}>
               <LogOut size={20} color={colors.error} />
             </View>
-            <Text style={[styles.settingText, styles.logoutText]}>Logout</Text>
+            <Text style={[styles.settingText, styles.logoutText]}>{isOffline ? "Exit Offline Mode" : "Logout"}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -263,9 +285,11 @@ export default function SettingsScreen() {
             onPress={handleDeleteAccount}
           >
             <View style={[styles.settingIconContainer, styles.deleteIcon]}>
-              <Trash2 size={20} color={colors.error} />
+              <Trash2 size={20} color={isOffline ? colors.gray[400] : colors.error} />
             </View>
-            <Text style={[styles.settingText, styles.deleteText]}>Delete Account</Text>
+            <Text style={[styles.settingText, isOffline ? { color: colors.gray[400] } : styles.deleteText]}>
+              Delete Account
+            </Text>
           </TouchableOpacity>
         </View>
         
@@ -277,7 +301,7 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,

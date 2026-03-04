@@ -1,13 +1,6 @@
 import React, { useState } from 'react';
-import {
-  View,
-  TextInput,
-  Text,
-  StyleSheet,
-  Alert,
-  ActivityIndicator,
-  TouchableOpacity,
-} from 'react-native';
+import { View, TextInput, StyleSheet, Alert, ActivityIndicator, TouchableOpacity } from "react-native";
+import { Text } from "@/components/AppText";;
 import { useRouter } from 'expo-router';
 import { trpc } from '../../utils/trpc';
 import { Image } from 'react-native';

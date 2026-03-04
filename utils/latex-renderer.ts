@@ -15,8 +15,14 @@ export function renderLatex(latex: string): string {
 
 // Helper to detect LaTeX in text
 export function containsLatex(text: string): boolean {
+  if (!text) return false;
   // Simple detection for dollar signs which typically wrap LaTeX
-  return /\$\$(.*?)\$\$|\$(.*?)\$/.test(text);
+  if (/(\$\$(.*?)\$\$|\$(.*?)\$)/.test(text)) return true;
+  
+  // Fallback heuristic: Detect raw, un-bracketed math sequences commonly inputted manually
+  if (/\\int|\\frac|\\sum|\\sqrt|\\lim|\\alpha|\\beta|\\gamma|\\theta|\\mu|\\pi|\\infty/i.test(text)) return true;
+  
+  return false;
 }
 
 // Extract LaTeX expressions from text
@@ -48,6 +54,12 @@ export function extractLatex(text: string): { content: string, type: 'string' | 
     });
     
     lastIndex = match.index + match[0].length;
+  }
+  
+  // If we detected LaTeX keywords through the heuristic but found zero explicit $ delimiters
+  // we cast the entire node to LaTeX so the equation renders universally
+  if (parts.length === 0) {
+    return [{ content: text, type: 'latex' }];
   }
   
   // Add any remaining text

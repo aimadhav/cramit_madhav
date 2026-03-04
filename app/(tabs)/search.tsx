@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { StyleSheet, Text, View, TextInput, FlatList, TouchableOpacity, ScrollView } from "react-native";
+import { StyleSheet, View, TextInput, FlatList, TouchableOpacity, ScrollView } from "react-native";
+import { Text } from "@/components/AppText";;
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Search as SearchIcon, X, Tag } from "lucide-react-native";
 
-import colors from "@/constants/colors";
+import { useThemeColors } from "@/hooks/useThemeColors";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { Flashcard, Deck } from "@/types";
 
@@ -18,6 +19,8 @@ type SearchResult = {
 
 export default function SearchScreen() {
   const router = useRouter();
+  const colors = useThemeColors();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
   
@@ -40,7 +43,7 @@ export default function SearchScreen() {
     decks.forEach(deck => {
       const matchesSearch = searchQuery && 
         (deck.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-         deck.description.toLowerCase().includes(searchQuery.toLowerCase()));
+         (deck.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false));
       
       const matchesTag = activeTag && deck.tags.includes(activeTag);
       
@@ -195,7 +198,7 @@ export default function SearchScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,

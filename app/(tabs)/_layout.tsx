@@ -1,11 +1,15 @@
 import React from "react";
 import { Tabs } from "expo-router";
 import { Home, BookOpen, Settings, Search } from "lucide-react-native";
-import { Image, View, StyleSheet, Text } from "react-native";
+import { Image, View, StyleSheet } from "react-native";
+import { Text } from "@/components/AppText";;
 
-import colors from "@/constants/colors";
+import { useThemeColors } from "@/hooks/useThemeColors";
 
 export default function TabLayout() {
+  const colors = useThemeColors();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
+  
   return (
     <Tabs
       screenOptions={({ route }) => ({
@@ -73,7 +77,7 @@ export default function TabLayout() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   logo: {
     width: 100,
     height: 30,

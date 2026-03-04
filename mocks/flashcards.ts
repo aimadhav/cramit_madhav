@@ -12,7 +12,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -27,7 +28,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 29 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -42,7 +44,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 28 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -57,7 +60,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 27 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -74,7 +78,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 45 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -89,7 +94,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 44 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -106,7 +112,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 60 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -121,7 +128,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 59 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -139,7 +147,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 20 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 1 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -154,7 +163,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 19 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 1 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -172,7 +182,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 15 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 1 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -187,7 +198,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 25 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -203,7 +215,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 18 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -219,7 +232,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 55 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -235,7 +249,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 40 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -250,7 +265,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 42 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -266,7 +282,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 17 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 1 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -281,7 +298,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 26 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 4 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -296,7 +314,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 58 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 9 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -312,7 +331,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 16 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 1 * 24 * 60 * 60 * 1000,
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -329,7 +349,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now(),
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -344,7 +365,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now(),
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -359,7 +381,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 9 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now(),
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -374,7 +397,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 9 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now(),
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null
@@ -389,7 +413,8 @@ export const mockFlashcards: Flashcard[] = [
     createdAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now(),
     interval: 1,
-    easeFactor: 2.5,
+    stability: 0,
+    difficulty: 0,
     repetitions: 0,
     dueDate: Date.now(),
     lastReviewed: null

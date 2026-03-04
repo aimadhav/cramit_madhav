@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createTRPCRouter, publicProcedure } from '../create-context';
+import { createTRPCRouter, publicProcedure, protectedProcedure } from '../create-context';
 import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
@@ -22,9 +22,10 @@ export const deckRouter = createTRPCRouter({
         AND: [],
       };
 
-      if (tags && tags.length > 0) {
-        (whereClause.AND as Prisma.DeckWhereInput[]).push({ tags: { hasSome: tags } });
-      }
+      // Note: tagsJson is a String field in Prisma, we can't use hasSome
+      // For now, we omit Prisma-side tag filtering and handle it if needed
+      // or use a contains check if it's simple. 
+      // Removing the broken tags portion:
       if (subject) {
         (whereClause.AND as Prisma.DeckWhereInput[]).push({ subject: { contains: subject, mode: 'insensitive' } });
       }
@@ -53,7 +54,7 @@ export const deckRouter = createTRPCRouter({
       }));
     }),
 
-  listUserDecks: publicProcedure
+  listUserDecks: protectedProcedure
     .input(
       z.object({
         limit: z.number().min(1).max(100).nullish(),
@@ -63,7 +64,7 @@ export const deckRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const limit = input?.limit ?? 10;
       const { cursor } = input ?? {};
-      const userIdAuth = "guest-user"; 
+      const userIdAuth = ctx.user.id; 
 
       const decks = await ctx.prisma.deck.findMany({
         take: limit + 1,
@@ -87,7 +88,7 @@ export const deckRouter = createTRPCRouter({
       }));
     }),
   
-  create: publicProcedure
+  create: protectedProcedure
     .input(
       z.object({
         name: z.string().min(1).max(100),
@@ -101,7 +102,7 @@ export const deckRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const userIdAuth = "guest-user"; 
+      const userIdAuth = ctx.user.id; 
       const { tags, ...restInput } = input;
       const deck = await ctx.prisma.deck.create({
         data: {
@@ -128,14 +129,9 @@ export const deckRouter = createTRPCRouter({
       const deck = await ctx.prisma.deck.findUnique({
         where: { id: input.id },
         include: {
-          flashcards: {
-            orderBy: {
-              createdAt: 'asc',
-            },
+          _count: {
+            select: { flashcards: true },
           },
-          user: { 
-            select: { id: true, name: true, email: true },
-          }
         },
       });
 
@@ -145,10 +141,84 @@ export const deckRouter = createTRPCRouter({
           message: 'Deck not found',
         });
       }
-      return deck;
+      return {
+        ...deck,
+        tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : [],
+      };
     }),
 
-  update: publicProcedure
+  // New optimized procedure: fetches deck + all flashcards + user statuses in one call
+  getByIdWithCards: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ ctx, input }) => {
+      console.log('[getByIdWithCards] Called with id:', input.id);
+      
+      try {
+        const deck = await ctx.prisma.deck.findUnique({
+          where: { id: input.id },
+          include: {
+            flashcards: {
+              orderBy: { createdAt: 'asc' },
+            },
+            _count: {
+              select: { flashcards: true },
+            },
+          },
+        });
+
+        console.log('[getByIdWithCards] Deck found:', deck ? 'yes' : 'no');
+
+        if (!deck) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'Deck not found',
+          });
+        }
+
+        console.log('[getByIdWithCards] Deck has', deck.flashcards.length, 'flashcards');
+
+        // Fetch user statuses if logged in
+        let userStatuses: any[] = [];
+        if (ctx.user) {
+          console.log('[getByIdWithCards] Fetching user statuses for user:', ctx.user.id);
+          userStatuses = await ctx.prisma.userFlashcardStatus.findMany({
+            where: {
+              userId: ctx.user.id,
+              flashcardId: { in: deck.flashcards.map(f => f.id) },
+              isDeleted: false,
+            },
+          });
+          console.log('[getByIdWithCards] Found', userStatuses.length, 'user statuses');
+        } else {
+          console.log('[getByIdWithCards] No user logged in, skipping user statuses');
+        }
+
+        // Parse JSON fields for flashcards
+        const flashcardsWithParsedFields = deck.flashcards.map(fc => ({
+          ...fc,
+          tags: fc.tagsJson ? JSON.parse(fc.tagsJson) : [],
+          mediaUrls: fc.mediaUrlsJson ? JSON.parse(fc.mediaUrlsJson) : [],
+        }));
+
+        console.log('[getByIdWithCards] Returning deck with parsed flashcards');
+
+        return {
+          deck: {
+            ...deck,
+            tags: deck.tagsJson ? JSON.parse(deck.tagsJson) : [],
+            cardCount: deck._count.flashcards,
+          },
+          flashcards: flashcardsWithParsedFields,
+          userStatuses,
+        };
+      } catch (error: any) {
+        console.error('[getByIdWithCards] Error:', error.message);
+        console.error('[getByIdWithCards] Stack:', error.stack);
+        throw error;
+      }
+    }),
+
+  update: protectedProcedure
     .input(
       z.object({
         id: z.string(),
@@ -164,7 +234,7 @@ export const deckRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, tags, ...otherData } = input;
-      const userIdAuth = "guest-user"; 
+      const userIdAuth = ctx.user.id; 
 
       const deck = await ctx.prisma.deck.findUnique({
         where: { id },
@@ -174,14 +244,15 @@ export const deckRouter = createTRPCRouter({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Deck not found' });
       }
 
-      // Auth check disabled for now
-      // if (deck.userId !== userIdAuth) { 
-      //   throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only update your own decks' });
-      // }
+      if (deck.userId !== userIdAuth) { 
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only update your own decks' });
+      }
 
-      const dataToUpdate: Prisma.DeckUpdateInput = { ...otherData };
-      if (tags !== undefined) {
-        dataToUpdate.tags = tags === null ? [] : tags;
+      const dataToUpdate: any = { ...otherData };
+      if (tags !== undefined && tags !== null) {
+        dataToUpdate.tagsJson = JSON.stringify(tags);
+      } else if (tags === null) {
+        dataToUpdate.tagsJson = "[]";
       }
 
       return ctx.prisma.deck.update({
@@ -190,10 +261,10 @@ export const deckRouter = createTRPCRouter({
       });
     }),
 
-  delete: publicProcedure
+  delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const userIdAuth = "guest-user"; 
+      const userIdAuth = ctx.user.id; 
       const deck = await ctx.prisma.deck.findUnique({
         where: { id: input.id },
       });
@@ -202,10 +273,9 @@ export const deckRouter = createTRPCRouter({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Deck not found' });
       }
 
-      // Auth check disabled for now
-      // if (deck.userId !== userIdAuth) { 
-      //   throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own decks' });
-      // }
+      if (deck.userId !== userIdAuth) { 
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own decks' });
+      }
       
       await ctx.prisma.deck.delete({
         where: { id: input.id },
@@ -213,10 +283,10 @@ export const deckRouter = createTRPCRouter({
       return { success: true, message: 'Deck deleted successfully' };
     }),
 
-  studyPublicDeck: publicProcedure
+  studyPublicDeck: protectedProcedure
     .input(z.object({ deckId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const userId = "guest-user";
+      const userId = ctx.user.id;
       const { deckId } = input;
 
       // 1. Find the public deck and include its flashcards
@@ -271,7 +341,6 @@ export const deckRouter = createTRPCRouter({
                 // isDeleted: false, // Un-delete if it was soft-deleted
                 // dueDate: new Date(), // Reset due date
                 // interval: 1, // Reset interval
-                // easeFactor: 2.5, // Reset ease factor
                 // repetitions: 0, // Reset repetitions
                 // isLearned: false, // Reset learned status
                 // lastReviewed: null // Reset last reviewed

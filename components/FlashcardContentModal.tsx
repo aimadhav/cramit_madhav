@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusBar } from 'react-native';
+import { Modal, View, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusBar } from "react-native";
+import { Text } from "@/components/AppText";;
 import { Image } from 'expo-image';
 import { X } from 'lucide-react-native';
 

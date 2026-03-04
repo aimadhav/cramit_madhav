@@ -11,7 +11,9 @@ export const mockDecks: Deck[] = [
     createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
     subject: 'Physics',
-    chapter: 'Mechanics'
+    chapter: 'Mechanics',
+    userId: 'system',
+    isPublic: true
   },
   {
     id: 'deck-2',
@@ -24,7 +26,9 @@ export const mockDecks: Deck[] = [
     createdAt: Date.now() - 45 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
     subject: 'Chemistry',
-    chapter: 'Organic Chemistry'
+    chapter: 'Organic Chemistry',
+    userId: 'system',
+    isPublic: true
   },
   {
     id: 'deck-3',
@@ -36,7 +40,9 @@ export const mockDecks: Deck[] = [
     createdAt: Date.now() - 60 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
     subject: 'Mathematics',
-    chapter: 'Calculus'
+    chapter: 'Calculus',
+    userId: 'system',
+    isPublic: true
   },
   {
     id: 'deck-4',
@@ -49,7 +55,9 @@ export const mockDecks: Deck[] = [
     createdAt: Date.now() - 20 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 1 * 24 * 60 * 60 * 1000,
     subject: 'Biology',
-    chapter: 'Human Physiology'
+    chapter: 'Human Physiology',
+    userId: 'system',
+    isPublic: true
   },
   {
     id: 'deck-5',
@@ -61,7 +69,9 @@ export const mockDecks: Deck[] = [
     createdAt: Date.now() - 15 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
     subject: 'Chemistry',
-    chapter: 'Periodic Table'
+    chapter: 'Periodic Table',
+    userId: 'system',
+    isPublic: true
   },
   {
     id: 'deck-6',
@@ -74,7 +84,9 @@ export const mockDecks: Deck[] = [
     createdAt: Date.now() - 25 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now() - 4 * 24 * 60 * 60 * 1000,
     subject: 'Physics',
-    chapter: 'Electromagnetism'
+    chapter: 'Electromagnetism',
+    userId: 'system',
+    isPublic: true
   },
   {
     id: 'deck-7',
@@ -86,6 +98,8 @@ export const mockDecks: Deck[] = [
     createdAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
     updatedAt: Date.now(),
     subject: 'Biology',
-    chapter: 'Biomolecules'
+    chapter: 'Biomolecules',
+    userId: 'system',
+    isPublic: true
   }
 ];

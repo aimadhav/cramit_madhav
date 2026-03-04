@@ -1,103 +1,104 @@
 import { Flashcard, DifficultyRating } from '@/types';
 
-// SM-2 algorithm implementation based on Anki's spaced repetition system
+const W = [
+  0.4025, 0.8445, 2.1803, 5.8419, // Initial stability for Again, Hard, Good, Easy
+  4.9346, 0.9471, // Initial difficulty, Difficulty weight
+  0.8602, 0.0066, // Difficulty mean, Difficulty recovery
+  1.493, 0.1407, // Stability exponential, Stability coefficient
+  0.9426, 2.1843, // Stability recall bonus, Stability forget penalty
+  0.05, 0.3448, 1.2505, 0.298, // Stability update parameters
+  2.61, // Max interval
+];
+
+const REQUESTED_RETENTION = 0.9;
+const DECAY = Math.log(0.9);
+
+/**
+ * Calculate the next review data using FSRS algorithm.
+ */
 export function calculateNextReview(
   card: Flashcard,
   rating: DifficultyRating
 ): Partial<Flashcard> {
-  let { interval, easeFactor, repetitions } = card;
-  
-  // Default values if not set
-  interval = interval || 1;
-  easeFactor = easeFactor || 2.5;
-  repetitions = repetitions || 0;
-  
   const now = Date.now();
+  const ratingMap: Record<DifficultyRating, number> = {
+    'again': 1,
+    'hard': 2,
+    'good': 3,
+    'easy': 4,
+  };
+  const G = ratingMap[rating];
   
-  // Calculate new values based on rating
-  switch (rating) {
-    case 'again': // Failed to recall - reset to beginning
-      repetitions = 0;
-      interval = 1; // Reset interval to 1 day
-      easeFactor = Math.max(1.3, easeFactor - 0.2); // Reduce ease factor
-      break;
+  let { stability, difficulty, repetitions, lastReviewed } = card; 
+  
+  // Default values for new cards or legacy cards where FSRS fields are 0
+  if (repetitions === 0 || !lastReviewed || stability === 0) {
+    // Initial review or migration to FSRS
+    stability = W[G - 1];
+    difficulty = Math.max(1, Math.min(10, W[4] - (G - 1) * W[5]));
+    repetitions = repetitions === 0 ? 1 : repetitions + 1;
+  } else {
+    // Calculated days since last review
+    const t = Math.max(1, Math.floor((now - lastReviewed) / (24 * 60 * 60 * 1000)));
+    
+    // Current retrievability
+    const R = Math.exp(DECAY * t / stability);
+    
+    // Update difficulty
+    difficulty = difficulty - W[6] * (G - 3);
+    difficulty = Math.max(1, Math.min(10, difficulty));
+    
+    // Update stability
+    if (G === 1) { // Again (Forget)
+      stability = W[11] * Math.pow(difficulty, -W[12]) * (Math.pow(stability + 1, W[13]) - 1) * Math.exp(W[14] * (1 - R));
+    } else { // Hard, Good, Easy (Recall)
+      const hardPenalty = G === 2 ? W[15] : 1.0;
+      const easyBonus = G === 4 ? W[16] : 1.0;
       
-    case 'hard': // Correct but difficult
-      if (repetitions === 0) {
-        // First time seen - graduate to 1 day but mark as hard
-        interval = 1;
-        repetitions = 1;
-      } else {
-        // Subsequent reviews - multiply by 1.2 instead of full ease factor
-        interval = Math.max(1, Math.round(interval * 1.2));
-        repetitions += 1;
-      }
-      easeFactor = Math.max(1.3, easeFactor - 0.15); // Reduce ease factor slightly
-      break;
-      
-    case 'good': // Normal correct answer (most common)
-      if (repetitions === 0) {
-        // First time seen - graduate to 1 day
-        interval = 1;
-        repetitions = 1;
-      } else if (repetitions === 1) {
-        // Second review - graduate to 6 days (standard Anki progression)
-        interval = 6;
-        repetitions = 2;
-      } else {
-        // Subsequent reviews - multiply by ease factor
-        interval = Math.round(interval * easeFactor);
-        repetitions += 1;
-      }
-      // Ease factor stays the same for 'good' ratings
-      break;
-      
-    case 'easy': // Correct and easy
-      if (repetitions === 0) {
-        // First time seen - skip to 4 days (early graduation)
-        interval = 4;
-        repetitions = 2; // Skip the 6-day step
-      } else if (repetitions === 1) {
-        // Second review - jump to longer interval
-        interval = 10;
-        repetitions = 2;
-      } else {
-        // Subsequent reviews - multiply by ease factor * 1.3 (easier bonus)
-        interval = Math.round(interval * easeFactor * 1.3);
-        repetitions += 1;
-      }
-      easeFactor = Math.min(2.8, easeFactor + 0.15); // Increase ease factor (cap at 2.8)
-      break;
+      stability = stability * (1 + Math.exp(W[8]) * (11 - difficulty) * Math.pow(stability, -W[9]) * (Math.exp(W[10] * (1 - R)) - 1) * hardPenalty * easyBonus);
+    }
+    
+    repetitions += 1;
   }
   
-  // Calculate due date (current time + interval in days)
-  const dueDate = now + interval * 24 * 60 * 60 * 1000;
+  // Calculate next interval based on stability and requested retention
+  // I = S * ln(R_target) / ln(0.9)
+  const nextInterval = Math.max(1, Math.round(stability * Math.log(REQUESTED_RETENTION) / DECAY));
+  
+  // Calculate due date
+  const dueDate = now + nextInterval * 24 * 60 * 60 * 1000;
   
   return {
-    interval,
-    easeFactor,
+    stability,
+    difficulty,
+    interval: nextInterval,
     repetitions,
     dueDate,
     lastReviewed: now,
   };
 }
 
-// Get cards due for review
+/**
+ * Get cards due for review.
+ */
 export function getDueCards(cards: Flashcard[]): Flashcard[] {
   const now = Date.now();
   return cards.filter(card => {
-    // Only include cards that have been reviewed at least once (lastReviewed is not null)
-    // AND are due for review (no dueDate set or dueDate is in the past)
+    // Cards are due if they've been reviewed before AND (no due date OR due date passed)
     return card.lastReviewed !== null && (!card.dueDate || card.dueDate <= now);
   });
 }
 
-// Get new cards (cards that have never been reviewed)
+/**
+ * Get new cards (never reviewed).
+ */
 export function getNewCards(cards: Flashcard[]): Flashcard[] {
-  return cards.filter(card => card.lastReviewed === null);
+  return cards.filter(card => !card.lastReviewed);
 }
 
-// Sort cards by due date
+/**
+ * Sort cards by priority (due date).
+ */
 export function sortCardsByDue(cards: Flashcard[]): Flashcard[] {
   return [...cards].sort((a, b) => (a.dueDate || 0) - (b.dueDate || 0));
 }

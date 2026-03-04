@@ -61,6 +61,30 @@ export const createContext = async (opts: FetchCreateContextFnOptions): Promise<
   const user = await getUserFromHeader(opts.req, supabase);
   const timestamp = Date.now();
 
+  // JIT User Sync: Ensure user exists in Prisma if they are authenticated via Supabase
+  if (user) {
+    try {
+      // We use upsert as a safe "ensure exists" operation
+      await prisma.user.upsert({
+        where: { id: user.id },
+        update: {
+          email: user.email!, // Keep email synced if it changed
+          updatedAt: new Date(),
+        },
+        create: {
+          id: user.id,
+          email: user.email!,
+          name: user.user_metadata?.full_name || user.user_metadata?.name || null,
+        },
+      });
+      // console.log(`[Context] User ${user.id} synced to Prisma`);
+    } catch (err) {
+      console.error(`[Context] Failed to sync user ${user.id} to Prisma:`, err);
+      // We don't throw here to avoid blocking requests, 
+      // but subsequent DB operations requiring the user might fail.
+    }
+  }
+
   // Note: __manuallyParsedInput is added by the wrapper in [trpc]+api.ts
   // So the object returned here doesn't strictly need it, but the type Context does.
   return { req: opts.req, prisma, supabase, user, timestamp };

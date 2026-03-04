@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store'; 
 import { Platform } from 'react-native';
+import { getSafeStorage } from '@/utils/safe-storage';
 
 export interface AppUser {
   id: string;
@@ -22,21 +23,26 @@ export interface AppUser {
   phone?: string; 
 }
 
+export type ThemePreference = 'system' | 'light' | 'dark';
+
 interface UserState {
   user: AppUser | null;
   sessionToken: string | null;
   tokenExpiry: number | null;
   isLoading: boolean;
   error: string | null;
+  themePreference: ThemePreference;
 
   setSession: (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => void;
   logout: () => Promise<void>;
+  loginOffline: () => Promise<void>;
   updateUser: (userData: Partial<AppUser>) => void;
   updateStudyStats: (studyTime: number, cardsStudied: number) => void;
   resetUserProgress: () => void;
   checkAuthStatus: () => Promise<void>;
   clearError: () => void;
   shouldRefreshToken: () => boolean;
+  setThemePreference: (theme: ThemePreference) => void;
 }
 
 const defaultUserInitialState: AppUser = {
@@ -58,6 +64,7 @@ const defaultUserInitialState: AppUser = {
 
 export const TOKEN_STORAGE_KEY = 'sessionToken';
 export const REFRESH_TOKEN_STORAGE_KEY = 'sessionRefreshToken';
+export const OFFLINE_MODE_TOKEN = 'offline-mode-token';
 
 export const useUserStore = create<UserState>()(
   persist(
@@ -67,6 +74,7 @@ export const useUserStore = create<UserState>()(
       tokenExpiry: null,
       isLoading: false,
       error: null,
+      themePreference: 'system',
 
       setSession: async (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => {
         set({
@@ -76,6 +84,9 @@ export const useUserStore = create<UserState>()(
           isLoading: false,
           error: null
         });
+
+        if (typeof window === 'undefined') return;
+
         if (Platform.OS === 'web') {
           localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
           if (expiresAt) {
@@ -114,6 +125,9 @@ export const useUserStore = create<UserState>()(
           isLoading: false, 
           error: null 
         });
+
+        if (typeof window === 'undefined') return;
+
         if (Platform.OS === 'web') {
           localStorage.removeItem(TOKEN_STORAGE_KEY);
           localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
@@ -123,7 +137,25 @@ export const useUserStore = create<UserState>()(
         }
       },
       
+      loginOffline: async () => {
+        set({
+          user: { ...defaultUserInitialState, name: 'Offline User', isLoggedIn: true },
+          sessionToken: OFFLINE_MODE_TOKEN,
+          isLoading: false,
+          error: null
+        });
+
+        if (typeof window === 'undefined') return;
+
+        if (Platform.OS === 'web') {
+          localStorage.setItem(TOKEN_STORAGE_KEY, OFFLINE_MODE_TOKEN);
+        } else {
+          await SecureStore.setItemAsync(TOKEN_STORAGE_KEY, OFFLINE_MODE_TOKEN);
+        }
+      },
+      
       checkAuthStatus: async () => {
+        if (typeof window === 'undefined') return;
         set({ isLoading: true });
         try {
           let accessToken: string | null = null;
@@ -232,12 +264,15 @@ export const useUserStore = create<UserState>()(
       },
       clearError: () => {
         set({ error: null });
+      },
+      setThemePreference: (theme: ThemePreference) => {
+        set({ themePreference: theme });
       }
     }),
     {
       name: 'flashcard-user-storage-v2', 
-      storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({ user: state.user }),
+      storage: createJSONStorage(() => getSafeStorage()),
+      partialize: (state) => ({ user: state.user, themePreference: state.themePreference as any }),
     }
   )
 );
