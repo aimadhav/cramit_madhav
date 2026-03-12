@@ -406,6 +406,27 @@ export default function StudySessionScreen() {
         </View>
       </View>
       
+      {/* Swipe hints (Moved to top) */}
+      <View style={styles.swipeHintContainer}>
+        {swipeDirection === 'left' && (
+          <Text style={[styles.swipeHint, styles.goodHint]}>Good</Text>
+        )}
+        {swipeDirection === 'right' && (
+          <Text style={[styles.swipeHint, styles.easyHint]}>Easy</Text>
+        )}
+        {swipeDirection === 'up' && (
+          <Text style={[styles.swipeHint, styles.againHint]}>Again</Text>
+        )}
+        {swipeDirection === 'down' && (
+          <Text style={[styles.swipeHint, styles.hardHint]}>Hard</Text>
+        )}
+        {!swipeDirection && (
+          <Text style={styles.swipeInstructions}>
+            ← Good • → Easy • ↑ Again • ↓ Hard
+          </Text>
+        )}
+      </View>
+      
       {/* Card */}
       <GestureDetector gesture={gesture}>
         <Animated.View style={[styles.cardContainer, cardStyle]}>
@@ -496,27 +517,6 @@ export default function StudySessionScreen() {
           </TouchableOpacity>
         </Animated.View>
       </GestureDetector>
-      
-      {/* Swipe hints */}
-      <View style={styles.swipeHintContainer}>
-        {swipeDirection === 'left' && (
-          <Text style={[styles.swipeHint, styles.goodHint]}>Good</Text>
-        )}
-        {swipeDirection === 'right' && (
-          <Text style={[styles.swipeHint, styles.easyHint]}>Easy</Text>
-        )}
-        {swipeDirection === 'up' && (
-          <Text style={[styles.swipeHint, styles.againHint]}>Again</Text>
-        )}
-        {swipeDirection === 'down' && (
-          <Text style={[styles.swipeHint, styles.hardHint]}>Hard</Text>
-        )}
-        {!swipeDirection && (
-          <Text style={styles.swipeInstructions}>
-            ← Good • → Easy • ↑ Again • ↓ Hard
-          </Text>
-        )}
-      </View>
       
       {/* Card side indicator */}
       <View style={styles.paginationContainer}>
@@ -668,25 +668,24 @@ const createStyles = (colors: any, insets: any) => StyleSheet.create({
   },
   swipeHintContainer: {
     alignItems: 'center',
-    paddingBottom: (insets?.bottom || 16) + 16,
-    width: '100%',
-    position: 'absolute',
-    bottom: 0,
-    zIndex: 10,
+    justifyContent: 'center',
+    height: 54, // Fixed height to prevent layout jumps
+    marginBottom: 8,
   },
   swipeHint: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: 'bold',
-    paddingVertical: 14,
-    width: SCREEN_WIDTH * 0.85,
+    paddingVertical: 8,
+    // paddingHorizontal: 24,
+    borderRadius: 16,
+    minWidth: 100,
     textAlign: 'center',
-    borderRadius: 24,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   goodHint: {
     backgroundColor: colors.primary,

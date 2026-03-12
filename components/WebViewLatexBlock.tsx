@@ -2,16 +2,95 @@ import React, { useRef, useState, useEffect } from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import WebView from 'react-native-webview';
 import { useThemeColors } from '@/hooks/useThemeColors';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Asset } from 'expo-asset';
 
 interface WebViewLatexBlockProps {
   latex: string;
 }
 
+// Global cache and loading lock for MathJax script content
+let mathjaxScriptCache: string | null = null;
+let mathjaxLoadingPromise: Promise<string | null> | null = null;
+
 const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
   const [webViewHeight, setWebViewHeight] = useState(50); 
   const webViewRef = useRef<WebView>(null);
   const [webViewKey, setWebViewKey] = useState(Date.now().toString());
+  const [mathjaxScript, setMathjaxScript] = useState<string | null>(mathjaxScriptCache);
   const colors = useThemeColors();
+
+  useEffect(() => {
+    const loadMathjax = async () => {
+      // 1. Check memory cache (fastest)
+      if (mathjaxScriptCache) {
+        setMathjaxScript(mathjaxScriptCache);
+        return;
+      }
+
+      // 2. If another instance is already loading, wait for it
+      if (mathjaxLoadingPromise) {
+        const content = await mathjaxLoadingPromise;
+        if (content) setMathjaxScript(content);
+        return;
+      }
+
+      // 3. Start loading and set the promise lock
+      mathjaxLoadingPromise = (async () => {
+        const cachePath = `${FileSystem.documentDirectory}mathjax-script.txt`;
+
+        try {
+          // Check persistent disk cache
+          const fileInfo = await FileSystem.getInfoAsync(cachePath);
+          if (fileInfo.exists) {
+            const content = await FileSystem.readAsStringAsync(cachePath);
+            mathjaxScriptCache = content;
+            return content;
+          }
+
+          // If not in cache, we MUST try to load from assets
+          // This will only fail if we are in DEV mode and the SERVER is OFF and it's the FIRST run
+          const asset = Asset.fromModule(require('../assets/mathjax/mathjax-script.txt'));
+          
+          // In production, asset.localUri is often already populated for bundled assets
+          if (!asset.localUri) {
+            try {
+              await asset.downloadAsync();
+            } catch (downloadError) {
+              // Only log this if we actually need it
+              throw new Error(`Asset download failed. Is the dev server running for the initial load? ${downloadError}`);
+            }
+          }
+          
+          if (asset.localUri) {
+            const content = await FileSystem.readAsStringAsync(asset.localUri);
+            
+            // Save to persistent cache for future offline uses
+            try {
+              await FileSystem.writeAsStringAsync(cachePath, content);
+            } catch (writeError) {
+              console.warn('Failed to save MathJax to persistent cache:', writeError);
+            }
+
+            mathjaxScriptCache = content;
+            return content;
+          }
+        } catch (error) {
+          // Silencing this error as requested to avoid the red error screen in development.
+          // The rendering usually still works via persistent cache or CDN fallback.
+          console.log('MathJax load sequence notification (not a critical error):', error);
+        } finally {
+          mathjaxLoadingPromise = null;
+        }
+        return null;
+      })();
+
+      const finalContent = await mathjaxLoadingPromise;
+      if (finalContent) setMathjaxScript(finalContent);
+    };
+
+    loadMathjax();
+  }, []);
 
   // If the content was heuristic-flagged as LaTeX but lacks standard delimiters, auto-wrap it.
   const hasDelimiters = /(\$\$|\$|\\\(|\\\[)/.test(latex);
@@ -116,7 +195,10 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
         }
       };
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+    <script type="text/javascript">
+      ${mathjaxScript || ''}
+    </script>
+    ${!mathjaxScript ? '<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>' : ''}
   </body>
   </html>
 `;
@@ -191,3 +273,4 @@ const styles = StyleSheet.create({
 });
 
 export default WebViewLatexBlock;
+

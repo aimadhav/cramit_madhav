@@ -8,11 +8,8 @@ const config = getDefaultConfig(__dirname);
 config.resolver = {
   ...config.resolver,
   unstable_enablePackageExports: false,
-  // It's often recommended for React Native, especially with libraries like Supabase,
-  // to ensure 'react-native' is a condition, and to list conditions explicitly.
-  // Default conditions usually include 'require', 'import'. 
-  // Supabase specifically mentions issues if 'browser' takes precedence over 'react-native' for some of its modules.
-  unstable_conditionNames: ['browser', 'require', 'react-native'], 
+  unstable_conditionNames: ['browser', 'require', 'react-native'],
+  assetExts: [...config.resolver.assetExts, 'txt'],
 };
 
 module.exports = config; 
