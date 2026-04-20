@@ -1,268 +1,202 @@
-import React, { useState, useCallback } from "react";
-import { StyleSheet, View, FlatList, TouchableOpacity, Image, ActivityIndicator, ScrollView, Alert } from "react-native";
-import { Text } from "@/components/AppText";;
+import React, { useState } from "react";
+import { StyleSheet, View, ScrollView, TouchableOpacity, Dimensions } from "react-native";
+import { Text } from "@/components/AppText";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { BookOpen, CheckCircle2, Search } from "lucide-react-native";
+import { Check, Zap, FunctionSquare, Lightbulb, Files, AlertCircle } from "lucide-react-native";
+import Animated, { 
+  useSharedValue, 
+  useAnimatedStyle, 
+  withSequence, 
+  withTiming, 
+  withRepeat,
+  interpolateColor
+} from "react-native-reanimated";
 
 import { useThemeColors } from "@/hooks/useThemeColors";
-import { useFlashcardStore } from "@/store/flashcard-store";
-import { Deck } from "@/types";
+import { MOCK_CURRICULUM, MOCK_CONTENT_TYPES, MOCK_USER_STATS } from "@/constants/mockData";
+
+const { width } = Dimensions.get('window');
+
+type Subject = 'Physics' | 'Chem' | 'Maths';
 
 export default function DecksScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
-  const decks = useFlashcardStore(state => state.decks);
-  const loadingDeckId = useFlashcardStore(state => state.loadingDeckId);
-  const loadDeckWithCards = useFlashcardStore(state => state.loadDeckWithCards);
-  const startStudySession = useFlashcardStore(state => state.startStudySession);
-  
-  const [filterPremium, setFilterPremium] = useState<boolean | null>(null);
-  const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
 
-  // Function to check if deck matches subject filter
-  const matchesSubject = (deck: Deck, subject: string): boolean => {
-    const deckName = deck.name.toLowerCase();
-    const deckTags = deck.tags.map(tag => tag.toLowerCase()).join(' ');
-    const deckSubject = deck.subject?.toLowerCase() || '';
-    const searchText = `${deckName} ${deckTags} ${deckSubject}`;
+  const [selectedSubject, setSelectedSubject] = useState<Subject>('Physics');
+  const [selectedContentTypes, setSelectedContentTypes] = useState<string[]>([]);
+  const [selectedChapters, setSelectedChapters] = useState<string[]>([]);
 
-    switch (subject) {
-      case 'physics':
-        return searchText.includes('phy') || searchText.includes('physics');
-      case 'chemistry':
-        return searchText.includes('chem') || searchText.includes('chemistry');
-      case 'maths':
-        return searchText.includes('math') || searchText.includes('maths');
-      case 'biology':
-        return searchText.includes('bio') || searchText.includes('biology');
-      default:
-        return true;
-    }
+  // Animation values - for very subtle suggestion
+  const shakeSection1 = useSharedValue(0);
+  const pulseSection1 = useSharedValue(0);
+
+  const toggleContentType = (id: string) => {
+    setSelectedContentTypes(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+    pulseSection1.value = withTiming(0);
   };
 
-  const filteredDecks = decks.filter(deck => {
-    const matchesPremium = filterPremium !== null ? deck.isPremium === filterPremium : true;
-    const matchesSubjectFilter = subjectFilter ? matchesSubject(deck, subjectFilter) : true;
-    return matchesPremium && matchesSubjectFilter;
-  });
-
-  const handleStartStudy = useCallback(async (deckId: string) => {
-    const deck = decks.find(d => d.id === deckId);
-    if (!deck) {
-      Alert.alert("Error", "Deck not found.");
-      return;
-    }
-
-    try {
-      // Load cards if needed
-      if (!deck.areCardsLoaded) {
-        await loadDeckWithCards(deckId);
-      }
-      
-      // Start session and navigate
-      startStudySession(deckId);
-      router.push(`/study/${deckId}`);
-    } catch (error: any) {
-      console.error('[DecksScreen] Study error:', error);
-      Alert.alert("Error", error.message || "Failed to load deck.");
-    }
-  }, [decks, loadDeckWithCards, startStudySession, router]);
-
-  const handleFilterPress = (type: 'premium' | 'subject', value: any) => {
-    if (type === 'premium') {
-      setFilterPremium(value);
-    } else {
-      setSubjectFilter(subjectFilter === value ? null : value);
-    }
-  };
-
-  const getSubjectButtonStyle = (subject: string) => {
-    const isActive = subjectFilter === subject;
-    let brandColor = colors.primary;
-    
-    switch (subject) {
-      case 'physics': brandColor = '#3B82F6'; break;
-      case 'chemistry': brandColor = '#10B981'; break;
-      case 'maths': brandColor = '#F59E0B'; break;
-      case 'biology': brandColor = '#EF4444'; break;
-    }
-    
-    return [
-      styles.filterButton, 
-      { 
-        backgroundColor: isActive ? brandColor : 'transparent',
-        borderColor: isActive ? brandColor : colors.border,
-        borderWidth: 1.5,
-      }
-    ];
-  };
-
-  const getSubjectTextStyle = (subject: string) => {
-    const isActive = subjectFilter === subject;
-    let brandColor = colors.primary;
-    
-    switch (subject) {
-      case 'physics': brandColor = '#3B82F6'; break;
-      case 'chemistry': brandColor = '#10B981'; break;
-      case 'maths': brandColor = '#F59E0B'; break;
-      case 'biology': brandColor = '#EF4444'; break;
-    }
-    
-    const weight: "bold" | "600" = isActive ? "bold" : "600";
-    
-    return [
-      styles.filterText, 
-      { 
-        color: isActive ? '#FFFFFF' : brandColor,
-        fontWeight: weight
-      }
-    ];
-  };
-
-  const renderDeckItem = ({ item }: { item: Deck }) => {
-    const isLoading = loadingDeckId === item.id;
-    
-    return (
-      <TouchableOpacity 
-        style={styles.deckCard}
-        onPress={() => router.push(`/deck/${item.id}`)}
-      >
-        <Image 
-          source={{ uri: item.coverImage || undefined }} 
-          style={styles.deckImage}
-        />
-        <View style={styles.deckContent}>
-          <View style={styles.deckInfo}>
-            <Text style={styles.deckTitle}>{item.name}</Text>
-            <Text style={styles.deckSubtitle}>{item.cardCount || 0} cards</Text>
-            <View style={styles.tagsContainer}>
-              {(item.tags || []).slice(0, 2).map(tag => (
-                <View key={tag} style={styles.tagBadge}>
-                  <Text style={styles.tagText}>{tag}</Text>
-                </View>
-              ))}
-              {item.tags && item.tags.length > 2 && (
-                <Text style={styles.moreTagsText}>+{item.tags.length - 2}</Text>
-              )}
-            </View>
-            {item.areCardsLoaded && (
-              <View style={styles.downloadedBadge}>
-                <CheckCircle2 size={12} color={colors.primary} />
-                <Text style={styles.downloadedText}>Downloaded</Text>
-              </View>
-            )}
-          </View>
-          <TouchableOpacity 
-            style={[styles.studyButton, isLoading && styles.loadingButton]}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleStartStudy(item.id);
-            }}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color="white" />
-                <Text style={styles.studyButtonText}>Loading...</Text>
-              </View>
-            ) : (
-              <>
-                <BookOpen size={16} color="white" />
-                <Text style={styles.studyButtonText}>Study</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-        {item.isPremium && (
-          <View style={styles.premiumBadge}>
-            <Text style={styles.premiumText}>PRO</Text>
-          </View>
-        )}
-      </TouchableOpacity>
+  const toggleChapter = (id: string) => {
+    setSelectedChapters(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
   };
 
+  const selectAllChapters = () => {
+    const chapters = MOCK_CURRICULUM[selectedSubject].chapters;
+    if (selectedChapters.length === chapters.length) {
+      setSelectedChapters([]);
+    } else {
+      setSelectedChapters(chapters.map(c => c.id));
+    }
+  };
+
+  const triggerSubtleSuggestion = () => {
+    // Only if chapters are selected but content types are not
+    if (selectedChapters.length > 0 && selectedContentTypes.length === 0) {
+      // Snappier subtle shake
+      shakeSection1.value = withSequence(
+        withTiming(-6, { duration: 80 }),
+        withRepeat(withTiming(6, { duration: 80 }), 3, true),
+        withTiming(0, { duration: 80 })
+      );
+      // Subtle glow pulse
+      pulseSection1.value = withSequence(
+        withTiming(1, { duration: 200 }),
+        withTiming(0, { duration: 600 })
+      );
+    }
+  };
+
+  const handleStartPress = () => {
+    if (isReady) {
+      router.push(`/study/temp_123`);
+    } else {
+      triggerSubtleSuggestion();
+    }
+  };
+
+  const animatedSection1Style = useAnimatedStyle(() => ({
+    transform: [{ translateX: shakeSection1.value }],
+    backgroundColor: interpolateColor(
+      pulseSection1.value,
+      [0, 1],
+      ['rgba(11, 12, 14, 0)', 'rgba(94, 106, 210, 0.15)']
+    ),
+    borderRadius: 16,
+  }));
+
+  const currentChapters = MOCK_CURRICULUM[selectedSubject].chapters;
+  const isReady = selectedChapters.length > 0 && selectedContentTypes.length > 0;
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Library</Text>
-          <Text style={styles.subtitle}>Explore {filteredDecks.length} collections</Text>
-        </View>
-        <TouchableOpacity style={styles.searchIconButton} onPress={() => router.push("/search")}>
-           <Search size={22} color={colors.textDark} />
-        </TouchableOpacity>
-      </View>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {/* Header - Cleaned up */}
+        <View style={styles.header}>
+          <View style={styles.headerTop}>
+            <View>
+              <Text style={styles.title}>Quick Prep</Text>
+              <Text style={styles.subtitle}>Ready to revise, {MOCK_USER_STATS.name}?</Text>
+            </View>
+            <View style={styles.cramModeBadge}>
+              <Zap size={10} color="#5e6ad2" fill="#5e6ad2" />
+              <Text style={styles.cramModeText}>CRAM MODE</Text>
+            </View>
+          </View>
 
-      {/* Filters */}
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollFilterContainer}
-        style={styles.filterScrollView}
-      >
-        <TouchableOpacity 
-          style={[styles.filterButton, filterPremium === null && styles.activeFilterButton]}
-          onPress={() => handleFilterPress('premium', null)}
-        >
-          <Text style={[styles.filterText, filterPremium === null && styles.activeFilterText]}>All</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.filterButton, filterPremium === false && styles.activeFilterButton]}
-          onPress={() => handleFilterPress('premium', false)}
-        >
-          <Text style={[styles.filterText, filterPremium === false && styles.activeFilterText]}>Free</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.filterButton, filterPremium === true && styles.activeFilterButton]}
-          onPress={() => handleFilterPress('premium', true)}
-        >
-          <Text style={[styles.filterText, filterPremium === true && styles.activeFilterText]}>Premium</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={getSubjectButtonStyle('physics')}
-          onPress={() => handleFilterPress('subject', 'physics')}
-        >
-          <Text style={getSubjectTextStyle('physics')}>Physics</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={getSubjectButtonStyle('chemistry')}
-          onPress={() => handleFilterPress('subject', 'chemistry')}
-        >
-          <Text style={getSubjectTextStyle('chemistry')}>Chemistry</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={getSubjectButtonStyle('maths')}
-          onPress={() => handleFilterPress('subject', 'maths')}
-        >
-          <Text style={getSubjectTextStyle('maths')}>Maths</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={getSubjectButtonStyle('biology')}
-          onPress={() => handleFilterPress('subject', 'biology')}
-        >
-          <Text style={getSubjectTextStyle('biology')}>Biology</Text>
-        </TouchableOpacity>
+          <View style={styles.segmentContainer}>
+            {(['Physics', 'Chem', 'Maths'] as Subject[]).map((subj) => {
+              const isActive = selectedSubject === subj;
+              return (
+                <TouchableOpacity 
+                  key={subj}
+                  style={[styles.segmentButton, isActive && styles.segmentButtonActive]}
+                  onPress={() => {
+                    setSelectedSubject(subj);
+                    setSelectedChapters([]);
+                  }}
+                >
+                  <Text style={[styles.segmentText, isActive && styles.segmentTextActive]}>{subj}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Content Type Selector */}
+        <Animated.View style={[styles.configPanel, animatedSection1Style]}>
+          <Text style={styles.stepLabel}>1. SELECT CONTENT TYPE</Text>
+          <View style={styles.chipsContainer}>
+            {MOCK_CONTENT_TYPES.map((type) => {
+              const isSelected = selectedContentTypes.includes(type.id);
+              return (
+                <TouchableOpacity 
+                  key={type.id}
+                  style={[styles.chip, isSelected && styles.chipActive]}
+                  onPress={() => toggleContentType(type.id)}
+                >
+                  {type.label === 'Formulas' && <FunctionSquare size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+                  {type.label === 'Concepts' && <Lightbulb size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+                  {type.label === 'PYQs' && <Files size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+                  {type.label === 'Mistakes' && <AlertCircle size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+                  <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>{type.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </Animated.View>
+
+        <View style={styles.chapterHeader}>
+          <Text style={styles.stepLabel}>2. SELECT CHAPTERS ({selectedChapters.length})</Text>
+          <TouchableOpacity onPress={selectAllChapters}>
+            <Text style={styles.selectAllText}>
+              {selectedChapters.length === currentChapters.length ? "Deselect All" : "Select All"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.chapterList}>
+          {currentChapters.map((chapter) => {
+            const isSelected = selectedChapters.includes(chapter.id);
+            return (
+              <TouchableOpacity 
+                key={chapter.id}
+                activeOpacity={0.7}
+                style={[styles.chapterRow, isSelected && styles.chapterRowSelected]}
+                onPress={() => toggleChapter(chapter.id)}
+              >
+                <View style={styles.chapterInfo}>
+                  <Text style={styles.chapterName}>{chapter.name}</Text>
+                  <Text style={styles.chapterSub}>{chapter.subtitle}</Text>
+                </View>
+                <View style={[styles.customCheckbox, isSelected && styles.checkboxActive]}>
+                  {isSelected && <Check size={12} color="#FFFFFF" strokeWidth={4} />}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <View style={{ height: 200 }} />
       </ScrollView>
 
-      <FlatList
-        data={filteredDecks}
-        renderItem={renderDeckItem}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.listContainer}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No decks found</Text>
-          </View>
-        }
-      />
+      {/* Action Footer */}
+      <View style={styles.actionFooter}>
+        <TouchableOpacity 
+          activeOpacity={0.8}
+          onPress={handleStartPress}
+          style={[styles.startBtn, !isReady && styles.startBtnDisabled]}
+        >
+          <Zap size={18} color={isReady ? "#FFFFFF" : "#5F6166"} fill={isReady ? "#FFFFFF" : "none"} />
+          <Text style={[styles.startBtnText, !isReady && styles.startBtnTextDisabled]}>
+            {isReady ? `Start Cramming • ${selectedChapters.length} Chps` : "Select Items to Start"}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
@@ -270,193 +204,215 @@ export default function DecksScreen() {
 const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#0B0C0E',
   },
   header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    paddingHorizontal: 20,
-    paddingTop: 12,
+    paddingHorizontal: 24,
+    paddingTop: 10,
     paddingBottom: 24,
+    backgroundColor: '#0B0C0E',
+    gap: 16,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   title: {
-    fontSize: 32, // More dominant header size
-    fontWeight: "bold",
-    color: colors.textDark,
+    fontSize: 20,
+    fontFamily: 'Outfit_700Bold',
+    color: '#ECECEC',
   },
   subtitle: {
-    fontSize: 16,
-    color: colors.textLight,
-    marginTop: 4,
+    fontSize: 12,
+    color: '#94969A',
+    fontFamily: 'Outfit_500Medium',
+    marginTop: 2,
   },
-  searchIconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.gray[100],
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  filterScrollView: {
-    marginBottom: 16,
-    flexGrow: 0,
-    flexShrink: 0,
-    minHeight: 44,
-  },
-  scrollFilterContainer: {
-    paddingHorizontal: 20,
-    paddingRight: 40,
+  cramModeBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  filterButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    minHeight: 44,
-    borderRadius: 999,
-    marginRight: 12,
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 70,
-  },
-  activeFilterButton: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterText: {
-    color: colors.textDark,
-    fontWeight: "600",
-    fontSize: 15,
-    lineHeight: 22,
-    textAlign: 'center',
-  },
-  activeFilterText: {
-    color: "#FFFFFF",
-    fontWeight: "bold",
-  },
-  listContainer: {
-    padding: 20,
-    paddingTop: 0,
-  },
-  deckCard: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: colors.primaryDark,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
-  },
-  deckImage: {
-    width: "100%",
-    height: 120,
-    backgroundColor: colors.gray[200],
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-  },
-  deckContent: {
-    padding: 16,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  deckInfo: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  deckTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: colors.textDark,
-  },
-  deckSubtitle: {
-    fontSize: 14,
-    color: colors.textLight,
-    marginTop: 4,
-  },
-  tagsContainer: {
-    flexDirection: "row",
-    marginTop: 8,
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
-  tagBadge: {
-    backgroundColor: colors.gray[200],
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: '#1F2125',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 8,
-    marginRight: 8,
-    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: '#2A2C32',
+    gap: 6,
   },
-  tagText: {
-    fontSize: 12,
-    color: colors.textDark,
+  cramModeText: {
+    fontSize: 9,
+    fontFamily: 'Outfit_700Bold',
+    color: '#94969A',
+    letterSpacing: 1,
   },
-  moreTagsText: {
-    fontSize: 12,
-    color: colors.textLight,
+  segmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1F2125',
+    borderRadius: 10,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#2A2C32',
   },
-  studyButton: {
-    backgroundColor: colors.primary,
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  segmentButtonActive: {
+    backgroundColor: '#15171B',
+    borderWidth: 1,
+    borderColor: '#2A2C32',
+  },
+  segmentText: {
+    color: '#94969A',
+    fontFamily: 'Outfit_500Medium',
+    fontSize: 13,
+    opacity: 0.6,
+  },
+  segmentTextActive: {
+    color: '#FFFFFF',
+    fontFamily: 'Outfit_700Bold',
+    opacity: 1,
+  },
+  configPanel: {
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2C32',
+    marginBottom: 16,
+  },
+  stepLabel: {
+    fontSize: 10,
+    fontFamily: 'Outfit_700Bold',
+    color: '#5F6166',
+    letterSpacing: 1.5,
+    marginBottom: 12,
+  },
+  chipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 0,
+    borderRadius: 20,
+    backgroundColor: '#15171B',
+    borderWidth: 1,
+    borderColor: '#2A2C32',
+    gap: 6,
   },
-  loadingButton: {
-    opacity: 0.8,
+  chipActive: {
+    backgroundColor: '#ECECEC',
+    borderColor: '#ECECEC',
   },
-  studyButtonText: {
-    color: "white",
-    marginLeft: 4,
-    fontWeight: "500",
+  chipText: {
+    color: '#94969A',
+    fontFamily: 'Outfit_500Medium',
+    fontSize: 11,
   },
-  loadingContainer: {
+  chipTextActive: {
+    color: '#0B0C0E',
+    fontFamily: 'Outfit_700Bold',
+  },
+  scrollContent: {
+    paddingTop: 10,
+  },
+  chapterHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingHorizontal: 24,
+  },
+  selectAllText: {
+    fontSize: 9,
+    fontFamily: 'Outfit_600SemiBold',
+    color: '#5e6ad2',
+  },
+  chapterList: {
+    gap: 8,
+    paddingHorizontal: 24,
+  },
+  chapterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#0B0C0E',
+    borderWidth: 1,
+    borderColor: '#2A2C32',
+  },
+  chapterRowSelected: {
+    backgroundColor: '#1E1B24',
+    borderColor: 'rgba(94, 106, 210, 0.3)',
+  },
+  chapterInfo: {
+    flex: 1,
+  },
+  chapterName: {
+    color: '#ECECEC',
+    fontSize: 13,
+    fontFamily: 'Outfit_600SemiBold',
+    marginBottom: 2,
+  },
+  chapterSub: {
+    color: '#5F6166',
+    fontSize: 10,
+    fontFamily: 'Outfit_500Medium',
+  },
+  customCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#5F6166',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxActive: {
+    backgroundColor: '#5e6ad2',
+    borderColor: '#5e6ad2',
+  },
+  actionFooter: {
+    position: 'absolute',
+    bottom: 110, 
+    left: 20,
+    right: 20,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+    borderTopWidth: 0,
+  },
+  startBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 18,
+    borderRadius: 16,
+    backgroundColor: '#5e6ad2',
+    gap: 10,
+    shadowColor: '#5e6ad2',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
   },
-  premiumBadge: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    backgroundColor: colors.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
+  startBtnDisabled: {
+    backgroundColor: '#2A2C32',
   },
-  premiumText: {
-    color: "white",
-    fontSize: 12,
-    fontWeight: "bold",
+  startBtnText: {
+    color: '#FFFFFF',
+    fontFamily: 'Outfit_700Bold',
+    fontSize: 14,
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 32,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: colors.textLight,
-  },
-  downloadedBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 6,
-  },
-  downloadedText: {
-    fontSize: 12,
-    color: colors.primary,
-    marginLeft: 4,
-    fontWeight: "500",
-  },
+  startBtnTextDisabled: {
+    color: '#5F6166',
+  }
 });

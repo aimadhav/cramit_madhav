@@ -1,64 +1,39 @@
-// Google Material Design Inspired Color Schemes
-export const lightColors = {
-  primary: '#0B57D0', // Google Workspace Blue
-  primaryLight: '#D3E3FD', 
-  primaryDark: '#0842A0',
-  secondary: '#1E8E3E', // Google Drive Green
-  secondaryLight: '#C4EED0',
-  secondaryDark: '#137333',
-  background: '#F0F4F9', // Signature Google Workspace Surface Background
-  card: '#FFFFFF', // Pure White Cards
-  text: '#1F1F1F', // Google On-Surface Text
-  textLight: '#444746', // Google On-Surface Variant
-  textDark: '#000000',
-  border: '#E0E2E0', // Google Outline Variant
-  success: '#34A853', // Google Green
-  warning: '#FBBC04', // Google Yellow
-  error: '#EA4335', // Google Red
+// Cramit Revamp - Permanent Dark Mode Palette
+export const darkColors = {
+  primary: '#8B5CF6', // Vibrant Indigo/Purple (Tailwind violet-500)
+  primaryLight: '#A78BFA', 
+  primaryDark: '#7C3AED',
+  secondary: '#10B981', // Emerald (for success/progress)
+  secondaryLight: '#34D399',
+  secondaryDark: '#059669',
+  background: '#000000', // Deep Black
+  surface: '#121212', // Slightly elevated surface
+  card: '#1E1E1E', // Dark Gray Cards
+  cardElevated: '#2D2D2D', // Elevated cards
+  accent: '#8B5CF6',
+  text: '#FFFFFF', // Pure White
+  textLight: '#9CA3AF', // Muted Gray (Tailwind gray-400)
+  textDark: '#F3F4F6', 
+  border: '#2D2D2D', // Subtle dark border
+  success: '#10B981', 
+  warning: '#F59E0B', 
+  error: '#EF4444', 
   gray: {
-    50: '#F8F9FA',
-    100: '#F1F3F4',
-    200: '#E8EAED',
-    300: '#DADCE0',
-    400: '#BDC1C6',
-    500: '#9AA0A6',
-    600: '#80868B',
-    700: '#5F6368',
-    800: '#3C4043',
-    900: '#202124',
+    50: '#F9FAFB',
+    100: '#F3F4F6',
+    200: '#E5E7EB',
+    300: '#D1D5DB',
+    400: '#9CA3AF',
+    500: '#6B7280',
+    600: '#4B5563',
+    700: '#374151',
+    800: '#1F2937',
+    900: '#111827',
   }
 };
 
-export const darkColors = {
-  primary: '#00E676', // Neon Emerald Green for dark mode
-  primaryLight: '#69F0AE',
-  primaryDark: '#00C853',
-  secondary: '#8AB4F8', // Google Dark Mode Blue
-  secondaryLight: '#AECBFA',
-  secondaryDark: '#669DF6',
-  background: '#202124', // Google Dark Background
-  card: '#303134', // Google Dark Cards
-  text: '#E8EAED', // Google Dark Mode Main Text
-  textLight: '#9AA0A6', // Google Dark Mode Secondary Text
-  textDark: '#FFFFFF', 
-  border: '#5F6368', // Google Dark Border
-  success: '#81C995', 
-  warning: '#FDE293', 
-  error: '#F28B82', 
-  gray: {
-    50: '#202124',
-    100: '#303134',
-    200: '#3C4043',
-    300: '#5F6368',
-    400: '#80868B',
-    500: '#9AA0A6',
-    600: '#BDC1C6',
-    700: '#DADCE0',
-    800: '#E8EAED',
-    900: '#F8F9FA',
-  }
-};
+export const lightColors = darkColors; // Force permanent dark mode
 
 // Default export for backward compatibility during the refactor
-export const colors = lightColors;
+export const colors = darkColors;
 export default colors;
