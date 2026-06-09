@@ -53,7 +53,7 @@ export default function TabLayout() {
   const segments = useSegments();
   
   // Home is active if the current path includes 'index' or if we are at the root segments
-  const isHomeActive = segments.length <= 1 || (segments.length === 2 && segments[1] === 'index');
+  const isHomeActive = segments.length <= 1 || (segments.length === 2 && (segments[1] as string) === 'index');
   
   return (
     <Tabs

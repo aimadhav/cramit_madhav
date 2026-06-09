@@ -1,18 +1,16 @@
 import React, { useState } from 'react';
-import { View, TextInput, StyleSheet, Alert, ActivityIndicator, TouchableOpacity } from "react-native";
+import { View, TextInput, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, ScrollView } from "react-native";
 import { Text } from "@/components/AppText";;
 import { useRouter } from 'expo-router';
-import { trpc } from '../../utils/trpc';
+import { supabase } from '@/lib/supabase';
 import { Image } from 'react-native';
-
 
 export default function SignupScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-
-  const signupMutation = trpc.auth.signup.useMutation();
+  const [joinCode, setJoinCode] = useState('');
 
   const handleSignup = async () => {
     if (!email || !password) {
@@ -25,90 +23,95 @@ export default function SignupScreen() {
     }
 
     try {
-      const result = await signupMutation.mutateAsync({
+      // 1. Signup the user DIRECTLY with Supabase
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        name: name || undefined,
+        options: {
+          data: {
+            name: name || undefined,
+          }
+        }
       });
 
-      Alert.alert('Success', result.message + '\nPlease log in.');
-      router.push('/(auth)/login');
+      if (error) throw error;
+
+      Alert.alert(
+        'Account Created', 
+        'Success! Please check your email for a confirmation link before logging in.',
+        [{ text: 'OK', onPress: () => router.replace('/login') }]
+      );
     } catch (error: any) {
       console.error('Signup failed:', error);
-      const trpcErrorMessage =
-        error.data?.zodError?.fieldErrors?.password?.[0] ||
-        error.data?.zodError?.fieldErrors?.email?.[0] ||
-        error.data?.message ||
-        error.message ||
-        'An unknown error occurred during signup.';
-      Alert.alert('Signup Failed', trpcErrorMessage);
+      Alert.alert('Signup Failed', error.message);
     }
   };
 
   return (
-    
-    <View style={styles.container}>
-      <Image  source={require('../../assets/images/icon.png')}
-      style={{ width: 300, height: 120, marginBottom: 50,marginTop: 10, alignSelf: 'center' }}
-      resizeMode="contain" />
+    <ScrollView style={styles.container}>
+      <Text style={styles.logoText}>cramit</Text>
       <Text style={styles.title}>Create Account</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Name (Optional)"
-        value={name}
-        onChangeText={setName}
-      />
-      <TouchableOpacity
-        style={[
-          styles.button,
-          signupMutation.isPending && styles.buttonDisabled,
-        ]}
-        onPress={handleSignup}
-        disabled={signupMutation.isPending}
-      >
-        {signupMutation.isPending ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Sign Up</Text>
-        )}
-      </TouchableOpacity>
+      
+      <View style={styles.innerContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Password"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Name (Optional)"
+          value={name}
+          onChangeText={setName}
+        />
 
-      <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
-        <Text style={styles.linkText}>Already have an account? <Text style={styles.linkBold}>Log In</Text></Text>
-      </TouchableOpacity>
-    </View>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleSignup}
+        >
+          <Text style={styles.buttonText}>Sign Up</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => router.replace('/login')}>
+          <Text style={styles.linkText}>Already have an account? <Text style={styles.linkBold}>Log In</Text></Text>
+        </TouchableOpacity>
+      </View>
+      <View style={{ height: 50 }} />
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'flex-start', // <-- align content to the top
-    padding: 20,
-    paddingTop: 40, // or a value you like (try 20, 30, 40)
     backgroundColor: '#f5f5f5',
+  },
+  innerContainer: {
+    padding: 20,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 25,
+    marginBottom: 15,
     textAlign: 'center',
     color: '#333',
+  },
+  label: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 10,
+    marginTop: 5,
+    fontWeight: '600',
   },
   input: {
     height: 50,
@@ -119,6 +122,33 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#fff',
     fontSize: 16,
+  },
+  classGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  classCard: {
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  classCardSelected: {
+    backgroundColor: '#007bff',
+    borderColor: '#007bff',
+  },
+  classCardText: {
+    color: '#333',
+    fontWeight: '500',
+  },
+  classCardTextSelected: {
+    color: '#fff',
   },
   button: {
     backgroundColor: '#007bff',
@@ -144,11 +174,15 @@ const styles = StyleSheet.create({
   linkBold: {
     color: '#007AFF',
     fontWeight: '600',
-  },logo: {
-    width: 120,
-    height: 120,
-    alignSelf: 'center',
-    marginBottom: 10,
   },
-  
+  logoText: {
+    fontSize: 48,
+    fontFamily: 'Outfit_700Bold',
+    color: '#5e6ad2',
+    textAlign: 'center',
+    marginTop: 20,
+    marginBottom: 20,
+    letterSpacing: -1,
+  },
 });
+

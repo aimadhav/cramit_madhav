@@ -12,11 +12,20 @@
       "coverImage": "https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?q=80&w=800&auto=format&fit=crop",
       "flashcards": [
         {
+          "id": "card-image-test",
+          "front": "Image Test Card (Front)",
+          "back": "Image Test Card (Back)",
+          "contentType": "mixed",
+          "tags": ["test", "image"],
+          "mediaUrls": ["https://images.unsplash.com/photo-1461749280684-dccba630e2f6?w=500&auto=format", "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=500&auto=format"]
+        },
+        {
           "id": "card-1-1",
           "front": "State Newton's First Law of Motion",
           "back": "An object at rest stays at rest, and an object in motion stays in motion with the same speed and direction, unless acted upon by an unbalanced force. This is also known as the Law of Inertia.",
           "contentType": "text",
-          "tags": ["physics", "mechanics", "newton laws"]
+          "tags": ["physics", "mechanics", "newton laws"],
+          "mediaUrls": ["https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?q=80&w=400&auto=format&fit=crop", "https://images.unsplash.com/photo-1614935151651-0bea6508db6b?q=80&w=400&auto=format&fit=crop"]
         },
         {
           "id": "card-1-2",
@@ -45,6 +54,76 @@
           "back": "$v_e = \\sqrt{\\frac{2GM}{R}}$\n\nwhere $G$ is the gravitational constant, $M$ is the mass of the planet, and $R$ is its radius.",
           "contentType": "latex",
           "tags": ["physics", "gravitation", "escape velocity"]
+        },
+        {
+          "id": "card-1-6",
+          "front": "What is the relation between Torque ($\\tau$) and Angular Momentum ($L$)?",
+          "back": "The net external torque acting on a system is equal to the rate of change of its angular momentum:\n$\\tau = \\frac{dL}{dt}$",
+          "contentType": "latex",
+          "tags": ["physics", "mechanics", "rotational motion"]
+        },
+        {
+          "id": "card-1-7",
+          "front": "Define Hooke's Law for elastic materials.",
+          "back": "Within the elastic limit, the stress applied to a body is directly proportional to the strain produced:\n$Stress \\propto Strain \\Rightarrow \\sigma = E \\cdot \\epsilon$",
+          "contentType": "mixed",
+          "tags": ["physics", "properties of matter", "elasticity"]
+        },
+        {
+          "id": "card-1-8",
+          "front": "What is the formula for Terminal Velocity of a sphere in a viscous fluid?",
+          "back": "$v_t = \\frac{2r^2( \\rho - \\sigma )g}{9\\eta}$\n\nwhere $r$ is radius, $\\rho$ is density of sphere, $\\sigma$ is density of fluid, and $\\eta$ is coefficient of viscosity.",
+          "contentType": "latex",
+          "tags": ["physics", "fluid mechanics", "viscosity"]
+        },
+        {
+          "id": "card-1-9",
+          "front": "State Bernoulli's Principle equation.",
+          "back": "$P + \\frac{1}{2}\\rho v^2 + \\rho gh = \\text{constant}$\n\nIt expresses the conservation of energy for a flowing non-viscous fluid.",
+          "contentType": "latex",
+          "tags": ["physics", "fluid mechanics", "bernoulli"]
+        },
+        {
+          "id": "card-1-10",
+          "front": "What is the First Law of Thermodynamics?",
+          "back": "The heat energy supplied to a system ($\\Delta Q$) is equal to the sum of the increase in internal energy ($\\Delta U$) and the work done by the system ($\\Delta W$):\n$\\Delta Q = \\Delta U + \\Delta W$",
+          "contentType": "latex",
+          "tags": ["physics", "thermodynamics"]
+        },
+        {
+          "id": "card-1-11",
+          "front": "Define the Doppler Effect for sound waves.",
+          "back": "The apparent change in the frequency of a wave caused by relative motion between the source of the wave and the observer.",
+          "contentType": "text",
+          "tags": ["physics", "waves", "doppler effect"]
+        },
+        {
+          "id": "card-1-12",
+          "front": "What is the formula for the Time Period of a simple pendulum?",
+          "back": "$T = 2\\pi\\sqrt{\\frac{L}{g}}$\n\nwhere $L$ is the length of the string and $g$ is acceleration due to gravity.",
+          "contentType": "latex",
+          "tags": ["physics", "oscillations", "pendulum"]
+        },
+        {
+          "id": "card-1-13",
+          "front": "State Gauss's Law in Electrostatics.",
+          "back": "The total electric flux through a closed surface is equal to $1/\\epsilon_0$ times the net charge enclosed by the surface:\n$\\oint \\vec{E} \\cdot d\\vec{A} = \\frac{q_{enclosed}}{\\epsilon_0}$",
+          "contentType": "latex",
+          "tags": ["physics", "electrostatics", "gauss law"]
+        },
+        {
+          "id": "card-1-14",
+          "front": "What is the relation between Current ($I$) and Drift Velocity ($v_d$)?",
+          "back": "$I = nAe v_d$\n\nwhere $n$ is free electron density, $A$ is cross-sectional area, and $e$ is electronic charge.",
+          "contentType": "latex",
+          "tags": ["physics", "current electricity"]
+        },
+        {
+          "id": "card-1-15",
+          "front": "State Lenz's Law of Electromagnetic Induction.",
+          "back": "The direction of an induced electromotive force (EMF) is such that it always opposes the change in magnetic flux that caused it.",
+          "contentType": "text",
+          "tags": ["physics", "emi", "lenz law"]
         }
       ]
     },

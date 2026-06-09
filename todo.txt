@@ -1,7 +1,0 @@
-Here is the list of stuff i have to doo
-
-LATEX RENDERER
-[]
-we dont have  a latex rennderer we have a regex to detect latex that i think is correct, then splits and lables the latex and the string parts.
-
-FIX: what i have in mind is to use MathJax for web and react-native-mathjax for native

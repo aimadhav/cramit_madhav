@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { View, TextInput, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Image, ScrollView } from "react-native";
 import { Text } from "@/components/AppText";;
 import { useRouter } from 'expo-router';
-import { trpc } from '../../utils/trpc';
 import { useUserStore } from '../../store/user-store';
 import type { AppUser } from '../../store/user-store';
 import { supabase } from '../../lib/supabase';
@@ -21,65 +20,56 @@ export default function LoginScreen() {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const { setSession } = useUserStore.getState();
 
-  const loginMutation = trpc.auth.login.useMutation({
-    onSuccess: (data) => {
-      if (data.session && data.user && data.user.email) {
-        const appUser: AppUser = {
-          id: data.user.id,
-          email: data.user.email,
-          name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || null,
-          isLoggedIn: true,
-          isPremium: false,
-          createdAt: new Date(data.user.created_at || Date.now()).getTime(),
-          updatedAt: Date.now(),
-          studyStats: {
-            totalCardsStudied: 0,
-            totalTimeStudied: 0,
-            streakDays: 0,
-            lastStudyDate: null,
-          },
-          ownedDecks: [],
-          phone: data.user.phone || undefined,
-        };
-
-        setSession(appUser, data.session.access_token, data.session.refresh_token);
-        Alert.alert('Login Successful', data.message || 'You are now logged in!');
-        router.replace('/');
-      } else {
-        Alert.alert('Login Failed', 'Received incomplete data from server.');
-      }
-    },
-    onError: (error) => {
-      if (error.message === 'Invalid login credentials' || error.message.includes('Invalid login credentials')) {
-        Alert.alert('Login Failed', 'Invalid email or password. Please try again.');
-        return;
-      } else if (error.message.includes('Invalid email')) {
-        Alert.alert('Invalid Email', 'Please enter a valid email address.');
-      } else if (error.message.includes('No refresh token available') && !error.message.includes('Invalid login credentials')) {
-        Alert.alert('Session Expired', 'Please try logging in again.');
-      } else {
-        Alert.alert('Login Failed', 'An unexpected error occurred. Please try again later.');
-      }
-    },
-  });
-
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
       Alert.alert('Validation Error', 'Email and password are required.');
       return;
     }
-    loginMutation.mutate({ email, password });
+    
+    try {
+      const { data: sessionData, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+      if (!sessionData.session || !sessionData.user) throw new Error('No session returned');
+
+      const appUser: AppUser = {
+        id: sessionData.user.id,
+        email: sessionData.user.email || '',
+        name: sessionData.user.user_metadata?.full_name || sessionData.user.user_metadata?.name || null,
+        isLoggedIn: true,
+        isPremium: false,
+        createdAt: new Date(sessionData.user.created_at || Date.now()).getTime(),
+        updatedAt: Date.now(),
+        totalCardsStudied: 0,
+        totalTimeStudied: 0,
+        streakDays: 0,
+        lastStudyDate: null,
+        ownedDecks: [],
+        phone: sessionData.user.phone || undefined,
+      };
+
+      setSession(appUser, sessionData.session.access_token, sessionData.session.refresh_token);
+      Alert.alert('Login Successful', 'Welcome back!');
+      router.replace('/');
+    } catch (error: any) {
+      console.error('Login failed:', error);
+      Alert.alert('Login Failed', error.message);
+    }
   };
 
   const handleGoogleSignIn = async () => {
     try {
       setIsGoogleLoading(true);
+      // Use a simpler redirect URI for better compatibility
       const redirectUri = makeRedirectUri({
         scheme: 'myapp',
-        path: 'auth/callback', // Optional, matches Supabase redirect usually
+        preferLocalhost: false,
       });
 
-      console.log('Google OAuth Redirect URI:', redirectUri);
+      console.log('🔗 [OAuth] Requesting Login with Redirect:', redirectUri);
 
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -92,63 +82,79 @@ export default function LoginScreen() {
       if (error) throw error;
       if (!data?.url) throw new Error('No OAuth URL returned');
 
+      console.log('🌍 [OAuth] Opening WebBrowser...');
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
 
       if (result.type === 'success' && result.url) {
-        // Extract tokens from the URL fragment (hash) or query params
-        // Supabase returns tokens in the hash like #access_token=...&refresh_token=...
-        const url = new URL(result.url);
-        let params = new URLSearchParams(url.hash.substring(1)); // Try hash first
+        console.log('✅ [OAuth] Browser returned success. URL:', result.url);
         
-        if (!params.get('access_token')) {
-            // Fallback to query params if hash is empty (sometimes happens)
-            params = new URLSearchParams(url.search);
-        }
-
+        const url = new URL(result.url);
+        // Supabase returns tokens in the hash (#)
+        const params = new URLSearchParams(url.hash.substring(1));
+        
         const access_token = params.get('access_token');
         const refresh_token = params.get('refresh_token');
 
-        if (!access_token || !refresh_token) {
+        if (!access_token) {
+          console.error('❌ [OAuth] Access token missing in hash. Full URL:', result.url);
+          // Try query params as a fallback
+          const queryParams = new URLSearchParams(url.search);
+          const q_access = queryParams.get('access_token');
+          if (q_access) {
+             console.log('ℹ️ [OAuth] Found token in query params instead of hash');
+             await completeLogin(q_access, queryParams.get('refresh_token') || '');
+             return;
+          }
           throw new Error('Could not retrieve tokens from Google Sign-In.');
         }
 
-        // Set the session in Supabase client
-        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-          access_token,
-          refresh_token,
-        });
-
-        if (sessionError) throw sessionError;
-
-        if (sessionData.user && sessionData.session) {
-             const appUser: AppUser = {
-              id: sessionData.user.id,
-              email: sessionData.user.email || '',
-              name: sessionData.user.user_metadata?.full_name || sessionData.user.user_metadata?.name || null,
-              isLoggedIn: true,
-              isPremium: false, // Default
-              createdAt: new Date(sessionData.user.created_at || Date.now()).getTime(),
-              updatedAt: Date.now(),
-              studyStats: {
-                totalCardsStudied: 0,
-                totalTimeStudied: 0,
-                streakDays: 0,
-                lastStudyDate: null,
-              },
-              ownedDecks: [],
-              phone: sessionData.user.phone || undefined,
-            };
-
-            setSession(appUser, sessionData.session.access_token, sessionData.session.refresh_token);
-            Alert.alert('Login Successful', 'Welcome back!');
-            router.replace('/');
-        }
+        await completeLogin(access_token, refresh_token || '');
+      } else {
+        console.log('ℹ️ [OAuth] Browser session closed or cancelled. Type:', result.type);
       }
     } catch (error: any) {
-      console.error('Google Sign-In Error:', error);
+      console.error('❌ [OAuth] Error:', error);
       Alert.alert('Google Sign-In Error', error.message || 'Failed to sign in with Google');
     } finally {
       setIsGoogleLoading(false);
+    }
+  };
+
+  const completeLogin = async (access_token: string, refresh_token: string) => {
+    console.log('🚀 [OAuth] Completing login with tokens...');
+    
+    // ENSURE CLEAN SLATE: Clear old user's flashcards/sync queue
+    const { useFlashcardStore } = require('../../store/flashcard-store');
+    useFlashcardStore.getState().clearStore();
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+      access_token,
+      refresh_token,
+    });
+
+    if (sessionError) throw sessionError;
+
+    if (sessionData.user && sessionData.session) {
+      console.log('🎉 [OAuth] Session established for:', sessionData.user.email);
+      const appUser: AppUser = {
+        id: sessionData.user.id,
+        email: sessionData.user.email || '',
+        name: sessionData.user.user_metadata?.full_name || sessionData.user.user_metadata?.name || null,
+        isLoggedIn: true,
+        isPremium: false,
+        createdAt: new Date(sessionData.user.created_at || Date.now()).getTime(),
+        updatedAt: Date.now(),
+        totalCardsStudied: 0,
+        totalTimeStudied: 0,
+        streakDays: 0,
+        lastStudyDate: null,
+        ownedDecks: [],
+        phone: sessionData.user.phone || undefined,
+      };
+
+      setSession(appUser, sessionData.session.access_token, sessionData.session.refresh_token);
+      Alert.alert('Login Successful', 'Welcome back!');
+      router.replace('/');
     }
   };
 
@@ -159,11 +165,7 @@ export default function LoginScreen() {
     >
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.innerContainer}>
-          <Image
-            source={require('../../assets/images/icon.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
+          <Text style={styles.logoText}>cramit</Text>
 
           <TextInput
             style={styles.input}
@@ -183,15 +185,10 @@ export default function LoginScreen() {
           />
 
           <TouchableOpacity
-            style={[styles.button, loginMutation.isPending && styles.buttonDisabled]}
+            style={styles.button}
             onPress={handleLogin}
-            disabled={loginMutation.isPending}
           >
-            {loginMutation.isPending ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Login</Text>
-            )}
+            <Text style={styles.buttonText}>Login</Text>
           </TouchableOpacity>
 
           <View style={styles.dividerContainer}>
@@ -226,6 +223,31 @@ export default function LoginScreen() {
           <TouchableOpacity onPress={() => router.push('/signup')} style={styles.signupContainer}>
             <Text style={styles.linkText}>Don't have an account? <Text style={styles.linkBold}>Sign Up</Text></Text>
           </TouchableOpacity>
+
+          {/* Quick Access Buttons */}
+          <View style={styles.quickAccessContainer}>
+            <Text style={styles.quickAccessLabel}>DEMO ACCESS</Text>
+            <View style={styles.quickAccessRow}>
+              <TouchableOpacity 
+                style={styles.quickAccessButton}
+                onPress={() => {
+                  setEmail('arjun@test.com');
+                  setPassword('password123');
+                }}
+              >
+                <Text style={styles.quickAccessButtonText}>ARJUN</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.quickAccessButton, { borderColor: '#10B98120' }]}
+                onPress={() => {
+                  setEmail('beta@cramit.com');
+                  setPassword('password123');
+                }}
+              >
+                <Text style={[styles.quickAccessButtonText, { color: '#10B981' }]}>BETA</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -249,11 +271,13 @@ const createStyles = (colors: any) => StyleSheet.create({
     maxWidth: 400,
     alignSelf: 'center',
   },
-  logo: {
-    width: 120,
-    height: 60,
-    alignSelf: 'center',
-    marginBottom: 20,
+  logoText: {
+    fontSize: 48,
+    fontFamily: 'Outfit_700Bold',
+    color: '#5e6ad2',
+    textAlign: 'center',
+    marginBottom: 40,
+    letterSpacing: -1,
   },
   title: {
     fontSize: 32,
@@ -354,4 +378,33 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontWeight: '700',
     color: colors.primary,
   },
+  quickAccessContainer: {
+    marginTop: 30,
+    alignItems: 'center',
+    paddingBottom: 20,
+  },
+  quickAccessLabel: {
+    fontSize: 10,
+    fontFamily: 'Outfit_700Bold',
+    color: '#5f6166',
+    letterSpacing: 2,
+    marginBottom: 15,
+  },
+  quickAccessRow: {
+    flexDirection: 'row',
+    gap: 15,
+  },
+  quickAccessButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#5e6ad220',
+    backgroundColor: '#15171B',
+  },
+  quickAccessButtonText: {
+    color: '#5e6ad2',
+    fontFamily: 'Outfit_700Bold',
+    fontSize: 12,
+  }
 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { StyleSheet, View, TouchableOpacity, Image, Alert, ScrollView, ActivityIndicator } from "react-native";
-import { Text } from "@/components/AppText";;
+import { Text } from "@/components/AppText";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { 
@@ -30,18 +30,13 @@ export default function DeckDetailScreen() {
     routeId ? state.decks.find(d => d.id === routeId) : undefined
   );
   
-  const getFlashcardsForDeck = useFlashcardStore(state => state.getFlashcardsForDeck);
-  const getDueFlashcardsForDeck = useFlashcardStore(state => state.getDueFlashcardsForDeck);
-  const getNewFlashcardsForDeck = useFlashcardStore(state => state.getNewFlashcardsForDeck);
   const startStudySession = useFlashcardStore(state => state.startStudySession);
-  const hasIncompleteSession = useFlashcardStore(state => state.hasIncompleteSession);
   const loadDeckWithCards = useFlashcardStore(state => state.loadDeckWithCards);
-  const loadingDeckId = useFlashcardStore(state => state.loadingDeckId);
+  const currentFlashcards = useFlashcardStore(state => state.currentFlashcards);
 
   const [showAll, setShowAll] = useState(false);
 
   const deck = storeDeck;
-  const deckId = deck?.id;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -54,20 +49,28 @@ export default function DeckDetailScreen() {
 
   // Auto-load cards when deck is available
   useEffect(() => {
-    if (deck && !deck.areCardsLoaded && loadingDeckId !== deck.id && !loadAttemptedRef.current) {
+    if (deck && !deck.areCardsLoaded && !loadAttemptedRef.current) {
       console.log(`[DeckDetailScreen] Loading cards for deck ${deck.id}`);
       loadAttemptedRef.current = true;
-      loadDeckWithCards(deck.id).catch(err => {
-        console.warn(`[DeckDetailScreen] Auto-load failed, likely offline:`, err);
+      
+      const performLoad = async () => {
+         // Check if we need to pull from cloud (Stage C)
+         const localCards = await useFlashcardStore.getState().loadDeckWithCards(deck.id);
+         
+         // If no local cards, fetch from cloud
+         if (useFlashcardStore.getState().currentFlashcards.length === 0) {
+            console.log('📡 [UI] Deck is empty locally. Fetching from cloud...');
+            const { SyncService } = require('@/services/sync-service');
+            await SyncService.downloadDeckContent(deck.id);
+            await useFlashcardStore.getState().loadDeckWithCards(deck.id);
+         }
+      };
+
+      performLoad().catch(err => {
+        console.warn(`[DeckDetailScreen] Auto-load failed:`, err);
       });
     }
-  }, [deck?.id, deck?.areCardsLoaded, loadingDeckId, loadDeckWithCards]);
-
-  const handleRetryFetch = useCallback(() => {
-    if (deck && isMountedRef.current) {
-      loadDeckWithCards(deck.id);
-    }
-  }, [deck, loadDeckWithCards]);
+  }, [deck?.id, deck?.areCardsLoaded, loadDeckWithCards]);
 
   // Not found state
   if (!routeId) {
@@ -94,24 +97,17 @@ export default function DeckDetailScreen() {
     );
   }
 
-  const flashcards = getFlashcardsForDeck(deck.id);
-  const dueCards = getDueFlashcardsForDeck(deck.id);
-  const newCards = getNewFlashcardsForDeck(deck.id);
+  const flashcards = currentFlashcards;
+  const dueCards = flashcards.filter(c => !c.dueDate || c.dueDate <= Date.now());
+  const newCards = flashcards.filter(c => c.repetitions === 0);
   const displayedCards = showAll ? flashcards : flashcards.slice(0, 5);
-  const hasIncompleteStudySession = hasIncompleteSession(deck.id);
-  const isLoading = loadingDeckId === deck.id;
+  const isLoading = useFlashcardStore.getState().isLoading;
 
   const handleStartStudy = async () => {
     if (!deck || !isMountedRef.current) return;
 
-    // If there's an incomplete session, continue it
-    if (hasIncompleteStudySession) {
-      router.push(`/study/${deck.id}`);
-      return;
-    }
-
     // Load cards if needed
-    if (!deck.areCardsLoaded && deck.cardCount > 0) {
+    if (deck.cardCount > 0 && flashcards.length === 0) {
       try {
         await loadDeckWithCards(deck.id);
       } catch (error) {
@@ -126,14 +122,7 @@ export default function DeckDetailScreen() {
       return;
     }
 
-    if (dueCards.length === 0 && newCards.length === 0) {
-      // Start Cram Mode (study all cards ignoring SRS date)
-      startStudySession(deck.id, 'all');
-      router.push(`/study/${deck.id}`);
-      return;
-    }
-
-    startStudySession(deck.id);
+    await startStudySession(deck.id);
     router.push(`/study/${deck.id}`);
   };
 
@@ -144,7 +133,7 @@ export default function DeckDetailScreen() {
           title: deck.name,
           headerShown: true,
           headerStyle: { backgroundColor: colors.background },
-          headerShadowVisible: false, // makes it blend cleaner
+          headerShadowVisible: false,
           headerTintColor: colors.textDark,
           headerTitleStyle: { fontWeight: 'bold' },
         }}
@@ -200,7 +189,7 @@ export default function DeckDetailScreen() {
               <Text style={styles.statLabel}>Due</Text>
             </View>
             <View style={styles.statItem}>
-              <Plus size={20} color={colors.success} />
+              <RefreshCw size={20} color={colors.success} />
               <Text style={styles.statValue}>{newCards.length}</Text>
               <Text style={styles.statLabel}>New</Text>
             </View>
@@ -209,13 +198,6 @@ export default function DeckDetailScreen() {
               <Text style={styles.statValue}>{deck.cardCount}</Text>
               <Text style={styles.statLabel}>Total</Text>
             </View>
-            {hasIncompleteStudySession && (
-              <View style={[styles.statItem, styles.progressStatItem]}>
-                <RefreshCw size={20} color={colors.warning} />
-                <Text style={styles.statValue}>In Progress</Text>
-                <Text style={styles.statLabel}>Session</Text>
-              </View>
-            )}
           </View>
 
           {/* Study Button */}
@@ -223,11 +205,10 @@ export default function DeckDetailScreen() {
             style={[
               styles.primaryButton,
               isLoading && styles.loadingButton,
-              hasIncompleteStudySession && styles.continueButton,
-              (deck.cardCount === 0 && !hasIncompleteStudySession) && styles.disabledButton
+              (deck.cardCount === 0) && styles.disabledButton
             ]}
             onPress={handleStartStudy}
-            disabled={isLoading || (deck.cardCount === 0 && !hasIncompleteStudySession)}
+            disabled={isLoading || (deck.cardCount === 0)}
           >
             {isLoading ? (
               <View style={styles.loadingContainer}>
@@ -236,13 +217,11 @@ export default function DeckDetailScreen() {
               </View>
             ) : (
               <Text style={styles.primaryButtonText}>
-                {hasIncompleteStudySession 
-                  ? 'Continue Studying' 
-                  : dueCards.length > 0 
-                    ? 'Start Studying' 
-                    : newCards.length > 0 
-                      ? 'Study New Cards'
-                      : 'Retake Deck'
+                {dueCards.length > 0 
+                  ? 'Start Studying' 
+                  : newCards.length > 0 
+                    ? 'Study New Cards'
+                    : 'Retake Deck'
                 }
               </Text>
             )}
@@ -274,13 +253,6 @@ export default function DeckDetailScreen() {
                     style={styles.cardItem}
                     onPress={() => router.push(`/card/${card.id}`)}
                   >
-                    {card.mediaUrls && card.mediaUrls.length > 0 && card.mediaUrls[0] && (
-                      <Image 
-                        source={{ uri: card.mediaUrls[0] }}
-                        style={styles.cardThumbnail}
-                        resizeMode="cover"
-                      />
-                    )}
                     <View style={styles.cardContent} pointerEvents="none">
                       {containsLatex(card.front) ? (
                          <View style={{ maxHeight: 65, overflow: 'hidden' }}>
@@ -457,10 +429,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.gray[200],
   },
-  progressStatItem: {
-    backgroundColor: colors.warning + '10',
-    borderColor: colors.warning + '30',
-  },
   statValue: {
     fontSize: 18,
     fontWeight: "bold",
@@ -481,9 +449,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
     marginBottom: 20,
-  },
-  continueButton: {
-    backgroundColor: colors.warning,
   },
   loadingButton: {
     opacity: 0.8,
@@ -536,12 +501,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  cardThumbnail: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
-    marginRight: 12,
   },
   cardContent: {
     flex: 1,

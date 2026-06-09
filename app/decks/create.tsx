@@ -1,6 +1,6 @@
 import React from "react";
 import { StyleSheet, View, TouchableOpacity } from "react-native";
-import { Text } from "@/components/AppText";;
+import { Text } from "@/components/AppText";
 import { useRouter, Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Construction } from "lucide-react-native";

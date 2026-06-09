@@ -13,12 +13,10 @@ export interface AppUser {
   isPremium: boolean;
   createdAt: number;
   updatedAt: number;
-  studyStats: {
-    totalCardsStudied: number;
-    totalTimeStudied: number;
-    streakDays: number;
-    lastStudyDate: number | null;
-  };
+  totalCardsStudied: number;
+  totalTimeStudied: number;
+  streakDays: number;
+  lastStudyDate: number | null;
   ownedDecks: string[];
   phone?: string; 
 }
@@ -53,12 +51,10 @@ const defaultUserInitialState: AppUser = {
   isPremium: false,
   createdAt: Date.now(),
   updatedAt: Date.now(),
-  studyStats: {
-    totalCardsStudied: 0,
-    totalTimeStudied: 0,
-    streakDays: 0,
-    lastStudyDate: null,
-  },
+  totalCardsStudied: 0,
+  totalTimeStudied: 0,
+  streakDays: 0,
+  lastStudyDate: null,
   ownedDecks: [],
 };
 
@@ -77,6 +73,20 @@ export const useUserStore = create<UserState>()(
       themePreference: 'system',
 
       setSession: async (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => {
+        console.log('🔑 [UserStore] Setting active session for:', userData.email);
+        
+        // Clear flashcard store if this is a new user login
+        const currentUser = get().user;
+        if (currentUser && currentUser.id !== userData.id) {
+          console.log('🧹 [UserStore] New user ID detected, clearing flashcard store');
+          try {
+            const { useFlashcardStore } = require('./flashcard-store');
+            useFlashcardStore.getState().clearStore();
+          } catch (e) {
+            console.error('Failed to clear FlashcardStore during user switch:', e);
+          }
+        }
+
         set({
           user: { ...userData, isLoggedIn: true },
           sessionToken: accessToken,
@@ -119,6 +129,16 @@ export const useUserStore = create<UserState>()(
       },
 
       logout: async () => {
+        console.log('🚪 [UserStore] Logging out...');
+        
+        // Clear FlashcardStore as well!
+        try {
+          const { useFlashcardStore } = require('./flashcard-store');
+          useFlashcardStore.getState().clearStore();
+        } catch (e) {
+          console.error('Failed to clear FlashcardStore during logout:', e);
+        }
+
         set({ 
           user: { ...defaultUserInitialState, isLoggedIn: false }, 
           sessionToken: null, 
@@ -138,6 +158,16 @@ export const useUserStore = create<UserState>()(
       },
       
       loginOffline: async () => {
+        console.log('📶 [UserStore] Logging in as offline user...');
+        
+        // Clear flashcard store for clean offline session
+        try {
+          const { useFlashcardStore } = require('./flashcard-store');
+          useFlashcardStore.getState().clearStore();
+        } catch (e) {
+          console.error('Failed to clear FlashcardStore during offline login:', e);
+        }
+
         set({
           user: { ...defaultUserInitialState, name: 'Offline User', isLoggedIn: true },
           sessionToken: OFFLINE_MODE_TOKEN,
@@ -214,13 +244,13 @@ export const useUserStore = create<UserState>()(
         }));
       },
       
-      updateStudyStats: (studyTime: number, cardsStudied: number) => {
+      updateStudyStats: async (studyTime: number, cardsStudied: number) => {
         const currentUser = get().user;
         if (!currentUser || !currentUser.isLoggedIn) return;
 
         const now = Date.now();
-        let newStreakDays = currentUser.studyStats.streakDays;
-        const lastStudy = currentUser.studyStats.lastStudyDate;
+        let newStreakDays = currentUser.streakDays;
+        const lastStudy = currentUser.lastStudyDate;
 
         if (lastStudy) {
           const oneDay = 24 * 60 * 60 * 1000;
@@ -237,26 +267,43 @@ export const useUserStore = create<UserState>()(
         set(state => ({
           user: {
             ...state.user!,
-            studyStats: {
-              totalCardsStudied: (state.user!.studyStats.totalCardsStudied || 0) + cardsStudied,
-              totalTimeStudied: (state.user!.studyStats.totalTimeStudied || 0) + studyTime,
-              streakDays: newStreakDays,
-              lastStudyDate: now,
-            },
+            totalCardsStudied: (state.user!.totalCardsStudied || 0) + cardsStudied,
+            totalTimeStudied: (state.user!.totalTimeStudied || 0) + studyTime,
+            streakDays: newStreakDays,
+            lastStudyDate: now,
             updatedAt: now,
           },
         }));
+
+        // Sync to Supabase directly if online
+        if (get().sessionToken !== OFFLINE_MODE_TOKEN && get().sessionToken !== null) {
+          try {
+            const { supabase } = require('@/lib/supabase');
+            const { error } = await supabase
+              .from('users')
+              .update({
+                total_cards_studied: (currentUser.totalCardsStudied || 0) + cardsStudied,
+                total_time_studied: (currentUser.totalTimeStudied || 0) + studyTime,
+                streak_days: newStreakDays,
+                last_study_date: new Date(now).toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', currentUser.id);
+
+            if (error) throw error;
+          } catch (error) {
+            console.error('[UserStore] Failed to sync study stats:', error);
+          }
+        }
       },
       resetUserProgress: () => {
         set(state => ({
           user: state.user ? {
             ...state.user,
-            studyStats: {
-              totalCardsStudied: 0,
-              totalTimeStudied: 0,
-              streakDays: 0,
-              lastStudyDate: null,
-            },
+            totalCardsStudied: 0,
+            totalTimeStudied: 0,
+            streakDays: 0,
+            lastStudyDate: null,
             updatedAt: Date.now(),
           } : state.user,
         }));

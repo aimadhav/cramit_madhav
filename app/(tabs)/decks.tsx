@@ -3,7 +3,7 @@ import { StyleSheet, View, ScrollView, TouchableOpacity, Dimensions } from "reac
 import { Text } from "@/components/AppText";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Check, Zap, FunctionSquare, Lightbulb, Files, AlertCircle } from "lucide-react-native";
+import { Check, Zap, FunctionSquare, Lightbulb, Files, AlertCircle, BookOpen, ChevronRight } from "lucide-react-native";
 import Animated, { 
   useSharedValue, 
   useAnimatedStyle, 
@@ -14,6 +14,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { useThemeColors } from "@/hooks/useThemeColors";
+import { useFlashcardStore } from "@/store/flashcard-store";
 import { MOCK_CURRICULUM, MOCK_CONTENT_TYPES, MOCK_USER_STATS } from "@/constants/mockData";
 
 const { width } = Dimensions.get('window');
@@ -28,6 +29,8 @@ export default function DecksScreen() {
   const [selectedSubject, setSelectedSubject] = useState<Subject>('Physics');
   const [selectedContentTypes, setSelectedContentTypes] = useState<string[]>([]);
   const [selectedChapters, setSelectedChapters] = useState<string[]>([]);
+  const decks = useFlashcardStore(state => state.decks);
+  const [activeTab, setActiveTab] = useState<'quick' | 'library'>('quick');
 
   // Animation values - for very subtle suggestion
   const shakeSection1 = useSharedValue(0);
@@ -95,108 +98,158 @@ export default function DecksScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {/* Header - Cleaned up */}
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <View>
-              <Text style={styles.title}>Quick Prep</Text>
-              <Text style={styles.subtitle}>Ready to revise, {MOCK_USER_STATS.name}?</Text>
-            </View>
-            <View style={styles.cramModeBadge}>
-              <Zap size={10} color="#5e6ad2" fill="#5e6ad2" />
-              <Text style={styles.cramModeText}>CRAM MODE</Text>
-            </View>
-          </View>
-
-          <View style={styles.segmentContainer}>
-            {(['Physics', 'Chem', 'Maths'] as Subject[]).map((subj) => {
-              const isActive = selectedSubject === subj;
-              return (
-                <TouchableOpacity 
-                  key={subj}
-                  style={[styles.segmentButton, isActive && styles.segmentButtonActive]}
-                  onPress={() => {
-                    setSelectedSubject(subj);
-                    setSelectedChapters([]);
-                  }}
-                >
-                  <Text style={[styles.segmentText, isActive && styles.segmentTextActive]}>{subj}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Content Type Selector */}
-        <Animated.View style={[styles.configPanel, animatedSection1Style]}>
-          <Text style={styles.stepLabel}>1. SELECT CONTENT TYPE</Text>
-          <View style={styles.chipsContainer}>
-            {MOCK_CONTENT_TYPES.map((type) => {
-              const isSelected = selectedContentTypes.includes(type.id);
-              return (
-                <TouchableOpacity 
-                  key={type.id}
-                  style={[styles.chip, isSelected && styles.chipActive]}
-                  onPress={() => toggleContentType(type.id)}
-                >
-                  {type.label === 'Formulas' && <FunctionSquare size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
-                  {type.label === 'Concepts' && <Lightbulb size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
-                  {type.label === 'PYQs' && <Files size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
-                  {type.label === 'Mistakes' && <AlertCircle size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
-                  <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>{type.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </Animated.View>
-
-        <View style={styles.chapterHeader}>
-          <Text style={styles.stepLabel}>2. SELECT CHAPTERS ({selectedChapters.length})</Text>
-          <TouchableOpacity onPress={selectAllChapters}>
-            <Text style={styles.selectAllText}>
-              {selectedChapters.length === currentChapters.length ? "Deselect All" : "Select All"}
+      {activeTab === 'quick' && (
+        <View style={styles.actionFooter}>
+          <TouchableOpacity 
+            activeOpacity={0.8}
+            onPress={handleStartPress}
+            style={[styles.startBtn, !isReady && styles.startBtnDisabled]}
+          >
+            <Zap size={18} color={isReady ? "#FFFFFF" : "#5F6166"} fill={isReady ? "#FFFFFF" : "none"} />
+            <Text style={[styles.startBtnText, !isReady && styles.startBtnTextDisabled]}>
+              {isReady ? `Start Cramming • ${selectedChapters.length} Chps` : "Select Items to Start"}
             </Text>
           </TouchableOpacity>
         </View>
+      )}
 
-        <View style={styles.chapterList}>
-          {currentChapters.map((chapter) => {
-            const isSelected = selectedChapters.includes(chapter.id);
-            return (
-              <TouchableOpacity 
-                key={chapter.id}
-                activeOpacity={0.7}
-                style={[styles.chapterRow, isSelected && styles.chapterRowSelected]}
-                onPress={() => toggleChapter(chapter.id)}
-              >
-                <View style={styles.chapterInfo}>
-                  <Text style={styles.chapterName}>{chapter.name}</Text>
-                  <Text style={styles.chapterSub}>{chapter.subtitle}</Text>
-                </View>
-                <View style={[styles.customCheckbox, isSelected && styles.checkboxActive]}>
-                  {isSelected && <Check size={12} color="#FFFFFF" strokeWidth={4} />}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-        <View style={{ height: 200 }} />
-      </ScrollView>
-
-      {/* Action Footer */}
-      <View style={styles.actionFooter}>
+      <View style={styles.tabToggle}>
         <TouchableOpacity 
-          activeOpacity={0.8}
-          onPress={handleStartPress}
-          style={[styles.startBtn, !isReady && styles.startBtnDisabled]}
+          style={[styles.toggleBtn, activeTab === 'quick' && styles.toggleBtnActive]} 
+          onPress={() => setActiveTab('quick')}
         >
-          <Zap size={18} color={isReady ? "#FFFFFF" : "#5F6166"} fill={isReady ? "#FFFFFF" : "none"} />
-          <Text style={[styles.startBtnText, !isReady && styles.startBtnTextDisabled]}>
-            {isReady ? `Start Cramming • ${selectedChapters.length} Chps` : "Select Items to Start"}
-          </Text>
+          <Zap size={14} color={activeTab === 'quick' ? '#FFFFFF' : '#94969A'} />
+          <Text style={[styles.toggleText, activeTab === 'quick' && styles.toggleTextActive]}>Quick Prep</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.toggleBtn, activeTab === 'library' && styles.toggleBtnActive]} 
+          onPress={() => setActiveTab('library')}
+        >
+          <BookOpen size={14} color={activeTab === 'library' ? '#FFFFFF' : '#94969A'} />
+          <Text style={[styles.toggleText, activeTab === 'library' && styles.toggleTextActive]}>Library</Text>
         </TouchableOpacity>
       </View>
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {activeTab === 'quick' ? (
+          <>
+            {/* Header - Cleaned up */}
+            <View style={styles.header}>
+              <View style={styles.headerTop}>
+                <View>
+                  <Text style={styles.title}>Quick Prep</Text>
+                  <Text style={styles.subtitle}>Ready to revise, {MOCK_USER_STATS.name}?</Text>
+                </View>
+                <View style={styles.cramModeBadge}>
+                  <Zap size={10} color="#5e6ad2" fill="#5e6ad2" />
+                  <Text style={styles.cramModeText}>Cram Mode</Text>
+                </View>
+              </View>
+
+              <View style={styles.segmentContainer}>
+                {(['Physics', 'Chem', 'Maths'] as Subject[]).map((subj) => {
+                  const isActive = selectedSubject === subj;
+                  return (
+                    <TouchableOpacity 
+                      key={subj}
+                      style={[styles.segmentButton, isActive && styles.segmentButtonActive]}
+                      onPress={() => {
+                        setSelectedSubject(subj);
+                        setSelectedChapters([]);
+                      }}
+                    >
+                      <Text style={[styles.segmentText, isActive && styles.segmentTextActive]}>{subj}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Content Type Selector */}
+            <Animated.View style={[styles.configPanel, animatedSection1Style]}>
+              <Text style={styles.stepLabel}>1. SELECT CONTENT TYPE</Text>
+              <View style={styles.chipsContainer}>
+                {MOCK_CONTENT_TYPES.map((type) => {
+                  const isSelected = selectedContentTypes.includes(type.id);
+                  return (
+                    <TouchableOpacity 
+                      key={type.id}
+                      style={[styles.chip, isSelected && styles.chipActive]}
+                      onPress={() => toggleContentType(type.id)}
+                    >
+                      {type.label === 'Formulas' && <FunctionSquare size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+                      {type.label === 'Concepts' && <Lightbulb size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+                      {type.label === 'PYQs' && <Files size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+                      {type.label === 'Mistakes' && <AlertCircle size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+                      <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>{type.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </Animated.View>
+
+            <View style={styles.chapterHeader}>
+              <Text style={styles.stepLabel}>2. SELECT CHAPTERS ({selectedChapters.length})</Text>
+              <TouchableOpacity onPress={selectAllChapters}>
+                <Text style={styles.selectAllText}>
+                  {selectedChapters.length === currentChapters.length ? "Deselect All" : "Select All"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.chapterList}>
+              {currentChapters.map((chapter) => {
+                const isSelected = selectedChapters.includes(chapter.id);
+                return (
+                  <TouchableOpacity 
+                    key={chapter.id}
+                    activeOpacity={0.7}
+                    style={[styles.chapterRow, isSelected && styles.chapterRowSelected]}
+                    onPress={() => toggleChapter(chapter.id)}
+                  >
+                    <View style={styles.chapterInfo}>
+                      <Text style={styles.chapterName}>{chapter.name}</Text>
+                      <Text style={styles.chapterSub}>{chapter.subtitle}</Text>
+                    </View>
+                    <View style={[styles.customCheckbox, isSelected && styles.checkboxActive]}>
+                      {isSelected && <Check size={12} color="#FFFFFF" strokeWidth={4} />}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={{ height: 200 }} />
+          </>
+        ) : (
+          <View style={styles.libraryContainer}>
+            <Text style={styles.stepLabel}>COMMUNITY & SYSTEM DECKS</Text>
+            {decks.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>No decks found in the library.</Text>
+              </View>
+            ) : (
+              <View style={styles.libraryGrid}>
+                {decks.map((deck) => (
+                  <TouchableOpacity 
+                    key={deck.id} 
+                    style={styles.deckCard}
+                    onPress={() => router.push(`/study/${deck.id}`)}
+                  >
+                    <View style={styles.deckIconBox}>
+                      <Files size={20} color="#5e6ad2" />
+                    </View>
+                    <View style={styles.deckInfo}>
+                      <Text style={styles.deckName} numberOfLines={1}>{deck.name}</Text>
+                      <Text style={styles.deckSub}>{deck.cardCount} Cards • {deck.subject || 'General'}</Text>
+                    </View>
+                    <ChevronRight size={16} color="#5F6166" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -389,6 +442,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     paddingVertical: 0,
     backgroundColor: 'transparent',
     borderTopWidth: 0,
+    zIndex: 100,
   },
   startBtn: {
     flexDirection: 'row',
@@ -414,5 +468,84 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   startBtnTextDisabled: {
     color: '#5F6166',
+  },
+  tabToggle: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 10,
+    backgroundColor: '#15171B',
+    borderRadius: 12,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#2A2C32',
+  },
+  toggleBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    gap: 8,
+    borderRadius: 8,
+  },
+  toggleBtnActive: {
+    backgroundColor: '#5e6ad2',
+  },
+  toggleText: {
+    fontSize: 12,
+    fontFamily: 'Outfit_600SemiBold',
+    color: '#94969A',
+  },
+  toggleTextActive: {
+    color: '#FFFFFF',
+  },
+  libraryContainer: {
+    paddingHorizontal: 24,
+    paddingTop: 10,
+  },
+  libraryGrid: {
+    gap: 12,
+    marginTop: 12,
+  },
+  deckCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#15171B',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A2C32',
+  },
+  deckIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: 'rgba(94, 106, 210, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  deckInfo: {
+    flex: 1,
+  },
+  deckName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontFamily: 'Outfit_700Bold',
+    marginBottom: 2,
+  },
+  deckSub: {
+    color: '#94969A',
+    fontSize: 11,
+    fontFamily: 'Outfit_500Medium',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyText: {
+    color: '#5F6166',
+    fontFamily: 'Outfit_500Medium',
   }
 });

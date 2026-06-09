@@ -15,7 +15,6 @@ import {
   Outfit_700Bold 
 } from '@expo-google-fonts/outfit';
 
-import { trpc, trpcClient } from '../utils/trpc';
 import { useUserStore, OFFLINE_MODE_TOKEN } from '../store/user-store';
 import { useFlashcardStore } from '../store/flashcard-store';
 import NetInfo from '@react-native-community/netinfo';
@@ -23,6 +22,8 @@ import NetInfo from '@react-native-community/netinfo';
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+
+import { SyncService } from '../services/sync-service';
 
 // Main app navigator with data handling
 function AppNavigatorAndDataHandler() {
@@ -44,43 +45,54 @@ function AppNavigatorAndDataHandler() {
 
   useEffect(() => {
     setIsMounted(true);
-    useFlashcardStore.getState().loadDefaultDecks();
     return () => setIsMounted(false);
   }, []);
 
-  // Fetch public decks
-  const { data: publicDecks, isLoading: isLoadingDecks } = trpc.deck.listPublic.useQuery(
-    undefined,
-    { 
-      enabled: sessionToken !== OFFLINE_MODE_TOKEN && sessionToken !== null,
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      retry: 1, // Minimize retries if offline
-    }
-  );
-
-  // Sync offline ratings when online
+  // Initialize SQLite Store when session changes
   useEffect(() => {
+    if (isMounted) {
+      console.log('🔄 [AppLayout] Auth state changed or mounted. Initializing SQLite Store...');
+      useFlashcardStore.getState().initializeStore();
+    }
+  }, [isMounted, sessionToken]);
+
+  // Sync offline data when cloud connectivity is restored
+  useEffect(() => {
+    // We use a listener for network state changes
     const unsubscribe = NetInfo.addEventListener(state => {
-      if (state.isConnected) {
-        const ratings = useFlashcardStore.getState().sessionRatings;
-        if (Object.keys(ratings).length > 0) {
-          console.log('[AppLayout] Network restored, syncing session progress...');
-          useFlashcardStore.getState().syncSessionProgress();
-        }
+      const { user, sessionToken } = useUserStore.getState();
+      
+      // REAL connectivity check:
+      // isConnected = connected to a network (Wi-Fi/Cellular)
+      // isInternetReachable = can actually reach the public internet (Supabase)
+      const hasCloudAccess = state.isConnected && state.isInternetReachable !== false;
+
+      if (hasCloudAccess && sessionToken && user?.id) {
+        console.log('📡 [SyncEngine] Cloud access confirmed. Pushing local changes...');
+        SyncService.pushChanges(user.id);
       }
     });
+
     return () => unsubscribe();
-  }, []);
+  }, []); // Listener remains active for the app lifecycle
+
+  // Trigger sync immediately when user logs in if we have internet
+  useEffect(() => {
+    if (sessionToken && user?.id) {
+      NetInfo.fetch().then(state => {
+        if (state.isConnected && state.isInternetReachable !== false) {
+          SyncService.pushChanges(user.id!);
+        }
+      });
+    }
+  }, [sessionToken, user?.id]);
 
   // Update store when decks are fetched
   useEffect(() => {
-    if (publicDecks && publicDecks.length > 0) {
-      console.log('[AppLayout] Setting', publicDecks.length, 'public decks in store');
-      setDecks(publicDecks);
-    }
-  }, [publicDecks, setDecks]);
+    // This is now handled by loadDecks in initializeStore
+  }, []);
 
-  // Navigation based on auth state
+  // Navigation and data cleanup based on auth state
   useEffect(() => {
     if (!isMounted || isLoadingAuth) {
       return;
@@ -88,28 +100,29 @@ function AppNavigatorAndDataHandler() {
 
     const currentSegment = segments[0] || null;
 
-    // If no session token and not in auth flow, redirect to login
-    if (!sessionToken && currentSegment !== '(auth)') {
-      console.log('[AppLayout] No session, redirecting to login');
-      router.replace('/login');
-    }
-    // If session exists and in auth flow, redirect to main app
-    else if (sessionToken && currentSegment === '(auth)') {
-      console.log('[AppLayout] Session exists, redirecting to home');
-      router.replace('/');
+    if (sessionToken) {
+      // If we are logged in, make sure we are not in (auth)
+      if (currentSegment === '(auth)') {
+        console.log('[AppLayout] Session exists, redirecting to home');
+        router.replace('/');
+      }
+    } else {
+      // If no session token and not in auth flow, redirect to login
+      if (currentSegment !== '(auth)') {
+        console.log('[AppLayout] No session, clearing store and redirecting to login');
+        useFlashcardStore.getState().clearStore();
+        router.replace('/login');
+      }
     }
   }, [sessionToken, segments, router, isLoadingAuth, isMounted]);
 
   // Hide splash when ready
   useEffect(() => {
-    // If in offline mode, don't wait for isLoadingDecks since the query is disabled
-    const decksReady = sessionToken === OFFLINE_MODE_TOKEN ? true : !isLoadingDecks;
-    
-    if (!isLoadingAuth && decksReady && isMounted && fontsLoaded) {
+    if (!isLoadingAuth && isMounted && fontsLoaded) {
       console.log('[AppLayout] Ready, hiding splash screen');
       SplashScreen.hideAsync();
     }
-  }, [isLoadingAuth, isLoadingDecks, isMounted, sessionToken, fontsLoaded]);
+  }, [isLoadingAuth, isMounted, fontsLoaded]);
 
   return (
     <Stack>
@@ -119,6 +132,8 @@ function AppNavigatorAndDataHandler() {
     </Stack>
   );
 }
+
+import { DatabaseProvider } from '../db/DatabaseProvider';
 
 export default function RootLayout() {
   const [loadedFonts, fontError] = useFonts({});
@@ -155,14 +170,12 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <trpc.Provider client={trpcClient} queryClient={queryClient}>
-          <QueryClientProvider client={queryClient}>
-            <View style={{ flex: 1 }}>
-              <OfflineStatusBar />
-              {isAuthChecked ? <AppNavigatorAndDataHandler /> : null}
-            </View>
-          </QueryClientProvider>
-        </trpc.Provider>
+        <DatabaseProvider>
+          <View style={{ flex: 1 }}>
+            <OfflineStatusBar />
+            {isAuthChecked ? <AppNavigatorAndDataHandler /> : null}
+          </View>
+        </DatabaseProvider>
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );

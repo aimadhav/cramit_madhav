@@ -18,6 +18,7 @@ export interface Flashcard {
   dueDate: number; // Timestamp when card is due for review
   lastReviewed: number | null; // Timestamp of last review
   isBookmarked?: boolean;
+  notes?: string;
 }
 
 export interface Deck {
@@ -56,12 +57,10 @@ export interface User {
   isPremium: boolean;
   createdAt: number;
   updatedAt: number;
-  studyStats: {
-    totalCardsStudied: number;
-    totalTimeStudied: number; // in minutes
-    streakDays: number;
-    lastStudyDate: number | null;
-  };
+  totalCardsStudied: number;
+  totalTimeStudied: number; // in minutes
+  streakDays: number;
+  lastStudyDate: number | null;
   ownedDecks: string[];
 }
 

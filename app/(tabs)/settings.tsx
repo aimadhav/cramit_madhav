@@ -14,13 +14,13 @@ import {
   Shield,
   Trash2,
   Server,
-  RotateCcw
+  RotateCcw,
+  Smartphone
 } from "lucide-react-native";
 
 import { useThemeColors } from "@/hooks/useThemeColors";
 import { useUserStore, OFFLINE_MODE_TOKEN } from "@/store/user-store";
 import { useFlashcardStore } from "@/store/flashcard-store";
-import BackendStatus from "@/components/BackendStatus";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -135,9 +135,6 @@ export default function SettingsScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>Settings</Text>
         </View>
-        
-        {/* Backend Status - Hidden in Offline Mode */}
-        {!isOffline && <BackendStatus />}
         
         {/* Profile Section */}
         <View style={styles.profileSection}>
@@ -256,6 +253,21 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
         
+        {/* Developer Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Developer Tools</Text>
+          <TouchableOpacity 
+            style={styles.settingItem}
+            onPress={() => router.push("/debug-sqlite")}
+          >
+            <View style={[styles.settingIconContainer, { backgroundColor: '#1A1B1F' }]}>
+              <Smartphone size={20} color={colors.primary} />
+            </View>
+            <Text style={styles.settingText}>SQLite Debugger</Text>
+            <ChevronRight size={20} color={colors.gray[400]} />
+          </TouchableOpacity>
+        </View>
+
         {/* Account Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>
