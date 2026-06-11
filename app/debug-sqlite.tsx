@@ -21,22 +21,13 @@ export default function DebugSqliteScreen() {
     try {
       // Check if tables exist first to avoid crashing
       const { expoDb } = require('@/db');
-      const tableCheck = expoDb.prepareSync("SELECT name FROM sqlite_master WHERE type='table' AND name='decks';").get();
-      
-      if (!tableCheck) {
-        setDeckCount(0);
-        setCardCount(0);
-        setSyncQueueCount(0);
-        setSyncQueueData([]);
-        return;
-      }
-
+   
       const d = await db.select({ value: count() }).from(schema.decks);
       const c = await db.select({ value: count() }).from(schema.flashcards);
       const q = await db.select().from(schema.syncQueue);
       
-      setDeckCount(d[0].value);
-      setCardCount(c[0].value);
+      setDeckCount(d[0]?.value ?? 0);
+      setCardCount(c[0]?.value ?? 0);
       setSyncQueueCount(q.length);
       setSyncQueueData(q);
     } catch (error: any) {

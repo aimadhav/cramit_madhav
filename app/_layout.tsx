@@ -3,7 +3,6 @@ import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { View } from 'react-native';
 import { OfflineStatusBar } from '../components/OfflineStatusBar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -18,10 +17,9 @@ import {
 import { useUserStore, OFFLINE_MODE_TOKEN } from '../store/user-store';
 import { useFlashcardStore } from '../store/flashcard-store';
 import NetInfo from '@react-native-community/netinfo';
+import { supabase } from '../lib/supabase';
 
 SplashScreen.preventAutoHideAsync();
-
-const queryClient = new QueryClient();
 
 import { SyncService } from '../services/sync-service';
 
@@ -55,6 +53,36 @@ function AppNavigatorAndDataHandler() {
       useFlashcardStore.getState().initializeStore();
     }
   }, [isMounted, sessionToken]);
+
+  // Auth State Listener (Supabase)
+  useEffect(() => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log(`🔔 [AuthListener] Event: ${event}`);
+      
+      if (event === 'SIGNED_IN' && session) {
+        // Only update if the store doesn't already have this session
+        const currentToken = useUserStore.getState().sessionToken;
+        if (currentToken !== session.access_token && currentToken !== OFFLINE_MODE_TOKEN) {
+          const { AuthService } = require('../services/auth-service');
+          await AuthService.establishSession(session, session.user);
+        }
+      } else if (event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
+        if (!session && useUserStore.getState().sessionToken !== OFFLINE_MODE_TOKEN) {
+          useUserStore.getState().logout();
+        }
+      } else if (event === 'TOKEN_REFRESHED' && session) {
+        useUserStore.getState().setSession(
+          useUserStore.getState().user!, 
+          session.access_token, 
+          session.refresh_token
+        );
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   // Sync offline data when cloud connectivity is restored
   useEffect(() => {

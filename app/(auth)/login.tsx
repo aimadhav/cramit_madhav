@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, TextInput, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Image, ScrollView } from "react-native";
-import { Text } from "@/components/AppText";;
+import { View, TextInput, StyleSheet, Alert, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { Text } from "@/components/AppText";
 import { useRouter } from 'expo-router';
 import { useUserStore } from '../../store/user-store';
-import type { AppUser } from '../../store/user-store';
-import { supabase } from '../../lib/supabase';
+import { AuthService } from '@/services/auth-service';
 import * as WebBrowser from 'expo-web-browser';
-import { makeRedirectUri } from 'expo-auth-session';
 import { useThemeColors } from '@/hooks/useThemeColors';
+import Toast from 'react-native-toast-message';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -15,10 +14,11 @@ export default function LoginScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
+  
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  const { setSession } = useUserStore.getState();
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -27,134 +27,45 @@ export default function LoginScreen() {
     }
     
     try {
-      const { data: sessionData, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      setIsLoading(true);
+      await AuthService.signIn(email, password);
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Login Successful',
+        text2: 'Welcome back!',
       });
-
-      if (error) throw error;
-      if (!sessionData.session || !sessionData.user) throw new Error('No session returned');
-
-      const appUser: AppUser = {
-        id: sessionData.user.id,
-        email: sessionData.user.email || '',
-        name: sessionData.user.user_metadata?.full_name || sessionData.user.user_metadata?.name || null,
-        isLoggedIn: true,
-        isPremium: false,
-        createdAt: new Date(sessionData.user.created_at || Date.now()).getTime(),
-        updatedAt: Date.now(),
-        totalCardsStudied: 0,
-        totalTimeStudied: 0,
-        streakDays: 0,
-        lastStudyDate: null,
-        ownedDecks: [],
-        phone: sessionData.user.phone || undefined,
-      };
-
-      setSession(appUser, sessionData.session.access_token, sessionData.session.refresh_token);
-      Alert.alert('Login Successful', 'Welcome back!');
+      
       router.replace('/');
     } catch (error: any) {
       console.error('Login failed:', error);
       Alert.alert('Login Failed', error.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleGoogleSignIn = async () => {
     try {
       setIsGoogleLoading(true);
-      // Use a simpler redirect URI for better compatibility
-      const redirectUri = makeRedirectUri({
-        scheme: 'myapp',
-        preferLocalhost: false,
-      });
-
-      console.log('🔗 [OAuth] Requesting Login with Redirect:', redirectUri);
-
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: redirectUri,
-          skipBrowserRedirect: true,
-        },
-      });
-
-      if (error) throw error;
-      if (!data?.url) throw new Error('No OAuth URL returned');
-
-      console.log('🌍 [OAuth] Opening WebBrowser...');
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
-
-      if (result.type === 'success' && result.url) {
-        console.log('✅ [OAuth] Browser returned success. URL:', result.url);
-        
-        const url = new URL(result.url);
-        // Supabase returns tokens in the hash (#)
-        const params = new URLSearchParams(url.hash.substring(1));
-        
-        const access_token = params.get('access_token');
-        const refresh_token = params.get('refresh_token');
-
-        if (!access_token) {
-          console.error('❌ [OAuth] Access token missing in hash. Full URL:', result.url);
-          // Try query params as a fallback
-          const queryParams = new URLSearchParams(url.search);
-          const q_access = queryParams.get('access_token');
-          if (q_access) {
-             console.log('ℹ️ [OAuth] Found token in query params instead of hash');
-             await completeLogin(q_access, queryParams.get('refresh_token') || '');
-             return;
-          }
-          throw new Error('Could not retrieve tokens from Google Sign-In.');
-        }
-
-        await completeLogin(access_token, refresh_token || '');
-      } else {
-        console.log('ℹ️ [OAuth] Browser session closed or cancelled. Type:', result.type);
+      const result = await AuthService.signInWithGoogle();
+      
+      console.log('🏁 [GoogleSignIn] Result type:', result?.type);
+      
+      if (result?.type === 'success') {
+        // The AuthService already established the session
+        router.replace('/');
+      } else if (result?.type === 'cancel') {
+        Toast.show({
+          type: 'info',
+          text1: 'Sign-In Cancelled',
+        });
       }
     } catch (error: any) {
-      console.error('❌ [OAuth] Error:', error);
+      console.error('❌ [GoogleSignIn] Error:', error);
       Alert.alert('Google Sign-In Error', error.message || 'Failed to sign in with Google');
     } finally {
       setIsGoogleLoading(false);
-    }
-  };
-
-  const completeLogin = async (access_token: string, refresh_token: string) => {
-    console.log('🚀 [OAuth] Completing login with tokens...');
-    
-    // ENSURE CLEAN SLATE: Clear old user's flashcards/sync queue
-    const { useFlashcardStore } = require('../../store/flashcard-store');
-    useFlashcardStore.getState().clearStore();
-
-    const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-      access_token,
-      refresh_token,
-    });
-
-    if (sessionError) throw sessionError;
-
-    if (sessionData.user && sessionData.session) {
-      console.log('🎉 [OAuth] Session established for:', sessionData.user.email);
-      const appUser: AppUser = {
-        id: sessionData.user.id,
-        email: sessionData.user.email || '',
-        name: sessionData.user.user_metadata?.full_name || sessionData.user.user_metadata?.name || null,
-        isLoggedIn: true,
-        isPremium: false,
-        createdAt: new Date(sessionData.user.created_at || Date.now()).getTime(),
-        updatedAt: Date.now(),
-        totalCardsStudied: 0,
-        totalTimeStudied: 0,
-        streakDays: 0,
-        lastStudyDate: null,
-        ownedDecks: [],
-        phone: sessionData.user.phone || undefined,
-      };
-
-      setSession(appUser, sessionData.session.access_token, sessionData.session.refresh_token);
-      Alert.alert('Login Successful', 'Welcome back!');
-      router.replace('/');
     }
   };
 
@@ -173,7 +84,9 @@ export default function LoginScreen() {
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
+            autoCapitalize="none"
             placeholderTextColor={colors.textLight}
+            editable={!isLoading && !isGoogleLoading}
           />
           <TextInput
             style={styles.input}
@@ -182,13 +95,19 @@ export default function LoginScreen() {
             onChangeText={setPassword}
             secureTextEntry
             placeholderTextColor={colors.textLight}
+            editable={!isLoading && !isGoogleLoading}
           />
 
           <TouchableOpacity
-            style={styles.button}
+            style={[styles.button, (isLoading || isGoogleLoading) && styles.buttonDisabled]}
             onPress={handleLogin}
+            disabled={isLoading || isGoogleLoading}
           >
-            <Text style={styles.buttonText}>Login</Text>
+            {isLoading ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={styles.buttonText}>Login</Text>
+            )}
           </TouchableOpacity>
 
           <View style={styles.dividerContainer}>
@@ -198,9 +117,9 @@ export default function LoginScreen() {
           </View>
 
           <TouchableOpacity 
-            style={[styles.googleButton, isGoogleLoading && styles.buttonDisabled]}
+            style={[styles.googleButton, (isGoogleLoading || isLoading) && styles.buttonDisabled]}
             onPress={handleGoogleSignIn}
-            disabled={isGoogleLoading}
+            disabled={isGoogleLoading || isLoading}
           >
             {isGoogleLoading ? (
                  <ActivityIndicator color={colors.textDark} />
@@ -223,31 +142,6 @@ export default function LoginScreen() {
           <TouchableOpacity onPress={() => router.push('/signup')} style={styles.signupContainer}>
             <Text style={styles.linkText}>Don't have an account? <Text style={styles.linkBold}>Sign Up</Text></Text>
           </TouchableOpacity>
-
-          {/* Quick Access Buttons */}
-          <View style={styles.quickAccessContainer}>
-            <Text style={styles.quickAccessLabel}>DEMO ACCESS</Text>
-            <View style={styles.quickAccessRow}>
-              <TouchableOpacity 
-                style={styles.quickAccessButton}
-                onPress={() => {
-                  setEmail('arjun@test.com');
-                  setPassword('password123');
-                }}
-              >
-                <Text style={styles.quickAccessButtonText}>ARJUN</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.quickAccessButton, { borderColor: '#10B98120' }]}
-                onPress={() => {
-                  setEmail('beta@cramit.com');
-                  setPassword('password123');
-                }}
-              >
-                <Text style={[styles.quickAccessButtonText, { color: '#10B981' }]}>BETA</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

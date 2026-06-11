@@ -81,11 +81,7 @@ export default function StatsScreen() {
       
       try {
         // Quick check if tables exist to prevent early crash
-        const tableCheck = expoDb.prepareSync("SELECT name FROM sqlite_master WHERE type='table' AND name='reviews';").get();
-        if (!tableCheck) {
-           console.log('📊 [Stats] SQLite tables missing, showing zero stats.');
-           return;
-        }
+   
 
         const revCount = await db.select({ value: count() }).from(reviews).where(eq(reviews.userId, user?.id || 'local'));
         const cardCount = await db.select({ value: count() }).from(userFlashcardStatus).where(eq(userFlashcardStatus.userId, user?.id || 'local'));
