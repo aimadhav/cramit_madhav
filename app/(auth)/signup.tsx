@@ -13,7 +13,10 @@ export default function SignupScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [prepFocus, setPrepFocus] = useState('JEE'); // Default
   const [isLoading, setIsLoading] = useState(false);
+
+  const PREP_OPTIONS = ['JEE', 'NEET', 'CS'];
 
   const handleSignup = async () => {
     if (!email.trim() || !password.trim()) {
@@ -27,7 +30,7 @@ export default function SignupScreen() {
 
     try {
       setIsLoading(true);
-      await AuthService.signUp(email, password, name);
+      await AuthService.signUp(email, password, name, prepFocus);
 
       Alert.alert(
         'Account Created', 
@@ -75,7 +78,32 @@ export default function SignupScreen() {
             onChangeText={setPassword}
             secureTextEntry
             placeholderTextColor={colors.textLight}
+            editable={!isLoading}
           />
+
+          <View style={styles.prepContainer}>
+            <Text style={styles.prepLabel}>What are you preparing for?</Text>
+            <View style={styles.prepButtons}>
+              {PREP_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option}
+                  style={[
+                    styles.prepButton,
+                    prepFocus === option && styles.prepButtonActive
+                  ]}
+                  onPress={() => setPrepFocus(option)}
+                  disabled={isLoading}
+                >
+                  <Text style={[
+                    styles.prepButtonText,
+                    prepFocus === option && styles.prepButtonTextActive
+                  ]}>
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
 
           <TouchableOpacity
             style={[styles.button, isLoading && styles.buttonDisabled]}
@@ -165,6 +193,40 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   linkBold: {
     fontFamily: 'Outfit_700Bold',
+    color: colors.primary,
+  },
+  prepContainer: {
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  prepLabel: {
+    fontSize: 14,
+    fontFamily: 'Outfit_500Medium',
+    color: colors.textLight,
+    marginBottom: 8,
+  },
+  prepButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  prepButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    backgroundColor: colors.background,
+  },
+  prepButtonActive: {
+    backgroundColor: 'rgba(94, 106, 210, 0.15)',
+    borderColor: '#5e6ad2',
+  },
+  prepButtonText: {
+    fontFamily: 'Outfit_600SemiBold',
+    color: colors.textLight,
+  },
+  prepButtonTextActive: {
     color: colors.primary,
   },
 });

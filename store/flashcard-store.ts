@@ -111,20 +111,28 @@ export const useFlashcardStore = create<FlashcardState>()(
             let front = '';
             let back = '';
             try {
-               const f = JSON.parse(card.frontContent);
-               const b = JSON.parse(card.backContent);
-               front = f[0]?.value || '';
-               back = b[0]?.value || '';
+               const f = typeof card.frontContent === 'string' ? JSON.parse(card.frontContent) : card.frontContent;
+               const b = typeof card.backContent === 'string' ? JSON.parse(card.backContent) : card.backContent;
+               front = Array.isArray(f) ? f[0]?.value : (f?.value || f || '');
+               back = Array.isArray(b) ? b[0]?.value : (b?.value || b || '');
             } catch (e) {
-               front = card.frontContent;
-               back = card.backContent;
+               front = card.frontContent || '';
+               back = card.backContent || '';
+            }
+
+            let mediaUrls = [];
+            try {
+              mediaUrls = card.mediaUrls ? (typeof card.mediaUrls === 'string' ? JSON.parse(card.mediaUrls) : card.mediaUrls) : [];
+            } catch (e) {
+              console.warn(`[Store] Failed to parse mediaUrls for card ${card.id}:`, e);
+              mediaUrls = [];
             }
 
             return {
               ...card,
               front,
               back,
-              mediaUrls: card.mediaUrls ? JSON.parse(card.mediaUrls) : [],
+              mediaUrls: Array.isArray(mediaUrls) ? mediaUrls : [],
               ...status,
               dueDate: status?.due_date || card.createdAt,
               isBookmarked: !!status?.isBookmarked,

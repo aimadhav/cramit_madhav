@@ -53,7 +53,7 @@ export class AuthService {
     const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
 
     if (result.type === 'success' && result.url) {
-      console.log('✅ [OAuth] Browser returned success URL:', result.url);
+      console.log('✅ [OAuth] Browser returned success.');
       const url = new URL(result.url);
       
       // Some browsers return params in the hash (#) and others in the search (?)
@@ -93,7 +93,7 @@ export class AuthService {
   /**
    * User Signup
    */
-  static async signUp(email: string, password: string, name?: string) {
+  static async signUp(email: string, password: string, name?: string, prepFocus?: string) {
     const cleanEmail = email.trim().toLowerCase();
     
     const { data, error } = await supabase.auth.signUp({
@@ -102,6 +102,7 @@ export class AuthService {
       options: {
         data: {
           name: name || undefined,
+          prep_focus: prepFocus || undefined,
         }
       }
     });
@@ -128,6 +129,8 @@ export class AuthService {
       lastStudyDate: null,
       ownedDecks: [],
       phone: user.phone || undefined,
+      role: user.user_metadata?.role || 'student', // Fallback, real sync handles it
+      prepFocus: user.user_metadata?.prep_focus || null,
     };
   }
 

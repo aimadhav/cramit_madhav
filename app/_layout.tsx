@@ -33,14 +33,6 @@ function AppNavigatorAndDataHandler() {
   const setDecks = useFlashcardStore((state) => state.setDecks);
   const [isMounted, setIsMounted] = useState(false);
 
-  // Load custom fonts
-  const [fontsLoaded] = useFonts({
-    Outfit_400Regular,
-    Outfit_500Medium,
-    Outfit_600SemiBold,
-    Outfit_700Bold,
-  });
-
   useEffect(() => {
     setIsMounted(true);
     return () => setIsMounted(false);
@@ -144,19 +136,10 @@ function AppNavigatorAndDataHandler() {
     }
   }, [sessionToken, segments, router, isLoadingAuth, isMounted]);
 
-  // Hide splash when ready
-  useEffect(() => {
-    if (!isLoadingAuth && isMounted && fontsLoaded) {
-      console.log('[AppLayout] Ready, hiding splash screen');
-      SplashScreen.hideAsync();
-    }
-  }, [isLoadingAuth, isMounted, fontsLoaded]);
-
   return (
     <Stack>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-      <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
     </Stack>
   );
 }
@@ -164,7 +147,12 @@ function AppNavigatorAndDataHandler() {
 import { DatabaseProvider } from '../db/DatabaseProvider';
 
 export default function RootLayout() {
-  const [loadedFonts, fontError] = useFonts({});
+  const [fontsLoaded, fontError] = useFonts({
+    Outfit_400Regular,
+    Outfit_500Medium,
+    Outfit_600SemiBold,
+    Outfit_700Bold,
+  });
   const { checkAuthStatus } = useUserStore.getState();
   const [isAuthChecked, setIsAuthChecked] = useState(false);
 
@@ -186,12 +174,12 @@ export default function RootLayout() {
   }, [checkAuthStatus]);
 
   useEffect(() => {
-    if (loadedFonts && isAuthChecked) {
+    if (fontsLoaded && isAuthChecked) {
       SplashScreen.hideAsync();
     }
-  }, [loadedFonts, isAuthChecked]);
+  }, [fontsLoaded, isAuthChecked]);
 
-  if (!loadedFonts) {
+  if (!fontsLoaded) {
     return null;
   }
 

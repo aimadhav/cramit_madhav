@@ -34,7 +34,11 @@ export function calculateNextReview(
   // Default values for new cards or legacy cards where FSRS fields are 0
   if (repetitions === 0 || !lastReviewed || stability === 0) {
     // Initial review or migration to FSRS
-    stability = W[G - 1];
+    if (card.startingStability && card.startingStability > 0) {
+      stability = card.startingStability;
+    } else {
+      stability = W[G - 1];
+    }
     difficulty = Math.max(1, Math.min(10, W[4] - (G - 1) * W[5]));
     repetitions = repetitions === 0 ? 1 : repetitions + 1;
   } else {

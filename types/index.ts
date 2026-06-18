@@ -10,6 +10,7 @@ export interface Flashcard {
   deckId: string;
   createdAt: number;
   updatedAt: number;
+  startingStability?: number; // Added from creator
   // Spaced repetition data
   interval: number; // Days until next review
   stability: number; // FSRS stability
@@ -36,6 +37,7 @@ export interface Deck {
   chapter?: string | null;
   userId: string;
   isPublic: boolean;
+  prepCategory?: string | null;
   areCardsLoaded?: boolean;
 }
 

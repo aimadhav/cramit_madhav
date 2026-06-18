@@ -75,11 +75,51 @@ export default function DecksScreen() {
     }
   };
 
+  const [isDownloading, setIsDownloading] = useState<string | null>(null);
+
   const handleStartPress = () => {
     if (isReady) {
       router.push(`/study/temp_123`);
     } else {
       triggerSubtleSuggestion();
+    }
+  };
+
+  const handleDeckPress = async (deckId: string) => {
+    if (isDownloading) return;
+    
+    const { useFlashcardStore } = require('@/store/flashcard-store');
+    const { SyncService } = require('@/services/sync-service');
+    
+    try {
+      const store = useFlashcardStore.getState();
+      let deck = store.decks.find((d: any) => d.id === deckId);
+      
+      if (!deck) return;
+
+      if (deck.cardCount === 0) {
+        setIsDownloading(deckId);
+        console.log(`📡 [Library] Empty deck detected → downloading flashcard content`);
+        const success = await SyncService.downloadDeckContent(deckId);
+        
+        if (!success) {
+          console.log(`❌ [Library] Deck download failed`);
+          return;
+        }
+        
+        await store.loadDecks();
+        deck = useFlashcardStore.getState().decks.find((d: any) => d.id === deckId);
+        console.log(`📡 [Library] Reloaded → New cardCount=${deck?.cardCount}`);
+        
+        if (!deck?.cardCount) {
+          console.log(`⚠️ Download completed but still 0 local cards. Check Supabase 'status' column.`);
+          return;
+        }
+      }
+
+      router.push(`/study/${deckId}`);
+    } finally {
+      setIsDownloading(null);
     }
   };
 
@@ -232,8 +272,9 @@ export default function DecksScreen() {
                 {decks.map((deck) => (
                   <TouchableOpacity 
                     key={deck.id} 
-                    style={styles.deckCard}
-                    onPress={() => router.push(`/study/${deck.id}`)}
+                    style={[styles.deckCard, isDownloading === deck.id && { opacity: 0.5 }]}
+                    onPress={() => handleDeckPress(deck.id)}
+                    disabled={isDownloading !== null}
                   >
                     <View style={styles.deckIconBox}>
                       <Files size={20} color="#5e6ad2" />
@@ -242,7 +283,11 @@ export default function DecksScreen() {
                       <Text style={styles.deckName} numberOfLines={1}>{deck.name}</Text>
                       <Text style={styles.deckSub}>{deck.cardCount} Cards • {deck.subject || 'General'}</Text>
                     </View>
-                    <ChevronRight size={16} color="#5F6166" />
+                    {isDownloading === deck.id ? (
+                      <Text style={{ color: '#5e6ad2', fontSize: 12 }}>Loading...</Text>
+                    ) : (
+                      <ChevronRight size={16} color="#5F6166" />
+                    )}
                   </TouchableOpacity>
                 ))}
               </View>

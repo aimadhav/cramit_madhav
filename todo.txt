@@ -1,0 +1,11 @@
+complete the sync service make sure it sync in batches of 30-50 cards or may be less make sure it knows what has been synced and it is faut tolrant
+i wish to build the algorithm which is being used how to push cards and all dont do it by yourself i will design it 
+analtics page need to be fixed change ui and the way you show
+make a extranal web app which makes the cards and where we can seee how the cards will look on phone we can make cards in bulk too add image and all everything tyhat there is in the card also can connfigure initial stability
+everything around teachers portal .add chapter and thing needed for creation in db comes from that.
+ui-->which deck is main focus should be base on calculation not everythime physics shoud be there.
+
+i wish to make a same version of app for dsa and os cn too so it should have them as subbjects and one extra type of card whcih si linked card 5 linked cards 
+build things for testing and all.
+
+the sigin and signup should have google signup and if some one choose it he should be aked to choose whatare you prepareing for after that.

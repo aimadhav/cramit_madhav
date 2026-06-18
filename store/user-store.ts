@@ -19,6 +19,8 @@ export interface AppUser {
   lastStudyDate: number | null;
   ownedDecks: string[];
   phone?: string; 
+  role?: 'student' | 'teacher';
+  prepFocus?: string | null;
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -56,6 +58,8 @@ const defaultUserInitialState: AppUser = {
   streakDays: 0,
   lastStudyDate: null,
   ownedDecks: [],
+  role: 'student',
+  prepFocus: null,
 };
 
 export const TOKEN_STORAGE_KEY = 'sessionToken';

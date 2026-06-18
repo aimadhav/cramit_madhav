@@ -31,6 +31,10 @@ export const decks = sqliteTable('decks', {
   coverImage: text('cover_image'),
   version: integer('version').default(1), // Deck Versioning
   
+  // New categorization fields
+  isPublic: integer('is_public', { mode: 'boolean' }).default(true),
+  prepCategory: text('prep_category'),
+  
   // Metadata
   isDownloaded: integer('is_downloaded', { mode: 'boolean' }).default(false),
   downloadedAt: integer('downloaded_at'),
@@ -53,6 +57,8 @@ export const flashcards = sqliteTable('flashcards', {
   // JSON structure for mixed content (text + latex + image)
   frontContent: text('front_content').notNull(), 
   backContent: text('back_content').notNull(),
+  
+  startingStability: real('starting_stability').default(0),
   
   mediaUrls: text('media_urls').default('[]'),
   createdAt: integer('created_at').notNull(),

@@ -56,7 +56,7 @@ const FlashcardContentModal: React.FC<FlashcardContentModalProps> = ({ isVisible
             <View style={styles.contentSection}>
               <Text style={styles.subHeaderText}>Question:</Text>
               {renderContent(card.front, 'front')}
-              {(card.mediaUrls && card.mediaUrls.length > 0 && (card.contentType === 'image' || card.contentType === 'mixed')) && (
+              {(card.mediaUrls && card.mediaUrls.length > 0) && (
                 <Image 
                   source={{ uri: card.mediaUrls[0] }} 
                   style={styles.modalImage}

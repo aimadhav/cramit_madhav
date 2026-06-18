@@ -101,7 +101,7 @@ export default function DeckDetailScreen() {
   const dueCards = flashcards.filter(c => !c.dueDate || c.dueDate <= Date.now());
   const newCards = flashcards.filter(c => c.repetitions === 0);
   const displayedCards = showAll ? flashcards : flashcards.slice(0, 5);
-  const isLoading = useFlashcardStore.getState().isLoading;
+  const isLoading = useFlashcardStore(state => state.isLoading);
 
   const handleStartStudy = async () => {
     if (!deck || !isMountedRef.current) return;
