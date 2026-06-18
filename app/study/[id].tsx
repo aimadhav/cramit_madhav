@@ -72,9 +72,18 @@ export default function StudySessionScreen() {
     async function init() {
       if (!isTempDeck && id) {
         console.log('📱 [UI] Starting study session for deck:', id);
-        await startStudySession(id);
+        try {
+          await startStudySession(id);
+          setIsInitializing(false);
+        } catch (error) {
+          console.error('📱 [UI] Error starting study session:', error);
+          Alert.alert("Error", "Could not load this study session.", [
+            { text: "OK", onPress: () => router.back() }
+          ]);
+        }
+      } else {
+        setIsInitializing(false);
       }
-      setIsInitializing(false);
     }
     init();
   }, [id, isTempDeck]);

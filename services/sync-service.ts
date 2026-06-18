@@ -25,8 +25,8 @@ export class SyncService {
       console.log(`📡 [SyncService] Pushing ${tasks.length} changes to cloud...`);
 
       for (const task of tasks) {
-        // SKIP LOCAL TEST CARDS (Prevent Foreign Key Violations)
-        if (task.entityId.includes('test') || task.entityId.startsWith('temp_')) {
+        // SKIP LOCAL TEMP CARDS (Prevent Foreign Key Violations)
+        if (task.entityId.startsWith('temp_')) {
            await db.update(schema.syncQueue)
               .set({ status: 'synced', updatedAt: Date.now() })
               .where(eq(schema.syncQueue.id, task.id));
@@ -178,16 +178,30 @@ export class SyncService {
       const { DatabaseService } = require('./database-service');
 
       // Broaden search to ensure seeded decks are found
-      const { data, error } = await supabase.from('decks').select('*');
+      const { data, error } = await supabase.from('decks').select('*').eq('is_public', true);
       if (error) throw error;
 
-      console.log(`📡 [SyncService] Cloud Scan: Found ${data?.length || 0} decks.`);
+      console.log(`📡 [SyncService] Cloud Scan: Found ${data?.length || 0} total decks in Supabase.`);
 
-      if (data) {
+      if (data && data.length > 0) {
+        let upsertedCount = 0;
         for (const deck of data) {
-          console.log(`📡 [SyncService] Syncing: ${deck.name} (ID: ${deck.id})`);
-          await DatabaseService.upsertDeck(deck, []);
+          // Add detailed logging
+          console.log(`📡 [SyncService] Found Deck -> Name: "${deck.name}", Category: "${deck.prep_category}", Public: ${deck.is_public}`);
+          
+          if (deck.is_public) {
+            console.log(`📡 [SyncService] Syncing metadata for: ${deck.name} (ID: ${deck.id})`);
+            // We ONLY sync metadata here. 
+            // The actual cards (Stage C) are downloaded on-demand when the user clicks "Start Revision"
+            await DatabaseService.upsertDeck(deck, []);
+            upsertedCount++;
+          } else {
+             console.log(`📡 [SyncService] SKIPPED: ${deck.name} is NOT public.`);
+          }
         }
+        console.log(`📡 [SyncService] Successfully saved ${upsertedCount} decks to local SQLite.`);
+      } else {
+        console.log(`📡 [SyncService] Supabase returned 0 decks.`);
       }
       return true;
     } catch (e: any) {
@@ -206,18 +220,35 @@ export class SyncService {
       const { DatabaseService } = require('./database-service');
 
       // 1. Fetch Cards
+      console.log(`📡 [SyncService] Fetching flashcards for deck ${deckId}...`);
       const { data: cards, error } = await supabase
         .from('flashcards')
         .select('*')
-        .eq('deck_id', deckId);
+        .eq('deck_id', deckId)
+        .eq('status', 'published');
 
-      if (error) throw error;
+      if (error) {
+        console.error(`❌ [SyncService] Supabase error fetching cards:`, error.message);
+        throw error;
+      }
+      
+      console.log(`📡 [SyncService] Found ${cards?.length || 0} published cards for deck ${deckId}.`);
 
       // 2. Fetch Deck Metadata to get the full object
-      const { data: deck } = await supabase.from('decks').select('*').eq('id', deckId).single();
+      const { data: deck, error: deckError } = await supabase
+        .from('decks')
+        .select('*')
+        .eq('id', deckId)
+        .eq('is_public', true)
+        .single();
+
+      if (deckError || !deck) {
+        console.error(`❌ [SyncService] Failed to fetch deck metadata for ${deckId}:`, deckError?.message);
+        return false;
+      }
 
       // 3. Save to local SQLite (DatabaseService handles image downloading inside)
-      if (deck && cards) {
+      if (cards) {
         await DatabaseService.upsertDeck(deck, cards);
       }
       

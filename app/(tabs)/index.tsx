@@ -1,16 +1,26 @@
-import React, { useMemo, useEffect } from "react";
-import { StyleSheet, View, ScrollView, TouchableOpacity, Dimensions } from "react-native";
+import React, { useMemo, useEffect , useState } from "react";
+import { StyleSheet, View, ScrollView, TouchableOpacity, Dimensions ,ActivityIndicator} from "react-native";
 import { Text } from "@/components/AppText";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Flame, Play, FlaskConical, FunctionSquare, Brain, Clock, CreditCard as Cards, LogOut, Atom, Activity, Check } from "lucide-react-native";
+import { Flame, Play, FlaskConical, FunctionSquare, Brain, Clock, CreditCard as Cards, LogOut, Atom, Activity, Check, BookOpen } from "lucide-react-native";
 
 import { useThemeColors } from "@/hooks/useThemeColors";
 import { useUserStore } from "@/store/user-store";
 import { useFlashcardStore } from "@/store/flashcard-store";
-import { MOCK_USER_STATS } from "@/constants/mockData";
 
 const { width } = Dimensions.get('window');
+
+const getSubjectIcon = (subject: string, size: number = 18, color: string = "#5e6ad2") => {
+  if (!subject) return <BookOpen size={size} color={color} />;
+  const s = subject.toLowerCase();
+  if (s.includes('phys')) return <Atom size={size} color={color} />;
+  if (s.includes('chem')) return <FlaskConical size={size} color={color} />;
+  if (s.includes('math')) return <FunctionSquare size={size} color={color} />;
+  if (s.includes('bio')) return <Activity size={size} color={color} />;
+  if (s.includes('cs') || s.includes('dsa') || s.includes('os') || s.includes('network')) return <Brain size={size} color={color} />;
+  return <BookOpen size={size} color={color} />;
+};
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -18,33 +28,68 @@ export default function HomeScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { logout, user } = useUserStore();
   const { decks, getCardsToStudyCount } = useFlashcardStore();
+  const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
+  const [isDownloadingDeck, setIsDownloadingDeck] = useState(false);
+
+  // Trigger sync on mount
+  useEffect(() => {
+    const { SyncService } = require('@/services/sync-service');
+    const { user: stateUser } = useUserStore.getState();
+    if (stateUser?.id) {
+      setIsFetchingMetadata(true);
+      SyncService.pullDecks()
+        .then(() => {
+          const { useFlashcardStore: store } = require('@/store/flashcard-store');
+          return store.getState().loadDecks();
+        })
+        .finally(() => setIsFetchingMetadata(false));
+    }
+  }, []);
 
   // Diagnostics
   useEffect(() => {
-    console.log(`🏠 [Home] Total Decks in Store: ${decks.length}`);
+    console.log(`🏠 [Home] Total Decks currently in Local SQLite Store: ${decks.length}`);
     if (decks.length > 0) {
-      decks.forEach(d => {
-        console.log(`🏠 [Home] Deck: ${d.name} | Subj: ${d.subject} | Due: ${(d as any).dueCount}`);
+      decks.forEach((d: any) => {
+        console.log(`🏠 [Home] Deck: "${d.name}" | Subj: "${d.subject}" | Category: "${d.prepCategory}" | Public: ${d.isPublic} | Local Cards: ${d.cardCount}`);
       });
+    } else {
+      console.log(`🏠 [Home] SQLite Store is empty! No decks to display.`);
     }
   }, [decks]);
 
-  // Calculate real stats
+  // Calculate real stats dynamically
   const stats = useMemo(() => {
-    const subjects = ['Physics', 'Chemistry', 'Mathematics', 'Biology'];
-    const subjectData = subjects.map(name => {
-      // Find decks that belong to this subject (with fallback for broken "subject" string)
-      const subjectDecks = decks.filter(d => 
-        d.subject === name || 
-        (d.subject === 'subject' && d.name.toLowerCase().includes(name.toLowerCase()))
-      );
-      
-      let totalToStudy = 0;
-      subjectDecks.forEach(d => {
-        totalToStudy += getCardsToStudyCount(d.id);
-      });
-      return { name, totalToStudy, deckId: subjectDecks[0]?.id };
+    const userFocus = user?.prepFocus || 'JEE'; // Fallback to JEE
+    
+    // 1. Filter decks for the user's focus (or if deck prep_category is empty, include it for backward compatibility)
+    const validDecks = decks.filter(d => !d.prepCategory || d.prepCategory === userFocus);
+    
+    // 2. Group decks by subject
+    const subjectMap: Record<string, { name: string, totalToStudy: number, decks: any[] }> = {};
+    
+    validDecks.forEach(d => {
+      const subjName = d.subject && d.subject !== 'subject' ? d.subject : (d.name || 'General');
+      if (!subjectMap[subjName]) {
+        subjectMap[subjName] = { name: subjName, totalToStudy: 0, decks: [] };
+      }
+      subjectMap[subjName].decks.push(d);
+      subjectMap[subjName].totalToStudy += getCardsToStudyCount(d.id);
     });
+
+    const subjectData = Object.values(subjectMap).map(sub => {
+      // Pick the first deck as primary for now, or the one with most cards due
+      const decksWithCounts = sub.decks.map(deck => ({
+        ...deck,
+        studyCount: getCardsToStudyCount(deck.id)
+      }));
+      const primaryDeck = decksWithCounts.sort((a, b) => b.studyCount - a.studyCount)[0];
+      return {
+        name: sub.name,
+        totalToStudy: sub.totalToStudy,
+        deckId: primaryDeck?.id,
+      };
+    }).sort((a, b) => b.totalToStudy - a.totalToStudy); // Sort by most due cards
 
     const totalToStudy = subjectData.reduce((acc, curr) => acc + curr.totalToStudy, 0);
 
@@ -54,31 +99,51 @@ export default function HomeScreen() {
       streak: user?.streakDays || 0,
       totalStudied: user?.totalCardsStudied || 0,
       dailyGoal: 50, // Hardcoded goal for now
+      userFocus,
     };
   }, [decks, user, getCardsToStudyCount]);
 
-  const physicsData = stats.subjectData.find(s => s.name === 'Physics');
-  const chemData = stats.subjectData.find(s => s.name === 'Chemistry');
-  const mathData = stats.subjectData.find(s => s.name === 'Mathematics');
-  const bioData = stats.subjectData.find(s => s.name === 'Biology');
+  // Determine top priority subject
+  const topSubject = stats.subjectData.length > 0 ? stats.subjectData[0] : null;
+  const otherSubjects = stats.subjectData.length > 1 ? stats.subjectData.slice(1) : [];
 
   const handleStartRevision = async (deckId: string) => {
-    const { useFlashcardStore } = require('@/store/flashcard-store');
+    if (!deckId || isDownloadingDeck) return;
     const { SyncService } = require('@/services/sync-service');
     
-    const store = useFlashcardStore.getState();
-    const deck = store.decks.find((d: any) => d.id === deckId);
-    
-    if (!deck) return;
+    try {
+      setIsDownloadingDeck(true);
+      const store = useFlashcardStore.getState();
+      let deck = store.decks.find((d: any) => d.id === deckId);
+      
+      if (!deck) return;
+      
+      console.log(`📡 [Home] Selected deck: ${deck.name} | Cards locally: ${deck.cardCount}`);
 
-    // If deck has 0 cards locally, it needs a "Stage C" download
-    if (deck.cardCount === 0) {
-      console.log(`📡 [Home] Deck ${deckId} is empty. Starting Stage C pull...`);
-      await SyncService.downloadDeckContent(deckId);
-      await store.initializeStore(); // Refresh everything
+      if (deck.cardCount === 0) {
+        console.log(`📡 [Home] Empty deck detected → downloading flashcard content`);
+        const success = await SyncService.downloadDeckContent(deckId);
+        
+        if (!success) {
+          console.log(`❌ [Home] Deck download failed`);
+          return;
+        }
+        
+        // Refresh the local store so it knows we now have cards!
+        await store.loadDecks();
+        deck = useFlashcardStore.getState().decks.find((d: any) => d.id === deckId);
+        console.log(`📡 [Home] Reloaded → New cardCount=${deck?.cardCount}`);
+        
+        if (!deck?.cardCount) {
+          console.log(`⚠️ Download completed but still 0 local cards. Check Supabase 'status' column.`);
+          return;
+        }
+      }
+
+      router.push(`/study/${deckId}`);
+    } finally {
+      setIsDownloadingDeck(false);
     }
-
-    router.push(`/study/${deckId}`);
   };
 
   return (
@@ -90,6 +155,9 @@ export default function HomeScreen() {
           <View>
             <Text style={styles.logoText}><Text style={{ color: '#5e6ad2' }}>✦</Text> Cramit.</Text>
             <Text style={styles.welcomeSub}>Ready to revise, {user?.name || 'Scholar'}?</Text>
+            <View style={styles.focusBadge}>
+               <Text style={styles.focusBadgeText}>{stats.userFocus} Prep</Text>
+            </View>
           </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <TouchableOpacity style={styles.streakPill} activeOpacity={0.7}>
@@ -102,109 +170,108 @@ export default function HomeScreen() {
         {/* Recommended Now */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>RECOMMENDED NOW</Text>
-          <TouchableOpacity 
-            activeOpacity={0.9}
-            onPress={() => physicsData?.deckId && handleStartRevision(physicsData.deckId)}
-            disabled={!physicsData?.deckId}
-          >
-            <View style={styles.recommendedCard}>
-              <View style={styles.recommendedHeader}>
-                <View style={[styles.priorityBadge, physicsData?.totalToStudy === 0 && { backgroundColor: '#1F2125', borderColor: '#2A2C32' }]}>
-                  <Text style={[styles.priorityBadgeText, physicsData?.totalToStudy === 0 && { color: '#5F6166' }]}>
-                    {physicsData?.totalToStudy === 0 ? 'ALL CAUGHT UP' : 'CRITICAL RETENTION'}
+          {topSubject ? (
+            <TouchableOpacity 
+              activeOpacity={0.9}
+              onPress={() => topSubject.deckId && handleStartRevision(topSubject.deckId)}
+              disabled={!topSubject.deckId}
+            >
+              <View style={styles.recommendedCard}>
+                <View style={styles.recommendedHeader}>
+                  <View style={[styles.priorityBadge, topSubject.totalToStudy === 0 && { backgroundColor: '#1F2125', borderColor: '#2A2C32' }]}>
+                    <Text style={[styles.priorityBadgeText, topSubject.totalToStudy === 0 && { color: '#5F6166' }]}>
+                      {topSubject.totalToStudy === 0 ? 'ALL CAUGHT UP' : 'CRITICAL RETENTION'}
+                    </Text>
+                  </View>
+                  <View style={styles.priorityLabel}>
+                    <Brain size={12} color="#5f6166" />
+                    <Text style={styles.priorityLabelText}>High Priority</Text>
+                  </View>
+                </View>
+
+                <View style={styles.recommendedMain}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <View style={[styles.gridIcon, { backgroundColor: '#1F1A1B', borderColor: '#2E2324', marginBottom: 0 }]}>
+                      {getSubjectIcon(topSubject.name, 22, "#FF5F57")}
+                    </View>
+                    <View>
+                      <Text style={styles.recommendedTitle}>{topSubject.name}</Text>
+                      <Text style={styles.recommendedSubtitle}>Review Session</Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.statsRow}>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>AVAILABLE</Text>
+                    <View style={styles.statValueContainer}>
+                      <Cards size={14} color={topSubject.totalToStudy === 0 ? "#5F6166" : "#5e6ad2"} fill={topSubject.totalToStudy === 0 ? "none" : "#5e6ad2"} />
+                      <Text style={[styles.statValue, topSubject.totalToStudy === 0 && { color: '#5F6166' }]}>{topSubject.totalToStudy || 0}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.statDivider} />
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>EST. TIME</Text>
+                    <View style={styles.statValueContainer}>
+                      <Clock size={14} color={topSubject.totalToStudy === 0 ? "#5F6166" : "#5e6ad2"} fill={topSubject.totalToStudy === 0 ? "none" : "#5e6ad2"} />
+                      <Text style={[styles.statValue, topSubject.totalToStudy === 0 && { color: '#5F6166' }]}>~{Math.ceil((topSubject.totalToStudy || 0) * 0.5)}m</Text>
+                    </View>
+                  </View>
+                </View>
+                
+                <View style={[
+                  styles.startButton, 
+                  (!topSubject.deckId || isDownloadingDeck) && { backgroundColor: '#1F2125', shadowOpacity: 0, elevation: 0 }
+                ]}>
+                  {isDownloadingDeck ? (
+                    <ActivityIndicator size="small" color="#5e6ad2" />
+                  ) : topSubject.totalToStudy === 0 ? (
+                    <Check size={16} color="#5F6166" />
+                  ) : (
+                    <Play size={16} color="#FFFFFF" fill="#FFFFFF" />
+                  )}
+                  <Text style={[styles.startButtonText, (topSubject.totalToStudy === 0 || !topSubject.deckId || isDownloadingDeck) && { color: '#5F6166' }]}>
+                    {isDownloadingDeck ? 'Downloading...' : topSubject.totalToStudy === 0 ? 'Done for Today' : 'Start Revision'}
                   </Text>
                 </View>
-                <View style={styles.priorityLabel}>
-                  <Brain size={12} color="#5f6166" />
-                  <Text style={styles.priorityLabelText}>High Priority</Text>
-                </View>
               </View>
-
-              <View style={styles.recommendedMain}>
-                <View>
-                  <Text style={styles.recommendedTitle}>Physics</Text>
-                  <Text style={styles.recommendedSubtitle}>Mechanics & Core Concepts</Text>
-                </View>
-              </View>
-
-              <View style={styles.statsRow}>
-                <View style={styles.statItem}>
-                  <Text style={styles.statLabel}>AVAILABLE</Text>
-                  <View style={styles.statValueContainer}>
-                    <Cards size={14} color={physicsData?.totalToStudy === 0 ? "#5F6166" : "#5e6ad2"} fill={physicsData?.totalToStudy === 0 ? "none" : "#5e6ad2"} />
-                    <Text style={[styles.statValue, physicsData?.totalToStudy === 0 && { color: '#5F6166' }]}>{physicsData?.totalToStudy || 0}</Text>
-                  </View>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statItem}>
-                  <Text style={styles.statLabel}>EST. TIME</Text>
-                  <View style={styles.statValueContainer}>
-                    <Clock size={14} color={physicsData?.totalToStudy === 0 ? "#5F6166" : "#5e6ad2"} fill={physicsData?.totalToStudy === 0 ? "none" : "#5e6ad2"} />
-                    <Text style={[styles.statValue, physicsData?.totalToStudy === 0 && { color: '#5F6166' }]}>~{Math.ceil((physicsData?.totalToStudy || 0) * 0.5)}m</Text>
-                  </View>
-                </View>
-              </View>
-              
-              <View style={[
-                styles.startButton, 
-                (!physicsData?.deckId) && { backgroundColor: '#1F2125', shadowOpacity: 0, elevation: 0 }
-              ]}>
-                {physicsData?.totalToStudy === 0 ? (
-                  <Check size={16} color="#5F6166" />
-                ) : (
-                  <Play size={16} color="#FFFFFF" fill="#FFFFFF" />
-                )}
-                <Text style={[styles.startButtonText, (physicsData?.totalToStudy === 0 || !physicsData?.deckId) && { color: '#5F6166' }]}>
-                  {physicsData?.totalToStudy === 0 ? 'Done for Today' : 'Start Revision'}
-                </Text>
-              </View>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.recommendedCard}>
+               <Text style={styles.recommendedTitle}>No Decks Found</Text>
+               <Text style={styles.recommendedSubtitle}>Check back later or subscribe to decks for {stats.userFocus}.</Text>
             </View>
-          </TouchableOpacity>
+          )}
         </View>
 
         {/* Subject Queues */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>OTHER SUBJECT QUEUES</Text>
-          <View style={styles.grid}>
-            {/* Chemistry */}
-            <TouchableOpacity 
-              style={styles.gridItem} 
-              onPress={() => chemData?.deckId && handleStartRevision(chemData.deckId)}
-              disabled={!chemData?.deckId}
-            >
-              <View style={[styles.gridIcon, { backgroundColor: '#1A1F1C', borderColor: '#232925' }]}>
-                <FlaskConical size={18} color="#4CD964" />
-              </View>
-              <Text style={styles.gridTitle}>Chemistry</Text>
-              <View style={styles.gridStats}>
-                <Text style={styles.gridDue}>{chemData?.totalToStudy || 0} Study</Text>
-                <Text style={styles.gridTime}>~{Math.ceil((chemData?.totalToStudy || 0) * 0.5)}m</Text>
-              </View>
-              <View style={[styles.gridButton, !chemData?.deckId && { opacity: 0.5 }]}>
-                <Text style={styles.gridButtonText}>{chemData?.totalToStudy ? 'Revise' : 'Explore'}</Text>
-              </View>
-            </TouchableOpacity>
-
-            {/* Maths */}
-            <TouchableOpacity 
-              style={styles.gridItem}
-              onPress={() => mathData?.deckId && handleStartRevision(mathData.deckId)}
-              disabled={!mathData?.deckId}
-            >
-              <View style={[styles.gridIcon, { backgroundColor: '#1F1A1B', borderColor: '#2E2324' }]}>
-                <FunctionSquare size={18} color="#FF5F57" />
-              </View>
-              <Text style={styles.gridTitle}>Maths</Text>
-              <View style={styles.gridStats}>
-                <Text style={styles.gridDue}>{mathData?.totalToStudy || 0} Study</Text>
-                <Text style={styles.gridTime}>~{Math.ceil((mathData?.totalToStudy || 0) * 0.5)}m</Text>
-              </View>
-              <View style={[styles.gridButton, !mathData?.deckId && { opacity: 0.5 }]}>
-                <Text style={styles.gridButtonText}>{mathData?.totalToStudy ? 'Revise' : 'Explore'}</Text>
-              </View>
-            </TouchableOpacity>
+        {otherSubjects.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>OTHER SUBJECT QUEUES</Text>
+            <View style={styles.grid}>
+              {otherSubjects.map((subj, idx) => (
+                <TouchableOpacity 
+                  key={subj.name + idx}
+                  style={styles.gridItem} 
+                  onPress={() => subj.deckId && handleStartRevision(subj.deckId)}
+                  disabled={!subj.deckId}
+                >
+                  <View style={[styles.gridIcon, { backgroundColor: '#1A1F1C', borderColor: '#232925' }]}>
+                    {getSubjectIcon(subj.name, 18, "#4CD964")}
+                  </View>
+                  <Text style={styles.gridTitle} numberOfLines={1}>{subj.name}</Text>
+                  <View style={styles.gridStats}>
+                    <Text style={styles.gridDue}>{subj.totalToStudy || 0} Study</Text>
+                    <Text style={styles.gridTime}>~{Math.ceil((subj.totalToStudy || 0) * 0.5)}m</Text>
+                  </View>
+                  <View style={[styles.gridButton, !subj.deckId && { opacity: 0.5 }]}>
+                    <Text style={styles.gridButtonText}>{subj.totalToStudy ? 'Revise' : 'Explore'}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
-        </View>
+        )}
 
         {/* Today's Activity */}
         <View style={styles.section}>
@@ -280,6 +347,19 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: '#94969a',
     fontFamily: 'Outfit_500Medium',
     marginTop: 2,
+  },
+  focusBadge: {
+    backgroundColor: '#5e6ad220',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+  },
+  focusBadgeText: {
+    color: '#5e6ad2',
+    fontSize: 10,
+    fontFamily: 'Outfit_700Bold',
   },
   streakPill: {
     flexDirection: 'row',
@@ -413,10 +493,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   grid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 15,
   },
   gridItem: {
-    flex: 1,
+    width: (width - 55) / 2, // 2 columns with padding/gap math
     backgroundColor: '#15171b',
     borderRadius: 20,
     padding: 16,
@@ -450,16 +531,6 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   gridTime: {
     color: '#5f6166',
-    fontSize: 11,
-    fontFamily: 'monospace',
-  },
-  gridWaitlist: {
-    color: '#5f6166',
-    fontSize: 11,
-    fontFamily: 'Outfit_500Medium',
-  },
-  gridDone: {
-    color: '#3fb950',
     fontSize: 11,
     fontFamily: 'monospace',
   },
