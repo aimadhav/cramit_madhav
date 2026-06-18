@@ -1,7 +1,7 @@
 import { db } from '@/db';
 import * as schema from '@/db/schema';
 import { supabase } from '@/lib/supabase';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, and } from 'drizzle-orm';
 
 export class SyncService {
   private static isSyncing = false;
@@ -70,27 +70,39 @@ export class SyncService {
     try {
       const now = Date.now();
       
+      // Fetch latest full state from SQLite to prevent destructive overwrites
+      const localStatus = await db.query.userFlashcardStatus.findFirst({
+        where: and(
+          eq(schema.userFlashcardStatus.userId, userId),
+          eq(schema.userFlashcardStatus.flashcardId, flashcardId)
+        )
+      });
+
+      if (!localStatus) {
+         console.warn(`⚠️ [SyncService] No local status found for ${flashcardId}, skipping sync.`);
+         return true; // Mark as done since we can't sync nothing
+      }
+
       const parseDate = (val: any): Date => {
         if (!val) return new Date(now);
         const d = new Date(typeof val === 'number' ? val : val);
         return isNaN(d.getTime()) ? new Date(now) : d;
       };
 
-      // REMOVED 'id' from payload to let Supabase handle generation
-      // This prevents "RLS Policy Violation" caused by ID conflicts.
+      // Construct payload using full local state
       const supabaseData = {
         user_id: userId,
         flashcard_id: flashcardId,
-        interval: Number(data.interval || 1),
-        stability: Number(data.stability || 0),
-        difficulty: Number(data.difficulty || 0),
-        repetitions: Number(data.repetitions || 0),
-        due_date: parseDate(data.due_date || data.dueDate).toISOString(),
-        last_reviewed: (data.last_reviewed || data.lastReviewed) 
-          ? parseDate(data.last_reviewed || data.lastReviewed).toISOString() 
+        interval: Number(localStatus.interval ?? 1),
+        stability: Number(localStatus.stability ?? 0),
+        difficulty: Number(localStatus.difficulty ?? 0),
+        repetitions: Number(localStatus.repetitions ?? 0),
+        due_date: parseDate(localStatus.due_date).toISOString(),
+        last_reviewed: localStatus.lastReviewed 
+          ? parseDate(localStatus.lastReviewed).toISOString() 
           : null,
-        is_bookmarked: Boolean(data.is_bookmarked || data.isBookmarked),
-        notes: String(data.notes || ''),
+        is_bookmarked: Boolean(localStatus.isBookmarked),
+        notes: String(localStatus.notes || ''),
         updated_at: new Date().toISOString(),
       };
 
