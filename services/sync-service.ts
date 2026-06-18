@@ -272,6 +272,78 @@ export class SyncService {
   }
 
   /**
+   * EAGER CACHING: Background task to ensure all images for a deck are cached locally.
+   * Scans local cards for 'http' URLs and downloads them.
+   */
+  static async cacheDeckImages(deckId: string) {
+    console.log(`📦 [SyncService] Starting background eager caching for deck: ${deckId}`);
+    try {
+      const { db } = require('@/db');
+      const { flashcards } = require('@/db/schema');
+      const { eq } = require('drizzle-orm');
+      const { MediaService } = require('./media-service');
+      const { useFlashcardStore } = require('@/store/flashcard-store');
+
+      // 1. Get all cards for this deck
+      const cards = await db.select().from(flashcards).where(eq(flashcards.deckId, deckId));
+      if (!cards || cards.length === 0) return;
+
+      let hasUpdates = false;
+
+      // 2. Scan and download
+      for (const card of cards) {
+        try {
+          const urls = card.mediaUrls ? JSON.parse(card.mediaUrls) : [];
+          if (!Array.isArray(urls) || urls.length === 0) continue;
+
+          let cardUpdated = false;
+          const updatedUrls = [];
+
+          for (const url of urls) {
+            if (url && typeof url === 'string' && url.startsWith('http')) {
+              // Try to download
+              const localUri = await MediaService.downloadImage(url);
+              if (localUri && localUri.startsWith('file://')) {
+                updatedUrls.push(localUri);
+                cardUpdated = true;
+              } else {
+                updatedUrls.push(url); // Keep remote if failed
+              }
+            } else {
+              updatedUrls.push(url); // Already local or empty
+            }
+          }
+
+          if (cardUpdated) {
+            // Update the card in SQLite
+            await db.update(flashcards)
+              .set({ mediaUrls: JSON.stringify(updatedUrls), updatedAt: Date.now() })
+              .where(eq(flashcards.id, card.id));
+            hasUpdates = true;
+          }
+        } catch (e) {
+          console.warn(`⚠️ [SyncService] Failed to cache images for card ${card.id}:`, e);
+        }
+      }
+
+      // 3. If we made changes and the user is currently viewing this deck, refresh the store
+      if (hasUpdates) {
+        console.log(`✅ [SyncService] Eager caching complete. Updates applied to deck ${deckId}`);
+        const store = useFlashcardStore.getState();
+        if (store.currentDeckId === deckId) {
+          await store.loadDeckWithCards(deckId); // Refresh UI with local URIs
+        }
+      } else {
+        console.log(`✅ [SyncService] Cache check complete for deck ${deckId}. All images already cached or failed.`);
+      }
+
+    } catch (e: any) {
+      console.error(`❌ [SyncService] cacheDeckImages failed for ${deckId}:`, e.message);
+    }
+  }
+
+
+  /**
    * Orchestrator: Pushes changes and pulls latest progress
    */
   static async fullSync(userId: string) {

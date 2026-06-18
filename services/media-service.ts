@@ -27,17 +27,31 @@ export class MediaService {
     }
   }
 
+  /**
+   * Generates a stable hash for a URL by ignoring query parameters
+   */
+  private static getStableUrl(url: string): string {
+    try {
+      // Remove query string and hash fragments for consistent caching
+      return url.split('?')[0].split('#')[0];
+    } catch (e) {
+      return url;
+    }
+  }
+
   static async downloadImage(remoteUrl: string): Promise<string | null> {
     if (!remoteUrl || !remoteUrl.startsWith('http')) return remoteUrl;
 
     try {
       await this.ensureDirExists();
       
+      const stableUrl = this.getStableUrl(remoteUrl);
       const hash = await Crypto.digestStringAsync(
         Crypto.CryptoDigestAlgorithm.SHA256,
-        remoteUrl
+        stableUrl
       );
-      const extension = remoteUrl.split('.').pop()?.split('?')[0] || 'jpg';
+      
+      const extension = stableUrl.split('.').pop() || 'jpg';
       const localUri = `${this.getFolderUri()}${hash}.${extension}`;
 
       // Check if already downloaded
@@ -49,19 +63,25 @@ export class MediaService {
       
       return downloadResult.status === 200 ? downloadResult.uri : remoteUrl;
     } catch (error) {
-      console.warn('⚠️ [MediaService] Image download failed, using remote fallback');
+      console.warn('⚠️ [MediaService] Image download failed, using remote fallback:', error);
       return remoteUrl; // Fallback to web URL
     }
   }
 
   /**
-   * Downloads multiple images in parallel
+   * Downloads multiple images in parallel with controlled concurrency
    */
   static async downloadImages(urls: string[]): Promise<string[]> {
     if (!urls || urls.length === 0) return [];
     try {
-      const results = await Promise.all(urls.map(url => this.downloadImage(url)));
-      return results.filter((res): res is string => res !== null);
+      const results: string[] = [];
+      // Simple chunking (3 at a time) to avoid overloading the network
+      for (let i = 0; i < urls.length; i += 3) {
+        const chunk = urls.slice(i, i + 3);
+        const chunkResults = await Promise.all(chunk.map(url => this.downloadImage(url)));
+        results.push(...chunkResults.filter((res): res is string => res !== null));
+      }
+      return results;
     } catch (e) {
       return urls;
     }
@@ -79,3 +99,4 @@ export class MediaService {
     }
   }
 }
+

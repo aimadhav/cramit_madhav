@@ -1,3 +1,6 @@
+/**
+ * LEGACY FILE: This screen is orphaned and no longer reachable in the main app flow.
+ */
 import React from "react";
 import { StyleSheet, View, TouchableOpacity, Image, ScrollView } from "react-native";
 import { Text } from "@/components/AppText";;
