@@ -105,7 +105,7 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
     <style>
       body {
         margin: 0;
-        padding: 8px 16px; 
+       padding: 12px 16px 20px 16px;
         background-color: transparent; 
         color: ${colors.textDark}; 
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -137,22 +137,28 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: type, latex: originalLatexPropValue, data }));
       }
 
-      function updateHeight() {
-        setTimeout(function() {
-          var contentBlock = document.getElementById('math-content');
-          if (!contentBlock) return;
-          
-          var rect = contentBlock.getBoundingClientRect();
-          var exactHeight = Math.ceil(rect.height) + 16; 
-          exactHeight = Math.max(exactHeight, 30); 
-          
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'rendered_height',
-            height: exactHeight,
-            latex: originalLatexPropValue 
-          }));
-        }, 150); 
-      }
+    function updateHeight() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+
+      const exactHeight =
+        Math.ceil(
+          Math.max(
+            document.body.scrollHeight,
+            document.documentElement.scrollHeight
+          )
+        ) + 40;
+
+      window.ReactNativeWebView.postMessage(
+        JSON.stringify({
+          type: 'rendered_height',
+          height: exactHeight,
+          latex: originalLatexPropValue
+        })
+      );
+    });
+  });
+}
 
       try {
         sendMessage('DEBUG_MSG', 'WebView script loaded. Latex prop for msg: ' + originalLatexPropValue);
@@ -177,15 +183,26 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
             sendMessage('mathjax_status', 'MathJax startup.ready function called.');
             MathJax.startup.defaultReady();
             sendMessage('mathjax_status', 'MathJax defaultReady executed. Typesetting should be complete.');
-            try {
-              MathJax.typeset(); 
-              document.body.style.visibility = 'visible'; 
-              sendMessage('mathjax_status', 'MathJax.typeset() called.');
-            } catch(e) {
-              document.body.style.visibility = 'visible';
-              sendMessage('mathjax_status', 'Error calling MathJax.typeset(): ' + e.toString());
-            }
-            updateHeight();
+            MathJax.typesetPromise()
+              .then(() => {
+                document.body.style.visibility = 'visible';
+
+                sendMessage(
+                  'mathjax_status',
+                  'MathJax.typesetPromise() completed.'
+                );
+
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() => {
+                    updateHeight();
+                  });
+                });
+              })
+              .catch((e) => {
+                document.body.style.visibility = 'visible';
+                sendMessage('mathjax_status', 'Error: ' + e.toString());
+              });
+              
           }
         },
         options: {
