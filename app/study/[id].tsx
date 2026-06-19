@@ -356,6 +356,16 @@ export default function StudySessionScreen() {
 
   const containsLatex = (text: string) => text.includes('$') || text.includes('\\');
 
+  console.log('📱 [StudySessionScreen] Debug Stats:', {
+    currentCardId: !isTempDeck && studyProgress && sessionQueue.length > 0 && studyProgress.currentCardIndex < sessionQueue.length ? sessionQueue[studyProgress.currentCardIndex] : null,
+    currentCard: currentCard ? { id: currentCard.id, front: currentCard.front?.substring(0, 30) } : null,
+    cardsLeft: studyProgress?.cardsLeft,
+    currentCardIndex: studyProgress?.currentCardIndex,
+    queueLength: sessionQueue.length,
+    isSessionComplete,
+    flashcardsCount: flashcards.length,
+  });
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Stack.Screen options={{ headerShown: false, title: "" }} />
