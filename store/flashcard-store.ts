@@ -111,12 +111,12 @@ export const useFlashcardStore = create<FlashcardState>()(
           let cardsWithStatus = [];
           if (isSubject) {
             const { db } = require('@/db');
-            const { eq, and, inArray, like } = require('drizzle-orm');
-            const { flashcards, userFlashcardStatus, decks } = require('@/db/schema');
+            const { eq, and, inArray } = require('drizzle-orm');
+            const { flashcards, userFlashcardStatus } = require('@/db/schema');
 
-            const subjectDecks = await db.select({ id: decks.id })
-              .from(decks)
-              .where(like(decks.subject, deckId));
+            const subjectDecks = get().decks.filter(d => 
+              d.subject && d.subject.toLowerCase() === deckId.toLowerCase()
+            );
 
             if (subjectDecks.length > 0) {
               const deckIds = subjectDecks.map((d: any) => d.id);

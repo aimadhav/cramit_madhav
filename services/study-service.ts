@@ -11,7 +11,7 @@ export class StudyService {
   static async getSessionQueue(deckIdOrSubject: string, limit: number = 45, isCramMode: boolean = false) {
     const { useUserStore } = require('@/store/user-store');
     const { db } = require('@/db');
-    const { eq, and, inArray, isNull, like } = require('drizzle-orm');
+    const { sql, eq, and, inArray, isNull } = require('drizzle-orm');
     const { flashcards, userFlashcardStatus, decks } = require('@/db/schema');
 
     const userId = useUserStore.getState().user?.id || 'local';
@@ -30,7 +30,7 @@ export class StudyService {
         // Cram mode pulls cards from ALL chapters of the subject
         const subjectDecks = await db.select({ id: decks.id })
           .from(decks)
-          .where(like(decks.subject, deckIdOrSubject));
+          .where(eq(sql`lower(${decks.subject})`, deckIdOrSubject.toLowerCase()));
         activeDeckIds = subjectDecks.map((d: any) => d.id);
       } else {
         // Main deck daily progression strictly filters by selected active chapters
@@ -51,7 +51,7 @@ export class StudyService {
       // Option 1: Fetch ALL reviewed/started cards for the entire subject
       const subjectDecks = await db.select({ id: decks.id })
         .from(decks)
-        .where(like(decks.subject, deckIdOrSubject));
+        .where(eq(sql`lower(${decks.subject})`, deckIdOrSubject.toLowerCase()));
       const subjectDeckIds = subjectDecks.map((d: any) => d.id);
 
       if (subjectDeckIds.length > 0) {

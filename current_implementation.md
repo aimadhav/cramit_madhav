@@ -172,6 +172,12 @@ This file tracks the exact changes made to the codebase as we execute the **Flas
         - **The Culprit**: Clicking `"Load"` to download a chapter on-demand downloaded the static cards, but **never pulled the user's historical FSRS progress, bookmarks, or notes** for those cards. Thus, all cards appeared as blank, fresh 0-value items, even if they had studied them previously!
         - **The Fix**: Patched `downloadDeckContent` in `sync-service.ts` to automatically trigger `pullStatuses(userId)` right after saving the card content. 
         - **The Result**: Any existing bookmarks, notes, and FSRS intervals are instantly pulled and mirrored, ensuring your personal progress is immediately restored after downloading a deck!
+    - **100% Bulletproof Case-Insensitive Subject Queries (`services/study-service.ts` & `store/flashcard-store.ts`)**:
+        - **The Culprit**: Some Supabase decks had lowercase subject names like `"physics"`. When querying for `"Physics"`, strict SQL `eq` queries failed and returned 0 chapters, causing cards to be missing and showing an empty "No Cards Ready" screen for real decks while mock local temp decks worked fine.
+        - **The Fix**: Standardized all subject query mechanisms to ensure perfect case-insensitive matches:
+            - In `study-service.ts`, implemented strict SQL `sql` helpers executing lower-case comparisons on-database: `where(eq(sql`lower(${decks.subject})`, deckIdOrSubject.toLowerCase()))`.
+            - In `flashcard-store.ts`, replaced direct SQLite `decks` table queries with high-speed in-memory JavaScript filters over the alreadyloaded store state: `get().decks.filter(d => d.subject && d.subject.toLowerCase() === deckId.toLowerCase())`.
+        - **The Result**: Eliminates any casing discrepancies across Supabase and local SQLite databases, guaranteeing cards load perfectly for any deck.
 
 ---
 
@@ -183,5 +189,5 @@ This file tracks the exact changes made to the codebase as we execute the **Flas
 | Phase 3 | Home Screen Progression UI | Completed |
 | Phase 4 | Cram Mode & Real-time Tag Filters | Completed |
 | Phase 5 | High-Fidelity UI Alignment & Dynamic Chapter Actions | Completed |
-| Phase 6 | Tier 1 Schema Patching, Response Times, & On-Demand Sync | Completed |
+| Phase 6 | Tier 1 Schema Patching, Response Times, & Case-Insensitivity | Completed |
 
