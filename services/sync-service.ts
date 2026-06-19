@@ -41,6 +41,9 @@ export class SyncService {
             case 'card_status':
               success = await this.syncCardStatus(userId, task.entityId, payload);
               break;
+            case 'active_chapter':
+              success = await this.syncActiveChapter(userId, task.entityId, payload);
+              break;
             case 'deck':
               success = true;
               break;
@@ -103,6 +106,9 @@ export class SyncService {
           : null,
         is_bookmarked: Boolean(localStatus.isBookmarked),
         notes: String(localStatus.notes || ''),
+        left_swipes: Number(localStatus.leftSwipes ?? 0),
+        right_swipes: Number(localStatus.rightSwipes ?? 0),
+        last_swipe_direction: localStatus.lastSwipeDirection || null,
         updated_at: new Date().toISOString(),
       };
 
@@ -122,6 +128,52 @@ export class SyncService {
     }
   }
 
+  private static async syncActiveChapter(userId: string, deckId: string, data: any) {
+    try {
+      const { supabase } = require('@/lib/supabase');
+      const { db } = require('@/db');
+      const { eq, and } = require('drizzle-orm');
+      const { userActiveChapters } = require('@/db/schema');
+
+      // Fetch latest full state from SQLite
+      const localActive = await db.query.userActiveChapters.findFirst({
+        where: and(
+          eq(userActiveChapters.userId, userId),
+          eq(userActiveChapters.deckId, deckId)
+        )
+      });
+
+      if (!localActive) {
+        console.warn(`⚠️ [SyncService] No local active chapter row found for ${deckId}, skipping sync.`);
+        return true; 
+      }
+
+      const supabaseData = {
+        id: localActive.id,
+        user_id: userId,
+        deck_id: deckId,
+        subject: localActive.subject,
+        status: localActive.status || 'active',
+        created_at: new Date(localActive.createdAt).toISOString(),
+        updated_at: new Date(localActive.updatedAt).toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('user_active_chapters')
+        .upsert(supabaseData, { onConflict: 'user_id,deck_id' });
+
+      if (error) {
+        console.error(`❌ [Supabase Sync] Upsert failed for active chapter ${deckId}:`, error.message);
+        return false;
+      }
+
+      return true;
+    } catch (e: any) {
+      console.error(`❌ [SyncService] Failed to sync active chapter ${deckId}:`, e.message);
+      return false;
+    }
+  }
+
   /**
    * STAGE A: Downloads user progress (mastery, due dates)
    */
@@ -130,7 +182,7 @@ export class SyncService {
     try {
       const { supabase } = require('@/lib/supabase');
       const { db } = require('@/db');
-      const { userFlashcardStatus } = require('@/db/schema');
+      const { userFlashcardStatus, userActiveChapters } = require('@/db/schema');
 
       // Fetch cloud status
       const { data, error } = await supabase
@@ -155,6 +207,9 @@ export class SyncService {
             lastReviewed: row.last_reviewed ? new Date(row.last_reviewed).getTime() : null,
             isBookmarked: row.is_bookmarked,
             notes: row.notes,
+            leftSwipes: row.left_swipes ?? 0,
+            rightSwipes: row.right_swipes ?? 0,
+            lastSwipeDirection: row.last_swipe_direction ?? null,
             createdAt: new Date(row.created_at).getTime(),
             updatedAt: new Date(row.updated_at).getTime(),
           }).onConflictDoUpdate({
@@ -168,11 +223,44 @@ export class SyncService {
               lastReviewed: row.last_reviewed ? new Date(row.last_reviewed).getTime() : null,
               isBookmarked: row.is_bookmarked,
               notes: row.notes,
+              leftSwipes: row.left_swipes ?? 0,
+              rightSwipes: row.right_swipes ?? 0,
+              lastSwipeDirection: row.last_swipe_direction ?? null,
               updatedAt: Date.now()
             }
           });
         }
       }
+
+      // Fetch cloud user active chapters
+      const { data: activeChaptersData, error: activeChaptersError } = await supabase
+        .from('user_active_chapters')
+        .select('*')
+        .eq('user_id', userId);
+
+      if (activeChaptersError) {
+        console.warn('⚠️ [SyncService] Failed to pull user active chapters:', activeChaptersError.message);
+      } else if (activeChaptersData) {
+        console.log(`📡 [SyncService] Found ${activeChaptersData.length} cloud active chapters. Mirroring to SQLite...`);
+        for (const row of activeChaptersData) {
+          await db.insert(userActiveChapters).values({
+            id: row.id,
+            userId: row.user_id,
+            deckId: row.deck_id,
+            subject: row.subject,
+            status: row.status,
+            createdAt: new Date(row.created_at).getTime(),
+            updatedAt: new Date(row.updated_at).getTime(),
+          }).onConflictDoUpdate({
+            target: [userActiveChapters.userId, userActiveChapters.deckId],
+            set: {
+              status: row.status,
+              updatedAt: new Date(row.updated_at).getTime(),
+            }
+          });
+        }
+      }
+
       return true;
     } catch (e: any) {
       console.error('❌ [SyncService] pullStatuses failed:', e.message);
@@ -290,40 +378,46 @@ export class SyncService {
 
       let hasUpdates = false;
 
-      // 2. Scan and download
-      for (const card of cards) {
-        try {
-          const urls = card.mediaUrls ? JSON.parse(card.mediaUrls) : [];
-          if (!Array.isArray(urls) || urls.length === 0) continue;
+      // 2. Scan and download in batches of cards
+      for (let i = 0; i < cards.length; i += 5) {
+        const cardBatch = cards.slice(i, i + 5);
+        
+        await Promise.all(cardBatch.map(async (card: any) => {
+          try {
+            const urls = card.mediaUrls ? JSON.parse(card.mediaUrls) : [];
+            if (!Array.isArray(urls) || urls.length === 0) return;
 
-          let cardUpdated = false;
-          const updatedUrls = [];
+            const remoteUrls = urls.filter(u => typeof u === 'string' && u.startsWith('http'));
+            if (remoteUrls.length === 0) return;
 
-          for (const url of urls) {
-            if (url && typeof url === 'string' && url.startsWith('http')) {
-              // Try to download
-              const localUri = await MediaService.downloadImage(url);
-              if (localUri && localUri.startsWith('file://')) {
-                updatedUrls.push(localUri);
-                cardUpdated = true;
-              } else {
-                updatedUrls.push(url); // Keep remote if failed
+            // Use the chunked downloader in MediaService to avoid overloading
+            const cachedResults = await MediaService.downloadImages(remoteUrls);
+            
+            // Re-map the original array, replacing http urls with their cached file:// counterparts if successful
+            let cardUpdated = false;
+            const updatedUrls = urls.map(u => {
+              if (typeof u === 'string' && u.startsWith('http')) {
+                // Find if this URL was successfully downloaded and cached
+                // MediaService.downloadImages preserves the order and returns local URIs or falls back to remote
+                const cachedIndex = remoteUrls.indexOf(u);
+                if (cachedIndex !== -1 && cachedResults[cachedIndex] && cachedResults[cachedIndex].startsWith('file://')) {
+                  cardUpdated = true;
+                  return cachedResults[cachedIndex];
+                }
               }
-            } else {
-              updatedUrls.push(url); // Already local or empty
-            }
-          }
+              return u;
+            });
 
-          if (cardUpdated) {
-            // Update the card in SQLite
-            await db.update(flashcards)
-              .set({ mediaUrls: JSON.stringify(updatedUrls), updatedAt: Date.now() })
-              .where(eq(flashcards.id, card.id));
-            hasUpdates = true;
+            if (cardUpdated) {
+              await db.update(flashcards)
+                .set({ mediaUrls: JSON.stringify(updatedUrls), updatedAt: Date.now() })
+                .where(eq(flashcards.id, card.id));
+              hasUpdates = true;
+            }
+          } catch (e) {
+            console.warn(`⚠️ [SyncService] Batch fail for card:`, e);
           }
-        } catch (e) {
-          console.warn(`⚠️ [SyncService] Failed to cache images for card ${card.id}:`, e);
-        }
+        }));
       }
 
       // 3. If we made changes and the user is currently viewing this deck, refresh the store

@@ -22,8 +22,8 @@ interface FlashcardState {
   initializeStore: () => Promise<void>;
   loadDecks: () => Promise<void>;
   loadDeckWithCards: (deckId: string) => Promise<void>;
-  startStudySession: (deckId: string) => Promise<void>;
-  rateCard: (cardId: string, rating: DifficultyRating) => Promise<void>;
+  startStudySession: (deckId: string, isCramMode?: boolean, customQueue?: string[]) => Promise<void>;
+  rateCard: (cardId: string, rating: DifficultyRating, options?: { updateFSRS?: boolean }) => Promise<void>;
   getNextCard: () => void;
   toggleBookmark: (cardId: string) => Promise<void>;
   syncSessionProgress: () => Promise<void>;
@@ -105,7 +105,38 @@ export const useFlashcardStore = create<FlashcardState>()(
         
         set({ isLoading: true, currentDeckId: deckId });
         try {
-          const cardsWithStatus = await DatabaseService.getDeckWithCards(deckId, userId);
+          const knownSubjects = ['Physics', 'Chemistry', 'Mathematics', 'Biology', 'Chemistry', 'Maths', 'DSA', 'DBMS', 'Operating Systems', 'OOP', 'Computer Networks'];
+          const isSubject = knownSubjects.some(s => s.toLowerCase() === deckId.toLowerCase());
+
+          let cardsWithStatus = [];
+          if (isSubject) {
+            const { db } = require('@/db');
+            const { eq, and, inArray } = require('drizzle-orm');
+            const { flashcards, userFlashcardStatus, decks } = require('@/db/schema');
+
+            const subjectDecks = await db.select({ id: decks.id })
+              .from(decks)
+              .where(eq(decks.subject, deckId));
+
+            if (subjectDecks.length > 0) {
+              const deckIds = subjectDecks.map((d: any) => d.id);
+              cardsWithStatus = await db.select({
+                card: flashcards,
+                status: userFlashcardStatus
+              })
+              .from(flashcards)
+              .leftJoin(
+                userFlashcardStatus, 
+                and(
+                  eq(flashcards.id, userFlashcardStatus.flashcardId),
+                  eq(userFlashcardStatus.userId, userId)
+                )
+              )
+              .where(inArray(flashcards.deckId, deckIds));
+            }
+          } else {
+            cardsWithStatus = await DatabaseService.getDeckWithCards(deckId, userId);
+          }
           
           const normalized = cardsWithStatus.map(({ card, status }: any) => {
             let front = '';
@@ -128,11 +159,19 @@ export const useFlashcardStore = create<FlashcardState>()(
               mediaUrls = [];
             }
 
+            let tags = [];
+            try {
+              tags = card.tags ? (typeof card.tags === 'string' ? JSON.parse(card.tags) : card.tags) : [];
+            } catch (e) {
+              tags = [];
+            }
+
             return {
               ...card,
               front,
               back,
               mediaUrls: Array.isArray(mediaUrls) ? mediaUrls : [],
+              tags: Array.isArray(tags) ? tags : [],
               ...status,
               dueDate: status?.due_date || card.createdAt,
               isBookmarked: !!status?.isBookmarked,
@@ -145,8 +184,8 @@ export const useFlashcardStore = create<FlashcardState>()(
         }
       },
 
-      startStudySession: async (deckId: string) => {
-        const queue = await StudyService.getSessionQueue(deckId);
+      startStudySession: async (deckId: string, isCramMode: boolean = false, customQueue?: string[]) => {
+        const queue = customQueue || await StudyService.getSessionQueue(deckId);
         if (queue.length > 0) {
           set({
             currentDeckId: deckId,
@@ -159,10 +198,16 @@ export const useFlashcardStore = create<FlashcardState>()(
             },
           });
           await get().loadDeckWithCards(deckId);
+          
+          // EAGER CACHING: Trigger background cache check for any missing/failed images
+          const { SyncService } = require('@/services/sync-service');
+          SyncService.cacheDeckImages(deckId).catch((e: any) => {
+            console.warn('⚠️ [Store] Background cache priming failed:', e);
+          });
         }
       },
 
-      rateCard: async (cardId: string, rating: DifficultyRating) => {
+      rateCard: async (cardId: string, rating: DifficultyRating, options?: { updateFSRS?: boolean }) => {
         const { StudyService } = require('@/services/study-service');
         const { SyncService } = require('@/services/sync-service');
         const { useUserStore } = require('./user-store');
@@ -177,22 +222,28 @@ export const useFlashcardStore = create<FlashcardState>()(
         const card = state.currentFlashcards.find(c => c.id === cardId);
         if (!card) return;
 
-        await StudyService.rateCard({
-          card,
-          status: card,
-          rating,
-          userId,
-        });
+        const shouldUpdateFSRS = options?.updateFSRS !== false;
 
-        // BATCH SYNC LOGIC: Only push if queue is >= 3 items
-        const pendingTasks = await db.select({ value: count() }).from(syncQueue).where(eq(syncQueue.status, 'pending'));
-        const queueSize = pendingTasks[0]?.value || 0;
+        if (shouldUpdateFSRS) {
+          await StudyService.rateCard({
+            card,
+            status: card,
+            rating,
+            userId,
+          });
 
-        if (queueSize >= 3) {
-          console.log(`📦 [Store] Queue size is ${queueSize}. Triggering batch sync...`);
-          SyncService.pushChanges(userId);
+          // BATCH SYNC LOGIC: Only push if queue is >= 3 items
+          const pendingTasks = await db.select({ value: count() }).from(syncQueue).where(eq(syncQueue.status, 'pending'));
+          const queueSize = pendingTasks[0]?.value || 0;
+
+          if (queueSize >= 3) {
+            console.log(`📦 [Store] Queue size is ${queueSize}. Triggering batch sync...`);
+            SyncService.pushChanges(userId);
+          } else {
+            console.log(`📦 [Store] ${3 - queueSize} more reviews needed for batch sync.`);
+          }
         } else {
-          console.log(`📦 [Store] ${3 - queueSize} more reviews needed for batch sync.`);
+          console.log(`🧠 [Cram Mode] Bypassed FSRS update for card: ${cardId}`);
         }
       },
 

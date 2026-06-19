@@ -96,5 +96,19 @@ export const migrations = [
 	\`deleted_at\` integer
 );`,
 `CREATE INDEX \`due_date_idx\` ON \`user_flashcard_status\` (\`due_date\`);`,
-`CREATE UNIQUE INDEX \`user_card_idx\` ON \`user_flashcard_status\` (\`user_id\`,\`flashcard_id\`);`
+`CREATE UNIQUE INDEX \`user_card_idx\` ON \`user_flashcard_status\` (\`user_id\`,\`flashcard_id\`);`,
+`ALTER TABLE \`user_flashcard_status\` ADD COLUMN \`left_swipes\` integer DEFAULT 0;`,
+`ALTER TABLE \`user_flashcard_status\` ADD COLUMN \`right_swipes\` integer DEFAULT 0;`,
+`ALTER TABLE \`user_flashcard_status\` ADD COLUMN \`last_swipe_direction\` text;`,
+`ALTER TABLE \`flashcards\` ADD COLUMN \`tags\` text DEFAULT '[]';`,
+`CREATE TABLE IF NOT EXISTS \`user_active_chapters\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`user_id\` text NOT NULL,
+	\`deck_id\` text NOT NULL,
+	\`subject\` text NOT NULL,
+	\`status\` text DEFAULT 'active',
+	\`created_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL
+);`,
+`CREATE UNIQUE INDEX IF NOT EXISTS \`user_chapter_idx\` ON \`user_active_chapters\` (\`user_id\`,\`deck_id\`);`
 ];

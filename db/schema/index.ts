@@ -61,6 +61,7 @@ export const flashcards = sqliteTable('flashcards', {
   startingStability: real('starting_stability').default(0),
   
   mediaUrls: text('media_urls').default('[]'),
+  tags: text('tags').default('[]'), // JSON string of tags for formulas, concepts, etc.
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
   deletedAt: integer('deleted_at'),
@@ -84,6 +85,12 @@ export const userFlashcardStatus = sqliteTable('user_flashcard_status', {
   
   isBookmarked: integer('is_bookmarked', { mode: 'boolean' }).default(false),
   notes: text('notes'),
+  
+  // Tracking swipes for mistakes and analytics
+  leftSwipes: integer('left_swipes').default(0),
+  rightSwipes: integer('right_swipes').default(0),
+  lastSwipeDirection: text('last_swipe_direction'),
+
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
   deletedAt: integer('deleted_at'),
@@ -144,4 +151,19 @@ export const rooms = sqliteTable('rooms', {
   deletedAt: integer('deleted_at'),
 }, (table) => ({
   codeIdx: index('room_code_idx').on(table.code),
+}));
+
+/**
+ * User Active Chapters: Tracks which chapters (decks) the user is actively studying for each subject.
+ */
+export const userActiveChapters = sqliteTable('user_active_chapters', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull(),
+  deckId: text('deck_id').notNull(), // Chapter deck ID
+  subject: text('subject').notNull(),
+  status: text('status').default('active'), // 'active' | 'completed'
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, (table) => ({
+  userChapterIdx: uniqueIndex('user_chapter_idx').on(table.userId, table.deckId),
 }));

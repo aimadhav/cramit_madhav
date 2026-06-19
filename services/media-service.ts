@@ -51,7 +51,8 @@ export class MediaService {
         stableUrl
       );
       
-      const extension = stableUrl.split('.').pop() || 'jpg';
+      const rawExt = stableUrl.split('.').pop() || 'jpg';
+      const extension = (rawExt.includes('/') || rawExt.length > 5) ? 'jpg' : rawExt;
       const localUri = `${this.getFolderUri()}${hash}.${extension}`;
 
       // Check if already downloaded

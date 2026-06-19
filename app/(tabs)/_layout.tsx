@@ -1,5 +1,5 @@
 import React from "react";
-import { Tabs, useSegments } from "expo-router";
+import { Tabs, useSegments, usePathname } from "expo-router";
 import { Home, BookOpen, BarChart2 } from "lucide-react-native";
 import { View, StyleSheet, TouchableOpacity } from "react-native";
 
@@ -50,10 +50,10 @@ const HomeTabButton = (props: any) => {
 
 export default function TabLayout() {
   const colors = useThemeColors();
-  const segments = useSegments();
+  const pathname = usePathname();
   
-  // Home is active if the current path includes 'index' or if we are at the root segments
-  const isHomeActive = segments.length <= 1 || (segments.length === 2 && (segments[1] as string) === 'index');
+  // Home is active only if the exact active pathname is / or /index
+  const isHomeActive = pathname === "/" || pathname === "/index";
   
   return (
     <Tabs
@@ -82,7 +82,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="decks"
         options={{
-          title: "Library",
+          title: "Cram",
           tabBarIcon: ({ color, focused }) => (
             <BookOpen size={24} color={color} fill={focused ? color : 'none'} />
           ),

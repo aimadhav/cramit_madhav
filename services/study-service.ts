@@ -8,30 +8,242 @@ export class StudyService {
   /**
    * Starts a study session and returns a queue of card IDs
    */
-  static async getSessionQueue(deckId: string, limit: number = 50) {
+  static async getSessionQueue(deckIdOrSubject: string, limit: number = 45) {
     const { useUserStore } = require('@/store/user-store');
+    const { db } = require('@/db');
+    const { eq, and, inArray, isNull } = require('drizzle-orm');
+    const { flashcards, userFlashcardStatus, decks } = require('@/db/schema');
+
     const userId = useUserStore.getState().user?.id || 'local';
-    const allCards = await DatabaseService.getDeckWithCards(deckId, userId);
-    
     const now = Date.now();
-    
-    // 1. Filter Due Cards
-    const dueCards = allCards.filter(c => {
+
+    let activeDeckIds: string[] = [];
+
+    // Support both single deck/chapter ID and subject-based dynamic views
+    const knownSubjects = ['Physics', 'Chemistry', 'Mathematics', 'Biology', 'Chemistry', 'Maths', 'DSA', 'DBMS', 'Operating Systems', 'OOP', 'Computer Networks'];
+    const isSubject = knownSubjects.some(
+      s => s.toLowerCase() === deckIdOrSubject.toLowerCase()
+    );
+
+    if (isSubject) {
+      activeDeckIds = await DatabaseService.getActiveChapterIds(userId, deckIdOrSubject);
+      if (activeDeckIds.length === 0) {
+        console.warn(`⚠️ [StudyService] No active chapters found for subject: ${deckIdOrSubject}`);
+        return [];
+      }
+    } else {
+      activeDeckIds = [deckIdOrSubject];
+    }
+
+    const cardsWithStatus = [];
+
+    if (isSubject) {
+      // Option 1: Fetch ALL reviewed/started cards for the entire subject
+      const subjectDecks = await db.select({ id: decks.id })
+        .from(decks)
+        .where(eq(decks.subject, deckIdOrSubject));
+      const subjectDeckIds = subjectDecks.map((d: any) => d.id);
+
+      if (subjectDeckIds.length > 0) {
+        const reviewedCards = await db.select({
+          card: flashcards,
+          status: userFlashcardStatus
+        })
+        .from(flashcards)
+        .innerJoin(
+          userFlashcardStatus,
+          and(
+            eq(flashcards.id, userFlashcardStatus.flashcardId),
+            eq(userFlashcardStatus.userId, userId)
+          )
+        )
+        .where(inArray(flashcards.deckId, subjectDeckIds));
+
+        cardsWithStatus.push(...reviewedCards);
+      }
+
+      // Option 1: Fetch unreviewed new cards ONLY inside the active chapters
+      if (activeDeckIds.length > 0) {
+        const newCardsInActive = await db.select({
+          card: flashcards,
+          status: userFlashcardStatus
+        })
+        .from(flashcards)
+        .leftJoin(
+          userFlashcardStatus,
+          and(
+            eq(flashcards.id, userFlashcardStatus.flashcardId),
+            eq(userFlashcardStatus.userId, userId)
+          )
+        )
+        .where(
+          and(
+            inArray(flashcards.deckId, activeDeckIds),
+            isNull(userFlashcardStatus.id)
+          )
+        );
+
+        cardsWithStatus.push(...newCardsInActive);
+      }
+    } else {
+      // Standard chapter/deck-only fallback
+      if (activeDeckIds.length > 0) {
+        const dbCards = await db.select({
+          card: flashcards,
+          status: userFlashcardStatus
+        })
+        .from(flashcards)
+        .leftJoin(
+          userFlashcardStatus, 
+          and(
+            eq(flashcards.id, userFlashcardStatus.flashcardId),
+            eq(userFlashcardStatus.userId, userId)
+          )
+        )
+        .where(inArray(flashcards.deckId, activeDeckIds));
+
+        cardsWithStatus.push(...dbCards);
+      }
+    }
+
+    if (cardsWithStatus.length === 0) return [];
+
+    // Filter Due/Overdue cards (due date passed)
+    const dueCards = cardsWithStatus.filter((c: any) => {
       const status = c.status;
       return status && status.due_date <= now;
     });
 
-    // 2. Filter New Cards
-    const newCards = allCards.filter(c => !c.status);
+    // Filter New Cards
+    const newCards = cardsWithStatus.filter((c: any) => !c.status);
 
-    // 3. Combine and sort
-    // Priority: Due cards (oldest first) > New cards (original order)
-    const combined = [
-      ...dueCards.sort((a, b) => (a.status?.due_date || 0) - (b.status?.due_date || 0)),
-      ...newCards
-    ].slice(0, limit);
+    // Sort new cards sequentially by chapter deckId to ensure structured chapter progression
+    newCards.sort((a: any, b: any) => {
+      return String(a.card.deckId).localeCompare(String(b.card.deckId));
+    });
 
-    return combined.map(c => c.card.id);
+    // Smart Capping: Reserve exactly 5 slots for new cards to guarantee learning progression
+    // so we don't stall due to backlogs.
+    const reservedNewCount = Math.min(5, newCards.length);
+    const maxDueCount = Math.min(dueCards.length, limit - reservedNewCount);
+
+    const sortedDueCards = dueCards.sort((a: any, b: any) => (a.status?.due_date || 0) - (b.status?.due_date || 0));
+    const slicedDueCards = sortedDueCards.slice(0, maxDueCount);
+
+    const newCardsNeeded = limit - slicedDueCards.length;
+    const slicedNewCards = newCards.slice(0, newCardsNeeded);
+
+    const combined = [...slicedDueCards, ...slicedNewCards];
+
+    return combined.map((c: any) => c.card.id);
+  }
+
+  /**
+   * Builds an optional study session specifically for overdue backlog cards
+   */
+  static async getBacklogQueue(subject: string, limit: number = 30) {
+    const { useUserStore } = require('@/store/user-store');
+    const { db } = require('@/db');
+    const { eq, and, inArray } = require('drizzle-orm');
+    const { flashcards, userFlashcardStatus } = require('@/db/schema');
+
+    const userId = useUserStore.getState().user?.id || 'local';
+    const now = Date.now();
+
+    const activeDeckIds = await DatabaseService.getActiveChapterIds(userId, subject);
+    if (activeDeckIds.length === 0) return [];
+
+    const cardsWithStatus = await db.select({
+      card: flashcards,
+      status: userFlashcardStatus
+    })
+    .from(flashcards)
+    .leftJoin(
+      userFlashcardStatus, 
+      and(
+        eq(flashcards.id, userFlashcardStatus.flashcardId),
+        eq(userFlashcardStatus.userId, userId)
+      )
+    )
+    .where(inArray(flashcards.deckId, activeDeckIds));
+
+    const dueCards = cardsWithStatus.filter((c: any) => {
+      const status = c.status;
+      return status && status.due_date <= now;
+    });
+
+    // Sort by due date ascending (oldest backlog items first)
+    const backlogSorted = dueCards.sort((a: any, b: any) => (a.status?.due_date || 0) - (b.status?.due_date || 0));
+    return backlogSorted.slice(0, limit).map((c: any) => c.card.id);
+  }
+
+  /**
+   * Builds a targeted cram session queue ordered by lowest memory stability
+   */
+  static async getCramQueue(subject: string, filter: 'Formulas' | 'Concepts' | 'Mistakes' | string, limit: number = 50) {
+    const { useUserStore } = require('@/store/user-store');
+    const { db } = require('@/db');
+    const { eq, and, inArray } = require('drizzle-orm');
+    const { flashcards, userFlashcardStatus, decks } = require('@/db/schema');
+
+    const userId = useUserStore.getState().user?.id || 'local';
+
+    // Fetch all chapters (decks) for this subject
+    const subjectDecks = await db.select({ id: decks.id })
+      .from(decks)
+      .where(eq(decks.subject, subject));
+
+    if (subjectDecks.length === 0) return [];
+    const deckIds = subjectDecks.map((d: any) => d.id);
+
+    // Fetch all cards and statuses in those chapters
+    const allCards = await db.select({
+      card: flashcards,
+      status: userFlashcardStatus
+    })
+    .from(flashcards)
+    .leftJoin(
+      userFlashcardStatus, 
+      and(
+        eq(flashcards.id, userFlashcardStatus.flashcardId),
+        eq(userFlashcardStatus.userId, userId)
+      )
+    )
+    .where(inArray(flashcards.deckId, deckIds));
+
+    let filtered = [];
+
+    if (filter === 'Formulas' || filter === 'Concepts') {
+      const tagToMatch = filter === 'Formulas' ? 'formula' : 'concept';
+      filtered = allCards.filter((c: any) => {
+        try {
+          const frontText = String(c.card.frontContent).toLowerCase();
+          const backText = String(c.card.backContent).toLowerCase();
+          return frontText.includes(tagToMatch) || backText.includes(tagToMatch);
+        } catch {
+          return false;
+        }
+      });
+    } else if (filter === 'Mistakes') {
+      filtered = allCards.filter((c: any) => {
+        const status = c.status;
+        if (!status) return false;
+        return (status.leftSwipes > status.rightSwipes) || status.lastSwipeDirection === 'left';
+      });
+    } else {
+      filtered = allCards;
+    }
+
+    // Sort by FSRS stability ASC (weakest memory first, putting new cards last)
+    filtered.sort((a: any, b: any) => {
+      const stabA = a.status?.stability ?? 0;
+      const stabB = b.status?.stability ?? 0;
+      if (stabA === 0 && stabB > 0) return 1;
+      if (stabB === 0 && stabA > 0) return -1;
+      return stabA - stabB;
+    });
+
+    return filtered.slice(0, limit).map((c: any) => c.card.id);
   }
 
   /**

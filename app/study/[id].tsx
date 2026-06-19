@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { StyleSheet, View, TouchableOpacity, ScrollView, Alert, Dimensions, Platform, Modal, TextInput, Pressable, ActivityIndicator } from "react-native";
-import { Image } from 'expo-image';
+import { StyleSheet, View, Alert, Dimensions, ActivityIndicator } from "react-native";
 import { Text } from "@/components/AppText";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { X, RotateCw, Clock, ArrowLeft, Bookmark, Maximize2, FileText, Send, Pencil, Check } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useSharedValue,
@@ -16,20 +14,26 @@ import Animated, {
   interpolate,
   Extrapolate
 } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture } from 'react-native-gesture-handler';
 
 import { useThemeColors } from "@/hooks/useThemeColors";
 import { useUserStore } from "@/store/user-store";
-import WebViewLatexBlock from "../../components/WebViewLatexBlock";
 import { DifficultyRating, Flashcard } from "@/types";
 import { MOCK_TEMP_CARDS } from "@/constants/mockData";
 
+import { StudyCompletion } from "@/components/StudyCompletion";
+import { StudyHeader } from "@/components/StudyHeader";
+import { StudySwipeHints } from "@/components/StudySwipeHints";
+import { StudyCard } from "@/components/StudyCard";
+import { StudyNoteModal } from "@/components/StudyNoteModal";
+import { NoCardsReady } from "@/components/NoCardsReady";
+
 const SCREEN_WIDTH = Dimensions.get('window').width;
-const SCREEN_HEIGHT = Dimensions.get('window').height;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.2; 
 
 export default function StudySessionScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, cram } = useLocalSearchParams<{ id: string, cram?: string }>();
+  const isCramMode = cram === 'true';
   const router = useRouter();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
@@ -50,6 +54,8 @@ export default function StudySessionScreen() {
   const updateCardNote = useFlashcardStore(state => state.updateCardNote);
   
   const updateStudyStats = useUserStore(state => state.updateStudyStats);
+  const user = useUserStore(state => state.user);
+  const userId = user?.id || 'local';
   
   // Local state
   const [showBack, setShowBack] = useState(false);
@@ -63,6 +69,8 @@ export default function StudySessionScreen() {
   const [isNoteSaving, setIsNoteSaving] = useState(false);
   const [bookmarkedCards, setBookmarkedCards] = useState<Record<string, boolean>>({});
   const [isInitializing, setIsInitializing] = useState(true);
+  const [backlogCount, setBacklogCount] = useState(0);
+  const [completedChapterName, setCompletedChapterName] = useState<string | null>(null);
   
   // Mock handling for temp decks
   const isTempDeck = id?.startsWith('temp_') || id?.startsWith('rec_');
@@ -71,9 +79,17 @@ export default function StudySessionScreen() {
   useEffect(() => {
     async function init() {
       if (!isTempDeck && id) {
+        const store = useFlashcardStore.getState();
+        // If the store already has an active session pre-loaded for this ID/Subject, do not override it!
+        if (store.currentDeckId === id && store.sessionQueue.length > 0) {
+          console.log('📱 [UI] Active session already loaded for:', id);
+          setIsInitializing(false);
+          return;
+        }
+
         console.log('📱 [UI] Starting study session for deck:', id);
         try {
-          await startStudySession(id);
+          await startStudySession(id, isCramMode);
           setIsInitializing(false);
         } catch (error) {
           console.error('📱 [UI] Error starting study session:', error);
@@ -86,7 +102,7 @@ export default function StudySessionScreen() {
       }
     }
     init();
-  }, [id, isTempDeck]);
+  }, [id, isTempDeck, isCramMode]);
 
   const tempCards = MOCK_TEMP_CARDS;
   const [tempCurrentIndex, setTempCurrentIndex] = useState(0);
@@ -122,7 +138,7 @@ export default function StudySessionScreen() {
 
   const isCurrentBookmarked = useMemo(() => {
     if (!currentCard) return false;
-    return isTempDeck ? !!bookmarkedCards[currentCard.id] : currentCard.isBookmarked;
+    return isTempDeck ? !!bookmarkedCards[currentCard.id] : !!currentCard.isBookmarked;
   }, [currentCard, isTempDeck, bookmarkedCards]);
 
   const hasNote = currentCard ? !!currentCard.notes : false;
@@ -131,6 +147,54 @@ export default function StudySessionScreen() {
   useEffect(() => {
     if (isSessionComplete && !isTempDeck) {
       syncSessionProgress();
+
+      // Query backlog count and completed chapters for congratulations screen prompts
+      async function checkPostSessionStats() {
+        try {
+          const { db } = require('@/db');
+          const { eq, and, inArray } = require('drizzle-orm');
+          const { flashcards, userFlashcardStatus, decks } = require('@/db/schema');
+          
+          const { DatabaseService } = require('@/services/database-service');
+          const activeIds = await DatabaseService.getActiveChapterIds(userId, id);
+          if (activeIds.length > 0) {
+            const activeCards = await db.select({
+              id: flashcards.id,
+              deckId: flashcards.deckId,
+              dueDate: userFlashcardStatus.due_date,
+            })
+            .from(flashcards)
+            .leftJoin(
+              userFlashcardStatus,
+              and(
+                eq(flashcards.id, userFlashcardStatus.flashcardId),
+                eq(userFlashcardStatus.userId, userId)
+              )
+            )
+            .where(inArray(flashcards.deckId, activeIds));
+
+            const now = Date.now();
+            const actualDue = activeCards.filter((c: any) => c.dueDate !== null && c.dueDate <= now).length;
+            setBacklogCount(actualDue);
+
+            // Check if any active chapters are fully completed (0 new cards remaining)
+            const chaptersList = await db.select()
+              .from(decks)
+              .where(inArray(decks.id, activeIds));
+
+            for (const chap of chaptersList) {
+              const chapNewCardsCount = activeCards.filter((c: any) => c.deckId === chap.id && c.dueDate === null).length;
+              if (chapNewCardsCount === 0 && chap.cardCount > 0) {
+                setCompletedChapterName(chap.name);
+                break;
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[Study] Error checking post session stats:', e);
+        }
+      }
+      checkPostSessionStats();
     }
   }, [isSessionComplete, isTempDeck]);
   
@@ -175,7 +239,7 @@ export default function StudySessionScreen() {
       setIsRating(false);
     } else {
       try {
-        await rateCard(currentCard.id, rating);
+        await rateCard(currentCard.id, rating, { updateFSRS: !isCramMode });
         getNextCardFromStore();
         setSwipeDirection(null);
         setIsRating(false);
@@ -184,7 +248,7 @@ export default function StudySessionScreen() {
         setIsRating(false);
       }
     }
-  }, [currentCard, isRating, rateCard, getNextCardFromStore, isTempDeck]);
+  }, [currentCard, isRating, rateCard, getNextCardFromStore, isTempDeck, isCramMode]);
   
   // Handle bookmark toggle
   const handleToggleBookmark = useCallback(async () => {
@@ -270,6 +334,21 @@ export default function StudySessionScreen() {
       runOnJS(setShowBack)(!showBack);
     });
 
+  const handleStartBacklogSession = async () => {
+    try {
+      const { StudyService } = require('@/services/study-service');
+      const queue = await StudyService.getBacklogQueue(id, Math.min(30, backlogCount));
+      await useFlashcardStore.getState().startStudySession(id, false, queue);
+      router.replace(`/study/${id}`);
+    } catch (e) {
+      Alert.alert("Error", "Could not start backlog session.");
+    }
+  };
+
+  const handleAddChaptersRedirect = () => {
+    router.replace(`/(tabs)?openConfig=true&subject=${id}`);
+  };
+
   const containsLatex = (text: string) => text.includes('$') || text.includes('\\');
 
   return (
@@ -282,126 +361,51 @@ export default function StudySessionScreen() {
           <Text style={{ color: '#94969a', marginTop: 10 }}>Loading Session...</Text>
         </View>
       ) : isSessionComplete ? (
-        <View style={styles.completionContainer}>
-          <Text style={styles.celebrationEmoji}>🎯</Text>
-          <Text style={styles.celebrationTitle}>Session Complete!</Text>
-          <Text style={styles.celebrationSubtitle}>
-            Great job! You're making progress.
-          </Text>
-          <TouchableOpacity style={styles.completionButton} onPress={handleExit}>
-            <Text style={styles.completionButtonText}>Finish Session</Text>
-          </TouchableOpacity>
-        </View>
+        <StudyCompletion 
+          onExit={handleExit}
+          backlogCount={backlogCount}
+          completedChapterName={completedChapterName}
+          onStartBacklog={handleStartBacklogSession}
+          onAddChapters={handleAddChaptersRedirect}
+        />
       ) : currentCard ? (
         <>
           {/* Header - Completely Hidden in Full View */}
           {!isFullView && (
-            <View style={styles.header}>
-              <TouchableOpacity style={styles.headerButton} onPress={handleExit}>
-                <ArrowLeft size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-              <View style={styles.headerCenter}>
-                <Text style={styles.headerTitle} numberOfLines={1}>
-                  {isTempDeck ? "Quick Prep Session" : (decks.find(d => d.id === id)?.name || "Study")}
-                </Text>
-                <View style={styles.progressContainer}>
-                  <View style={styles.progressBar}>
-                    <View 
-                      style={[
-                        styles.progressFill, 
-                        { 
-                          width: isTempDeck 
-                            ? `${(tempCurrentIndex / tempCards.length) * 100}%`
-                            : `${(studyProgress?.cardsStudied || 0) / ((studyProgress?.cardsStudied || 0) + (studyProgress?.cardsLeft || 0)) * 100}%`
-                        }
-                      ]} 
-                    />
-                  </View>
-                </View>
-              </View>
-              <TouchableOpacity style={styles.headerButton} onPress={handleExit}>
-                <X size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
+            <StudyHeader
+              title={isTempDeck ? "Quick Prep Session" : (decks.find(d => d.id === id)?.name || "Study")}
+              progressPercent={
+                isTempDeck 
+                  ? (tempCurrentIndex / tempCards.length) * 100
+                  : ((studyProgress?.cardsStudied || 0) / ((studyProgress?.cardsStudied || 0) + (studyProgress?.cardsLeft || 0))) * 100
+              }
+              onExit={handleExit}
+            />
           )}
           
           {/* Swipe hints - Hidden in Full View */}
           {!isFullView && (
-            <View style={styles.swipeHintContainer}>
-              {swipeDirection === 'left' && <View style={[styles.swipePill, styles.againPill]}><Text style={styles.swipePillText}>DIDN'T KNOW</Text></View>}
-              {swipeDirection === 'right' && <View style={[styles.swipePill, styles.easyPill]}><Text style={styles.swipePillText}>EASY</Text></View>}
-            </View>
+            <StudySwipeHints swipeDirection={swipeDirection} />
           )}
           
           {/* Card */}
-          <GestureDetector gesture={gesture}>
-            <Animated.View style={[styles.cardContainer, cardStyle, isFullView && styles.cardContainerFull]}>
-              <View style={styles.cardInner}>
-                <View style={styles.cardTopActions}>
-                  <View style={styles.topLeftActions}>
-                    <Text style={styles.cardSideLabel}>{showBack ? 'EXPLANATION' : 'QUESTION'}</Text>
-                  </View>
-                  <View style={styles.topRightActions}>
-                    <TouchableOpacity 
-                      onPress={() => {
-                        const hasExistingNote = !!currentCard?.notes;
-                        setNoteMode(hasExistingNote ? 'read' : 'edit');
-                        setIsNoteModalVisible(true);
-                      }} 
-                      style={styles.actionIconButton}
-                    >
-                      <FileText size={20} color={hasNote ? "#5e6ad2" : "#94969a"} />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={handleToggleBookmark} style={styles.actionIconButton}>
-                      <Bookmark 
-                        size={22} 
-                        color={isCurrentBookmarked ? "#5e6ad2" : "#94969a"}
-                        fill={isCurrentBookmarked ? "#5e6ad2" : 'none'}
-                      />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setIsFullView(!isFullView)} style={styles.actionIconButton}>
-                       {isFullView ? <X size={22} color="#FFFFFF" /> : <Maximize2 size={18} color="#94969a" />}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                
-                <GestureDetector gesture={tapGesture}>
-                  <Animated.View style={{ flex: 1 }}>
-                    <ScrollView 
-                      style={{ flex: 1 }}
-                      contentContainerStyle={styles.cardScrollContent}
-                      showsVerticalScrollIndicator={false}
-                    >
-                      <View style={styles.contentContainer}>
-                        {currentCard?.mediaUrls && currentCard.mediaUrls.length > 0 && (
-                          <Image 
-                            source={{ uri: currentCard.mediaUrls[showBack && currentCard.mediaUrls.length > 1 ? 1 : 0] }} 
-                            style={styles.cardImage} 
-                            contentFit="contain"
-                            transition={200}
-                          />
-                        )}
-                        {currentCard && containsLatex(showBack ? currentCard.back : currentCard.front) ? (
-                          <WebViewLatexBlock latex={showBack ? currentCard.back : currentCard.front} />
-                        ) : (
-                          <Text style={styles.cardText}>{currentCard ? (showBack ? currentCard.back : currentCard.front) : ''}</Text>
-                        )}
-                      </View>
-                    </ScrollView>
-    
-                    {!isFullView && (
-                      <View style={styles.cardFooterSimple}>
-                        <View style={styles.flipHint}>
-                          <RotateCw size={12} color="#5F6166" />
-                          <Text style={styles.flipHintText}>Tap content to flip</Text>
-                        </View>
-                      </View>
-                    )}
-                  </Animated.View>
-                </GestureDetector>
-              </View>
-            </Animated.View>
-          </GestureDetector>
+          <StudyCard
+            cardStyle={cardStyle}
+            gesture={gesture}
+            tapGesture={tapGesture}
+            isFullView={isFullView}
+            showBack={showBack}
+            currentCard={currentCard}
+            hasNote={hasNote}
+            isCurrentBookmarked={isCurrentBookmarked}
+            onOpenNote={() => {
+              const hasExistingNote = !!currentCard?.notes;
+              setNoteMode(hasExistingNote ? 'read' : 'edit');
+              setIsNoteModalVisible(true);
+            }}
+            onToggleBookmark={handleToggleBookmark}
+            onToggleFullView={() => setIsFullView(!isFullView)}
+          />
           
           {/* Legend - Hidden when in Full View */}
           {!isFullView && (
@@ -411,106 +415,32 @@ export default function StudySessionScreen() {
           )}
     
           {/* Note Modal */}
-          <Modal
+          <StudyNoteModal
             visible={isNoteModalVisible}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={() => setIsNoteModalVisible(false)}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.noteModalContent}>
-                <View style={styles.modalHeader}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <View style={[styles.modalIconBox, { backgroundColor: noteMode === 'edit' ? colors.primary : '#1A1B1F' }]}>
-                      {noteMode === 'edit' ? <Pencil size={16} color="#FFFFFF" /> : <FileText size={16} color={colors.primary} />}
-                    </View>
-                    <Text style={styles.modalTitle}>{noteMode === 'edit' ? 'Edit Note' : 'Your Note'}</Text>
-                  </View>
-                  <TouchableOpacity onPress={() => setIsNoteModalVisible(false)} style={styles.modalCloseButton}>
-                    <X size={20} color="#94969a" />
-                  </TouchableOpacity>
-                </View>
-                
-                <ScrollView style={styles.noteBodyScroll} showsVerticalScrollIndicator={false}>
-                  {noteMode === 'edit' ? (
-                    <TextInput
-                      style={styles.noteInput}
-                      placeholder="Write something about this card..."
-                      placeholderTextColor="#5F6166"
-                      multiline
-                      value={noteText}
-                      onChangeText={setNoteText}
-                      autoFocus
-                    />
-                  ) : (
-                    <View style={styles.noteReadContainer}>
-                      <Text style={styles.noteReadText}>
-                        {currentCard?.notes || "No note added yet."}
-                      </Text>
-                    </View>
-                  )}
-                </ScrollView>
-                
-                <View style={styles.modalFooter}>
-                  {noteMode === 'edit' ? (
-                    <TouchableOpacity 
-                      style={[
-                        styles.saveNoteButton,
-                        isNoteSaving && { backgroundColor: colors.success }
-                      ]}
-                      onPress={() => {
-                        if (currentCard) {
-                          setIsNoteSaving(true);
-                          
-                          // CALL THE STORE to trigger the sync engine!
-                          if (!isTempDeck) {
-                            updateCardNote(currentCard.id, noteText);
-                          } else {
-                            console.log('📱 [UI] Skip sync for temporary card note');
-                          }
-                          
-                          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                          
-                          setTimeout(() => {
-                            setIsNoteSaving(false);
-                            setNoteMode('read');
-                          }, 1000);
-                        }
-                      }}
-                    >
-                      {isNoteSaving ? (
-                        <>
-                          <Check size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                          <Text style={styles.saveNoteText}>Saved!</Text>
-                        </>
-                      ) : (
-                        <>
-                          <Send size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                          <Text style={styles.saveNoteText}>Save Changes</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity 
-                      style={styles.editModeButton}
-                      onPress={() => setNoteMode('edit')}
-                    >
-                      <Pencil size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                      <Text style={styles.saveNoteText}>Edit Note</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            </View>
-          </Modal>
+            noteText={noteText}
+            noteMode={noteMode}
+            isNoteSaving={isNoteSaving}
+            currentCardNotes={currentCard?.notes}
+            onClose={() => setIsNoteModalVisible(false)}
+            onChangeNoteText={setNoteText}
+            onSetNoteMode={setNoteMode}
+            onSaveNote={() => {
+              if (currentCard) {
+                setIsNoteSaving(true);
+                if (!isTempDeck) {
+                  updateCardNote(currentCard.id, noteText);
+                }
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                setTimeout(() => {
+                  setIsNoteSaving(false);
+                  setNoteMode('read');
+                }, 1000);
+              }
+            }}
+          />
         </>
       ) : (
-        <View style={styles.loadingContainer}>
-          <Text style={{ color: '#ff5f57' }}>Error: No cards available for study.</Text>
-          <TouchableOpacity style={styles.completionButton} onPress={handleExit}>
-            <Text style={styles.completionButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
+        <NoCardsReady onExit={handleExit} />
       )}
     </SafeAreaView>
   );
@@ -526,156 +456,7 @@ const createStyles = (colors: any, insets: any) => StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#000',
-    padding: 20,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-  },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#1A1A1A',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerCenter: {
-    flex: 1,
-    alignItems: 'center',
-    paddingHorizontal: 15,
-  },
-  headerTitle: {
-    fontSize: 14,
-    fontFamily: 'Outfit_700Bold',
-    color: '#FFFFFF',
-    marginBottom: 8,
-  },
-  progressContainer: {
-    width: '100%',
-    height: 4,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    flex: 1,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#5e6ad2',
-    borderRadius: 2,
-  },
-  swipeHintContainer: {
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  swipePill: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 25,
-    borderWidth: 1,
-  },
-  swipePillText: {
-    color: '#FFFFFF',
-    fontFamily: 'Outfit_700Bold',
-    fontSize: 12,
-    letterSpacing: 1,
-  },
-  easyPill: { backgroundColor: 'rgba(16, 185, 129, 0.2)', borderColor: '#10B981' },
-  againPill: { backgroundColor: 'rgba(245, 158, 11, 0.2)', borderColor: '#F59E0B' },
-  
-  cardContainer: {
-    flex: 1,
-    marginHorizontal: 10, 
-    marginTop: 5, 
-    marginBottom: 35,
-    borderRadius: 36, 
-    backgroundColor: '#121212',
-    borderWidth: 1,
-    borderColor: '#2D2D2D',
-    overflow: 'hidden',
-  },
-  cardContainerFull: {
-    marginHorizontal: 8, 
-    marginTop: 0, // FLUSH TO TOP
-    marginBottom: 20,
-    borderRadius: 24, 
-    borderWidth: 1,
-    zIndex: 1000, 
-  },
-  cardContent: {
-    flex: 1,
-  },
-  cardInner: {
-    flex: 1,
-    padding: 24, 
-  },
-  cardTopActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between', 
-    alignItems: 'center',
-    marginBottom: 20,
-    marginTop: Platform.OS === 'ios' ? 10 : 0, 
-  },
-  topLeftActions: {
-    flex: 1,
-  },
-  topRightActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cardSideLabel: {
-    fontSize: 10,
-    fontFamily: 'Outfit_700Bold',
-    color: '#94969a',
-    letterSpacing: 2,
-  },
-  actionIconButton: {
-    padding: 6,
-  },
-  cardScrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingBottom: 40,
-  },
-  contentContainer: {
-    alignItems: 'center',
-  },
-  cardText: {
-    fontSize: 22,
-    fontFamily: 'Outfit_600SemiBold',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    lineHeight: 32,
-  },
-  cardImage: {
-    width: '100%',
-    height: 220,
-    borderRadius: 16,
-    marginBottom: 20,
-    backgroundColor: '#1A1B1F',
-  },
-  cardFooterSimple: {
-    marginTop: 10,
-    paddingTop: 10,
-    alignItems: 'center',
-  },
-  flipHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    opacity: 0.5,
-  },
-  flipHintText: {
-    fontSize: 10,
-    color: '#5F6166',
-    fontFamily: 'Outfit_500Medium',
+    padding: 30,
   },
   legend: {
     paddingBottom: 40,
@@ -686,131 +467,4 @@ const createStyles = (colors: any, insets: any) => StyleSheet.create({
     color: '#94969a',
     fontFamily: 'Outfit_500Medium',
   },
-  completionContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  celebrationEmoji: {
-    fontSize: 80,
-    marginBottom: 20,
-  },
-  celebrationTitle: {
-    fontSize: 28,
-    fontFamily: 'Outfit_700Bold',
-    color: '#FFFFFF',
-    marginBottom: 10,
-  },
-  celebrationSubtitle: {
-    fontSize: 16,
-    color: '#94969a',
-    textAlign: 'center',
-    marginBottom: 40,
-  },
-  completionButton: {
-    backgroundColor: '#5e6ad2',
-    paddingHorizontal: 40,
-    paddingVertical: 18,
-    borderRadius: 20,
-    width: '100%',
-    alignItems: 'center',
-  },
-  completionButtonText: {
-    color: '#FFFFFF',
-    fontFamily: 'Outfit_700Bold',
-    fontSize: 16,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    justifyContent: 'flex-end',
-  },
-  noteModalContent: {
-    backgroundColor: '#15171B',
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    padding: 30,
-    paddingBottom: 50,
-    borderWidth: 1,
-    borderTopColor: '#2A2C32',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2A2C32',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontFamily: 'Outfit_700Bold',
-    color: '#FFFFFF',
-  },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1A1B1F',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  noteBodyScroll: {
-    maxHeight: 300,
-  },
-  noteReadContainer: {
-    padding: 10,
-  },
-  noteReadText: {
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#ECECEC',
-    fontFamily: 'Outfit_500Medium',
-  },
-  noteInput: {
-    backgroundColor: '#0B0C0E',
-    borderRadius: 16,
-    padding: 16,
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontFamily: 'Outfit_500Medium',
-    minHeight: 120,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: '#2A2C32',
-  },
-  modalFooter: {
-    marginTop: 20,
-  },
-  saveNoteButton: {
-    backgroundColor: '#5e6ad2',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-  },
-  editModeButton: {
-    backgroundColor: '#1F2125',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#2A2C32',
-  },
-  saveNoteText: {
-    color: '#FFFFFF',
-    fontFamily: 'Outfit_700Bold',
-    fontSize: 15,
-  }
 });

@@ -1,148 +1,434 @@
-import React, { useMemo, useEffect , useState } from "react";
-import { StyleSheet, View, ScrollView, TouchableOpacity, Dimensions ,ActivityIndicator} from "react-native";
-import { Text } from "@/components/AppText";
+import React, { useMemo, useEffect, useState } from "react";
+import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
-import { Flame, Play, FlaskConical, FunctionSquare, Brain, Clock, CreditCard as Cards, LogOut, Atom, Activity, Check, BookOpen } from "lucide-react-native";
+import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { BookOpen, Compass, FlaskConical, Hash, Heart, Code, Cpu, Settings2 } from "lucide-react-native";
+import { Text } from "@/components/AppText";
 
 import { useThemeColors } from "@/hooks/useThemeColors";
 import { useUserStore } from "@/store/user-store";
 import { useFlashcardStore } from "@/store/flashcard-store";
+import { DatabaseService } from "@/services/database-service";
+import { StudyService } from "@/services/study-service";
 
-const { width } = Dimensions.get('window');
+import { SubjectConfigModal } from "@/components/SubjectConfigModal";
+import { UnifiedAlertModal } from "@/components/UnifiedAlertModal";
+import { HomeHeader } from "@/components/HomeHeader";
+import { CompletedChaptersBanner } from "@/components/CompletedChaptersBanner";
+import { TodayActivityCard } from "@/components/TodayActivityCard";
+import { RecommendedSubjectCard } from "@/components/RecommendedSubjectCard";
+import { OtherSubjectsGrid } from "@/components/OtherSubjectsGrid";
+
+const EXAM_SUBJECTS: Record<string, string[]> = {
+  'JEE': ['Physics', 'Chemistry', 'Mathematics'],
+  'NEET': ['Physics', 'Chemistry', 'Biology'],
+  'Computer Science': ['DSA', 'DBMS', 'Operating Systems', 'OOP', 'Computer Networks']
+};
 
 const getSubjectIcon = (subject: string, size: number = 18, color: string = "#5e6ad2") => {
   if (!subject) return <BookOpen size={size} color={color} />;
   const s = subject.toLowerCase();
-  if (s.includes('phys')) return <Atom size={size} color={color} />;
+  if (s.includes('phys')) return <Compass size={size} color={color} />;
   if (s.includes('chem')) return <FlaskConical size={size} color={color} />;
-  if (s.includes('math')) return <FunctionSquare size={size} color={color} />;
-  if (s.includes('bio')) return <Activity size={size} color={color} />;
-  if (s.includes('cs') || s.includes('dsa') || s.includes('os') || s.includes('network')) return <Brain size={size} color={color} />;
+  if (s.includes('math')) return <Hash size={size} color={color} />;
+  if (s.includes('bio')) return <Heart size={size} color={color} />;
+  if (s.includes('cs') || s.includes('dsa') || s.includes('os') || s.includes('network') || s.includes('dbms') || s.includes('oop')) {
+    return <Cpu size={size} color={color} />;
+  }
   return <BookOpen size={size} color={color} />;
 };
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { openConfig, subject } = useLocalSearchParams<{ openConfig?: string, subject?: string }>();
   const colors = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { logout, user } = useUserStore();
-  const { decks, getCardsToStudyCount } = useFlashcardStore();
+  const { user } = useUserStore();
+  const { decks } = useFlashcardStore();
+
+  const [activeChapters, setActiveChapters] = useState<Record<string, string[]>>({});
+  const [completedChapters, setCompletedChapters] = useState<any[]>([]);
+  const [lockedChapterIds, setLockedChapterIds] = useState<string[]>([]);
+  const [subjectStatsMap, setSubjectStatsMap] = useState<Record<string, {
+    dueCount: number;
+    newCount: number;
+    totalSession: number;
+    backlogCount: number;
+    totalCards: number;
+    nextChapterName: string;
+  }>>({});
   const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
-  const [isDownloadingDeck, setIsDownloadingDeck] = useState(false);
+  const [isLaunchingSession, setIsLaunchingSession] = useState(false);
+  
+  // Chapter Config Modal State
+  const [isConfigModalVisible, setIsChapterModalVisible] = useState(false);
+  const [modalSubject, setModalSubject] = useState<string | null>(null);
+  const [selectedChapters, setSelectedChapters] = useState<string[]>([]);
+
+  // Auto open config modal if requested from redirects (e.g., chapter completed mid-session)
+  useEffect(() => {
+    if (openConfig === 'true' && subject && activeChapters[subject]) {
+      router.setParams({ openConfig: undefined, subject: undefined });
+      openConfigModal(subject, activeChapters[subject] || []);
+    }
+  }, [openConfig, subject, activeChapters]);
+
+  // Downloading Chapter State
+  const [downloadingChapterId, setDownloadingChapterId] = useState<string | null>(null);
+  
+  // Unified Custom Alert Modal State
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'warning' | 'error' | 'info';
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info'
+  });
+
+  const showCustomAlert = (title: string, message: string, type: 'success' | 'warning' | 'error' | 'info' = 'info') => {
+    setAlertConfig({
+      visible: true,
+      title,
+      message,
+      type
+    });
+  };
+
+  const userId = user?.id || 'local';
+  const userFocus = user?.prepFocus || 'JEE';
+  const subjects = useMemo(() => EXAM_SUBJECTS[userFocus] || EXAM_SUBJECTS['JEE'], [userFocus]);
+
+  const loadActiveChapters = async () => {
+    try {
+      const activeMap: Record<string, string[]> = {};
+      const completedList: any[] = [];
+      const lockedList: string[] = [];
+      const statsMap: Record<string, {
+        dueCount: number;
+        newCount: number;
+        totalSession: number;
+        backlogCount: number;
+        totalCards: number;
+        nextChapterName: string;
+      }> = {};
+
+      for (const sub of subjects) {
+        const activeIds = await DatabaseService.getActiveChapterIds(userId, sub);
+        activeMap[sub] = activeIds;
+
+        if (activeIds.length === 0) {
+          statsMap[sub] = {
+            dueCount: 0,
+            newCount: 0,
+            totalSession: 0,
+            backlogCount: 0,
+            totalCards: 0,
+            nextChapterName: '',
+          };
+          continue;
+        }
+
+        const { db } = require('@/db');
+        const { eq, and, inArray, lte } = require('drizzle-orm');
+        const { flashcards, userFlashcardStatus } = require('@/db/schema');
+
+        // Fetch subject decks
+        const subjectDecks = decks.filter(d => 
+          d.subject && d.subject.toLowerCase() === sub.toLowerCase()
+        );
+        const subjectDeckIds = subjectDecks.map(d => d.id);
+
+        const now = Date.now();
+        let actualDueInDb = 0;
+
+        if (subjectDeckIds.length > 0) {
+          const reviewedDueCards = await db.select({ id: flashcards.id })
+            .from(flashcards)
+            .innerJoin(
+              userFlashcardStatus,
+              and(
+                eq(flashcards.id, userFlashcardStatus.flashcardId),
+                eq(userFlashcardStatus.userId, userId),
+                lte(userFlashcardStatus.due_date, now)
+              )
+            )
+            .where(inArray(flashcards.deckId, subjectDeckIds));
+          
+          actualDueInDb = reviewedDueCards.length;
+        }
+
+        // Fetch active chapters cards
+        let activeCards = [];
+        let actualNewInDb = 0;
+        let totalCards = 0;
+
+        if (activeIds.length > 0) {
+          activeCards = await db.select({
+            id: flashcards.id,
+            deckId: flashcards.deckId,
+            dueDate: userFlashcardStatus.due_date,
+          })
+          .from(flashcards)
+          .leftJoin(
+            userFlashcardStatus,
+            and(
+              eq(flashcards.id, userFlashcardStatus.flashcardId),
+              eq(userFlashcardStatus.userId, userId)
+            )
+          )
+          .where(inArray(flashcards.deckId, activeIds));
+
+          totalCards = activeCards.length;
+          actualNewInDb = activeCards.filter((c: any) => c.dueDate === null).length;
+        }
+
+        const dailyTarget = 45;
+        const reservedNew = Math.min(5, actualNewInDb);
+        const dueCount = Math.min(actualDueInDb, dailyTarget - reservedNew);
+        const newCardsNeeded = Math.max(0, dailyTarget - dueCount);
+        const newCount = Math.min(newCardsNeeded, actualNewInDb);
+
+        // Find the first active chapter that still has unreviewed new cards
+        const nextChapterId = activeIds.find(id => {
+          return activeCards.some((card: any) => card.deckId === id && card.dueDate === null);
+        }) || activeIds[0];
+
+        const nextChapterName = decks.find(d => d.id === nextChapterId)?.name || '';
+
+        statsMap[sub] = {
+          dueCount,
+          newCount,
+          totalSession: dueCount + newCount,
+          backlogCount: Math.max(0, actualDueInDb - dueCount),
+          totalCards,
+          nextChapterName,
+        };
+
+        // Check if any active chapters have 0 new cards left (meaning chapter is fully introduced)
+        const chaptersList = decks.filter(d => activeIds.includes(d.id));
+        for (const chap of chaptersList) {
+          const chapNewCardsCount = activeCards.filter((c: any) => c.deckId === chap.id && c.dueDate === null).length;
+          if (chapNewCardsCount === 0 && chap.cardCount > 0) {
+            completedList.push(chap);
+          }
+
+          // Check if studied AND has remaining unintroduced new cards (locked)
+          const studiedCards = activeCards.filter((c: any) => c.deckId === chap.id && c.dueDate !== null);
+          if (studiedCards.length > 0 && chapNewCardsCount > 0) {
+            lockedList.push(chap.id);
+          }
+        }
+      }
+      setActiveChapters(activeMap);
+      setCompletedChapters(completedList);
+      setLockedChapterIds(lockedList);
+      setSubjectStatsMap(statsMap);
+    } catch (e) {
+      console.error('[Home] Failed to load active chapters:', e);
+    }
+  };
 
   // Trigger sync on mount
   useEffect(() => {
     const { SyncService } = require('@/services/sync-service');
-    const { user: stateUser } = useUserStore.getState();
-    if (stateUser?.id) {
+    if (userId) {
       setIsFetchingMetadata(true);
       SyncService.pullDecks()
-        .then(() => {
-          const { useFlashcardStore: store } = require('@/store/flashcard-store');
-          return store.getState().loadDecks();
-        })
+        .then(() => useFlashcardStore.getState().loadDecks())
+        .then(() => loadActiveChapters())
         .finally(() => setIsFetchingMetadata(false));
     }
-  }, []);
+  }, [userFocus, userId, decks.length]);
 
-  // Diagnostics
-  useEffect(() => {
-    console.log(`🏠 [Home] Total Decks currently in Local SQLite Store: ${decks.length}`);
-    if (decks.length > 0) {
-      decks.forEach((d: any) => {
-        console.log(`🏠 [Home] Deck: "${d.name}" | Subj: "${d.subject}" | Category: "${d.prepCategory}" | Public: ${d.isPublic} | Local Cards: ${d.cardCount}`);
-      });
-    } else {
-      console.log(`🏠 [Home] SQLite Store is empty! No decks to display.`);
-    }
-  }, [decks]);
+  // Refresh stats whenever home screen is refocused (e.g., returning from a study session)
+  useFocusEffect(
+    React.useCallback(() => {
+      loadActiveChapters();
+    }, [userId, userFocus, decks.length])
+  );
 
-  // Calculate real stats dynamically
-  const stats = useMemo(() => {
-    const userFocus = user?.prepFocus || 'JEE'; // Fallback to JEE
-    
-    // 1. Filter decks for the user's focus (or if deck prep_category is empty, include it for backward compatibility)
-    const validDecks = decks.filter(d => !d.prepCategory || d.prepCategory === userFocus);
-    
-    // 2. Group decks by subject
-    const subjectMap: Record<string, { name: string, totalToStudy: number, decks: any[] }> = {};
-    
-    validDecks.forEach(d => {
-      const subjName = d.subject && d.subject !== 'subject' ? d.subject : (d.name || 'General');
-      if (!subjectMap[subjName]) {
-        subjectMap[subjName] = { name: subjName, totalToStudy: 0, decks: [] };
-      }
-      subjectMap[subjName].decks.push(d);
-      subjectMap[subjName].totalToStudy += getCardsToStudyCount(d.id);
-    });
+  // Reactive Stats Mapper for each Subject
+  const subjectStats = useMemo(() => {
+    return subjects.map(subjectName => {
+      const chapters = decks.filter(d => 
+        d.subject && d.subject.toLowerCase() === subjectName.toLowerCase()
+      );
 
-    const subjectData = Object.values(subjectMap).map(sub => {
-      // Pick the first deck as primary for now, or the one with most cards due
-      const decksWithCounts = sub.decks.map(deck => ({
-        ...deck,
-        studyCount: getCardsToStudyCount(deck.id)
-      }));
-      const primaryDeck = decksWithCounts.sort((a, b) => b.studyCount - a.studyCount)[0];
-      return {
-        name: sub.name,
-        totalToStudy: sub.totalToStudy,
-        deckId: primaryDeck?.id,
+      const activeIds = activeChapters[subjectName] || [];
+      const activeChaptersList = chapters.filter(c => activeIds.includes(c.id));
+
+      const stats = subjectStatsMap[subjectName] || {
+        dueCount: 0,
+        newCount: 0,
+        totalSession: 0,
+        backlogCount: 0,
+        totalCards: 0,
+        nextChapterName: '',
       };
-    }).sort((a, b) => b.totalToStudy - a.totalToStudy); // Sort by most due cards
 
-    const totalToStudy = subjectData.reduce((acc, curr) => acc + curr.totalToStudy, 0);
-
-    return {
-      subjectData,
-      totalToStudy,
-      streak: user?.streakDays || 0,
-      totalStudied: user?.totalCardsStudied || 0,
-      dailyGoal: 50, // Hardcoded goal for now
-      userFocus,
-    };
-  }, [decks, user, getCardsToStudyCount]);
-
-  // Determine top priority subject
-  const topSubject = stats.subjectData.length > 0 ? stats.subjectData[0] : null;
-  const otherSubjects = stats.subjectData.length > 1 ? stats.subjectData.slice(1) : [];
-
-  const handleStartRevision = async (deckId: string) => {
-    if (!deckId || isDownloadingDeck) return;
-    const { SyncService } = require('@/services/sync-service');
-    
-    try {
-      setIsDownloadingDeck(true);
-      const store = useFlashcardStore.getState();
-      let deck = store.decks.find((d: any) => d.id === deckId);
-      
-      if (!deck) return;
-      
-      console.log(`📡 [Home] Selected deck: ${deck.name} | Cards locally: ${deck.cardCount}`);
-
-      if (deck.cardCount === 0) {
-        console.log(`📡 [Home] Empty deck detected → downloading flashcard content`);
-        const success = await SyncService.downloadDeckContent(deckId);
-        
-        if (!success) {
-          console.log(`❌ [Home] Deck download failed`);
-          return;
-        }
-        
-        // Refresh the local store so it knows we now have cards!
-        await store.loadDecks();
-        deck = useFlashcardStore.getState().decks.find((d: any) => d.id === deckId);
-        console.log(`📡 [Home] Reloaded → New cardCount=${deck?.cardCount}`);
-        
-        if (!deck?.cardCount) {
-          console.log(`⚠️ Download completed but still 0 local cards. Check Supabase 'status' column.`);
-          return;
-        }
+      return {
+        subjectName,
+        chapters,
+        activeChaptersList,
+        activeIds,
+        totalCards: stats.totalCards,
+        dueCount: stats.dueCount,
+        newCount: stats.newCount,
+        totalSession: stats.totalSession,
+        backlogCount: stats.backlogCount,
+        nextChapterName: stats.nextChapterName,
+      };
+    }).sort((a, b) => {
+      // 1. Prioritize subjects that actually have active cards to study today (totalSession > 0)
+      const hasCardsA = a.activeIds.length > 0 && a.totalSession > 0 ? 1 : 0;
+      const hasCardsB = b.activeIds.length > 0 && b.totalSession > 0 ? 1 : 0;
+      if (hasCardsA !== hasCardsB) {
+        return hasCardsB - hasCardsA; // Put subjects with cards to study first!
       }
 
-      router.push(`/study/${deckId}`);
+      // 2. If both have cards, or both are completed/caught up, prioritize subjects that have active chapters selected
+      const hasActiveA = a.activeIds.length > 0 ? 1 : 0;
+      const hasActiveB = b.activeIds.length > 0 ? 1 : 0;
+      if (hasActiveA !== hasActiveB) {
+        return hasActiveB - hasActiveA;
+      }
+
+      // 3. Fallback to default focus array order (Physics, Chemistry, Maths, etc.)
+      return 0;
+    });
+  }, [decks, subjects, activeChapters, subjectStatsMap]);
+
+  // Determine top priority subject based on sorting
+  const topSubject = subjectStats.length > 0 ? subjectStats[0] : null;
+  const otherSubjects = subjectStats.length > 1 ? subjectStats.slice(1) : [];
+
+  // Filter completed chapters to only show after the daily target session is fully completed
+  const completedChaptersToShow = useMemo(() => {
+    return completedChapters.filter(chap => {
+      const stats = subjectStats.find(s => s.subjectName.toLowerCase() === chap.subject?.toLowerCase());
+      return stats && stats.totalSession === 0;
+    });
+  }, [completedChapters, subjectStats]);
+
+  const handleStartSession = async (subject: string, isBacklog: boolean = false) => {
+    if (isLaunchingSession) return;
+    setIsLaunchingSession(true);
+
+    try {
+      const targetLimit = isBacklog ? 30 : 45;
+      const queue = isBacklog 
+        ? await StudyService.getBacklogQueue(subject, targetLimit)
+        : await StudyService.getSessionQueue(subject, targetLimit);
+
+      if (queue.length === 0) {
+        showCustomAlert("All Caught Up!", "No cards due or active in this subject right now. Add more chapters to continue!", "success");
+        return;
+      }
+
+      await useFlashcardStore.getState().startStudySession(subject, false, queue);
+      router.push(`/study/${subject}`);
+    } catch (e: any) {
+      showCustomAlert("Session Error", "Could not build study session queue.", "error");
     } finally {
-      setIsDownloadingDeck(false);
+      setIsLaunchingSession(false);
+    }
+  };
+
+  const openConfigModal = (subject: string, currentlyActive: string[]) => {
+    setModalSubject(subject);
+    const uncompletedActive = currentlyActive.filter(id => !completedChapters.some(c => c.id === id));
+    setSelectedChapters(uncompletedActive);
+    setIsChapterModalVisible(true);
+  };
+
+  const handleSubjectChangeInModal = async (newSubject: string) => {
+    setModalSubject(newSubject);
+    try {
+      const activeIds = await DatabaseService.getActiveChapterIds(userId, newSubject);
+      const uncompletedActive = activeIds.filter(id => !completedChapters.some(c => c.id === id));
+      setSelectedChapters(uncompletedActive);
+    } catch (e) {
+      console.error('[Home] Failed to load active chapters for switch:', e);
+    }
+  };
+
+  const handleSaveChapters = async () => {
+    if (!modalSubject) return;
+
+    if (selectedChapters.length < 1 || selectedChapters.length > 3) {
+      showCustomAlert("Selection Limit", "Please select between 1 and 3 chapters initially.", "warning");
+      return;
+    }
+
+    try {
+      const chaptersToDeactivate = (activeChapters[modalSubject] || []).filter(id => !selectedChapters.includes(id));
+      
+      // Update local SQLite
+      for (const id of selectedChapters) {
+        await DatabaseService.addActiveChapter(userId, id, modalSubject);
+      }
+      for (const id of chaptersToDeactivate) {
+        await DatabaseService.completeActiveChapter(userId, id);
+      }
+
+      await loadActiveChapters();
+      setIsChapterModalVisible(false);
+      
+      // Trigger background push sync to Supabase
+      const { SyncService } = require('@/services/sync-service');
+      SyncService.pushChanges(userId);
+    } catch (e) {
+      showCustomAlert("Error", "Could not save chapter preferences.", "error");
+    }
+  };
+
+  const handleDownloadChapter = async (chapId: string) => {
+    const { SyncService } = require('@/services/sync-service');
+    const NetInfo = require('@react-native-community/netinfo');
+    
+    const state = await NetInfo.fetch();
+    const isOnline = state.isConnected && state.isInternetReachable !== false;
+
+    if (!isOnline) {
+      showCustomAlert("Connection Required", "An active internet connection is required to download chapter flashcards for offline use. Please turn on Wi-Fi or mobile data.", "warning");
+      return;
+    }
+
+    setDownloadingChapterId(chapId);
+    try {
+      console.log(`📡 [Home] Downloading chapter on-demand: ${chapId}`);
+      const success = await SyncService.downloadDeckContent(chapId);
+      if (success) {
+        await useFlashcardStore.getState().loadDecks();
+      } else {
+        showCustomAlert("Download Failed", "Could not download flashcards. Please try again.", "error");
+      }
+    } catch (e) {
+      console.error(e);
+      showCustomAlert("Download Error", "An error occurred during chapter download.", "error");
+    } finally {
+      setDownloadingChapterId(null);
+    }
+  };
+
+  const handleShowActiveChaptersInfo = (subjectName: string, activeIds: string[]) => {
+    const activeChaptersList = decks.filter(d => activeIds.includes(d.id));
+    if (activeIds.length > 0) {
+      showCustomAlert(
+        `${subjectName} Active`, 
+        `Currently active chapters:\n\n• ${activeChaptersList.map(c => c.name).join('\n• ')}`, 
+        "info"
+      );
+    } else {
+      showCustomAlert(
+        `${subjectName} Setup`, 
+        "No active chapters selected yet. Click the configure button to setup your chapters!", 
+        "warning"
+      );
     }
   };
 
@@ -150,172 +436,85 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.logoText}><Text style={{ color: '#5e6ad2' }}>✦</Text> Cramit.</Text>
-            <Text style={styles.welcomeSub}>Ready to revise, {user?.name || 'Scholar'}?</Text>
-            <View style={styles.focusBadge}>
-               <Text style={styles.focusBadgeText}>{stats.userFocus} Prep</Text>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TouchableOpacity style={styles.streakPill} activeOpacity={0.7}>
-              <Flame size={16} color="#d2995e" fill="#d2995e" />
-              <Text style={styles.streakText}>{stats.streak} Days</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        {/* Modular Header Component */}
+        <HomeHeader 
+          userName={user?.name || 'Scholar'} 
+          userFocus={userFocus} 
+          streakDays={user?.streakDays || 0} 
+        />
 
-        {/* Recommended Now */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>RECOMMENDED NOW</Text>
-          {topSubject ? (
-            <TouchableOpacity 
-              activeOpacity={0.9}
-              onPress={() => topSubject.deckId && handleStartRevision(topSubject.deckId)}
-              disabled={!topSubject.deckId}
-            >
-              <View style={styles.recommendedCard}>
-                <View style={styles.recommendedHeader}>
-                  <View style={[styles.priorityBadge, topSubject.totalToStudy === 0 && { backgroundColor: '#1F2125', borderColor: '#2A2C32' }]}>
-                    <Text style={[styles.priorityBadgeText, topSubject.totalToStudy === 0 && { color: '#5F6166' }]}>
-                      {topSubject.totalToStudy === 0 ? 'ALL CAUGHT UP' : 'CRITICAL RETENTION'}
-                    </Text>
-                  </View>
-                  <View style={styles.priorityLabel}>
-                    <Brain size={12} color="#5f6166" />
-                    <Text style={styles.priorityLabelText}>High Priority</Text>
-                  </View>
-                </View>
-
-                <View style={styles.recommendedMain}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <View style={[styles.gridIcon, { backgroundColor: '#1F1A1B', borderColor: '#2E2324', marginBottom: 0 }]}>
-                      {getSubjectIcon(topSubject.name, 22, "#FF5F57")}
-                    </View>
-                    <View>
-                      <Text style={styles.recommendedTitle}>{topSubject.name}</Text>
-                      <Text style={styles.recommendedSubtitle}>Review Session</Text>
-                    </View>
-                  </View>
-                </View>
-
-                <View style={styles.statsRow}>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statLabel}>AVAILABLE</Text>
-                    <View style={styles.statValueContainer}>
-                      <Cards size={14} color={topSubject.totalToStudy === 0 ? "#5F6166" : "#5e6ad2"} fill={topSubject.totalToStudy === 0 ? "none" : "#5e6ad2"} />
-                      <Text style={[styles.statValue, topSubject.totalToStudy === 0 && { color: '#5F6166' }]}>{topSubject.totalToStudy || 0}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.statDivider} />
-                  <View style={styles.statItem}>
-                    <Text style={styles.statLabel}>EST. TIME</Text>
-                    <View style={styles.statValueContainer}>
-                      <Clock size={14} color={topSubject.totalToStudy === 0 ? "#5F6166" : "#5e6ad2"} fill={topSubject.totalToStudy === 0 ? "none" : "#5e6ad2"} />
-                      <Text style={[styles.statValue, topSubject.totalToStudy === 0 && { color: '#5F6166' }]}>~{Math.ceil((topSubject.totalToStudy || 0) * 0.5)}m</Text>
-                    </View>
-                  </View>
-                </View>
-                
-                <View style={[
-                  styles.startButton, 
-                  (!topSubject.deckId || isDownloadingDeck) && { backgroundColor: '#1F2125', shadowOpacity: 0, elevation: 0 }
-                ]}>
-                  {isDownloadingDeck ? (
-                    <ActivityIndicator size="small" color="#5e6ad2" />
-                  ) : topSubject.totalToStudy === 0 ? (
-                    <Check size={16} color="#5F6166" />
-                  ) : (
-                    <Play size={16} color="#FFFFFF" fill="#FFFFFF" />
-                  )}
-                  <Text style={[styles.startButtonText, (topSubject.totalToStudy === 0 || !topSubject.deckId || isDownloadingDeck) && { color: '#5F6166' }]}>
-                    {isDownloadingDeck ? 'Downloading...' : topSubject.totalToStudy === 0 ? 'Done for Today' : 'Start Revision'}
-                  </Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.recommendedCard}>
-               <Text style={styles.recommendedTitle}>No Decks Found</Text>
-               <Text style={styles.recommendedSubtitle}>Check back later or subscribe to decks for {stats.userFocus}.</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Subject Queues */}
-        {otherSubjects.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>OTHER SUBJECT QUEUES</Text>
-            <View style={styles.grid}>
-              {otherSubjects.map((subj, idx) => (
-                <TouchableOpacity 
-                  key={subj.name + idx}
-                  style={styles.gridItem} 
-                  onPress={() => subj.deckId && handleStartRevision(subj.deckId)}
-                  disabled={!subj.deckId}
-                >
-                  <View style={[styles.gridIcon, { backgroundColor: '#1A1F1C', borderColor: '#232925' }]}>
-                    {getSubjectIcon(subj.name, 18, "#4CD964")}
-                  </View>
-                  <Text style={styles.gridTitle} numberOfLines={1}>{subj.name}</Text>
-                  <View style={styles.gridStats}>
-                    <Text style={styles.gridDue}>{subj.totalToStudy || 0} Study</Text>
-                    <Text style={styles.gridTime}>~{Math.ceil((subj.totalToStudy || 0) * 0.5)}m</Text>
-                  </View>
-                  <View style={[styles.gridButton, !subj.deckId && { opacity: 0.5 }]}>
-                    <Text style={styles.gridButtonText}>{subj.totalToStudy ? 'Revise' : 'Explore'}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
+        {isFetchingMetadata && (
+          <ActivityIndicator size="small" color="#5e6ad2" style={{ marginBottom: 15 }} />
         )}
 
-        {/* Today's Activity */}
+        {/* Modular Recommended Subject Card Component (Bigger Box) */}
+        <RecommendedSubjectCard 
+          topSubject={topSubject}
+          isLaunchingSession={isLaunchingSession}
+          userFocus={userFocus}
+          onStartSession={handleStartSession}
+          onConfigureChapters={openConfigModal}
+          onShowActiveChaptersInfo={handleShowActiveChaptersInfo}
+          getSubjectIcon={getSubjectIcon}
+        />
+
+        {/* Modular Other Subjects Grid Component (Smaller Boxes) */}
+        <OtherSubjectsGrid 
+          otherSubjects={otherSubjects}
+          onStartSession={handleStartSession}
+          onConfigureChapters={openConfigModal}
+          onShowActiveChaptersInfo={handleShowActiveChaptersInfo}
+          getSubjectIcon={getSubjectIcon}
+        />
+
+        {/* Modular Today's Activity Progress Card Component */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>TODAY'S ACTIVITY</Text>
-          <View style={styles.activityCard}>
-            <View style={styles.activityHeader}>
-              <View>
-                <Text style={styles.activityValue}>{user?.totalCardsStudied || 0}/{stats.dailyGoal}</Text>
-                <Text style={styles.activityGoalLabel}>DAILY PROGRESS</Text>
-              </View>
-              <View style={styles.chart}>
-                {/* Visual representation of progress */}
-                {Array.from({ length: 7 }).map((_, i) => (
-                  <View 
-                    key={i} 
-                    style={[
-                      styles.chartBar, 
-                      { 
-                        height: i === 6 
-                          ? `${Math.min(100, ((user?.totalCardsStudied || 0) / stats.dailyGoal) * 100)}%` 
-                          : `${Math.random() * 40 + 20}%`,
-                        backgroundColor: i === 6 ? '#5e6ad2' : '#2a2c32',
-                        opacity: i === 6 ? 1 : 0.5
-                      }
-                    ]} 
-                  />
-                ))}
-              </View>
-            </View>
-
-            <View style={styles.activityFooter}>
-              <View>
-                <Text style={styles.footerLabel}>CARDS AVAILABLE</Text>
-                <Text style={[styles.footerValue, { color: '#d2995e' }]}>{stats.totalToStudy} Cards</Text>
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.footerLabel}>TIME SPENT</Text>
-                <Text style={[styles.footerValue, { color: '#5e6ad2' }]}>{user?.totalTimeStudied || 0} min</Text>
-              </View>
-            </View>
-          </View>
+          <TodayActivityCard 
+            totalCardsStudied={user?.totalCardsStudied || 0} 
+            totalTimeStudied={user?.totalTimeStudied || 0} 
+            dailyGoal={45} 
+          />
         </View>
 
+        {/* Centralized Configuration Button at the bottom */}
+        <TouchableOpacity 
+          style={styles.globalConfigBtn}
+          onPress={() => openConfigModal(subjects[0], activeChapters[subjects[0]] || [])}
+        >
+          <Settings2 size={15} color="#5e6ad2" style={{ marginRight: 8 }} />
+          <Text style={styles.globalConfigBtnText}>CONFIGURE STUDY CHAPTERS</Text>
+        </TouchableOpacity>
+
       </ScrollView>
+
+      {/* Chapter Configuration Modal Component */}
+      <SubjectConfigModal
+        visible={isConfigModalVisible}
+        modalSubject={modalSubject}
+        selectedChapters={selectedChapters}
+        decks={decks}
+        downloadingChapterId={downloadingChapterId}
+        onClose={() => setIsChapterModalVisible(false)}
+        onSave={handleSaveChapters}
+        setSelectedChapters={setSelectedChapters}
+        onDownloadChapter={handleDownloadChapter}
+        onShowCustomAlert={showCustomAlert}
+        subjects={subjects}
+        onSubjectChange={handleSubjectChangeInModal}
+        lockedChapterIds={lockedChapterIds}
+        completedChapterIds={completedChapters.map(c => c.id)}
+      />
+
+      {/* Unified Custom Alert Modal Component */}
+      <UnifiedAlertModal
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        onClose={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
+      />
+
     </SafeAreaView>
   );
 }
@@ -330,53 +529,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 100,
   },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 10,
-    marginBottom: 25,
-  },
-  logoText: {
-    fontSize: 20,
-    fontFamily: 'Outfit_700Bold',
-    color: '#ececec',
-  },
-  welcomeSub: {
-    fontSize: 12,
-    color: '#94969a',
-    fontFamily: 'Outfit_500Medium',
-    marginTop: 2,
-  },
-  focusBadge: {
-    backgroundColor: '#5e6ad220',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginTop: 6,
-  },
-  focusBadgeText: {
-    color: '#5e6ad2',
-    fontSize: 10,
-    fontFamily: 'Outfit_700Bold',
-  },
-  streakPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#15171b',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#2a2c32',
-  },
-  streakText: {
-    color: '#ececec',
-    fontFamily: 'Outfit_600SemiBold',
-    marginLeft: 6,
-    fontSize: 13,
-  },
   section: {
     marginBottom: 28,
   },
@@ -387,216 +539,28 @@ const createStyles = (colors: any) => StyleSheet.create({
     letterSpacing: 1,
     marginBottom: 12,
   },
-  recommendedCard: {
-    backgroundColor: '#15171b',
-    borderRadius: 24,
-    padding: 24,
+  // Global Configuration Button at the bottom
+  globalConfigBtn: {
+    backgroundColor: '#121318',
+    borderColor: '#3a3f6d',
     borderWidth: 1,
-    borderColor: '#2a2c32',
-  },
-  recommendedHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 20,
-  },
-  priorityBadge: {
-    backgroundColor: '#2D2B4A',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#3E3C66',
-  },
-  priorityBadgeText: {
-    color: '#8E96FF',
-    fontSize: 9,
-    fontFamily: 'Outfit_700Bold',
-    letterSpacing: 0.5,
-  },
-  priorityLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  priorityLabelText: {
-    color: '#5f6166',
-    fontSize: 9,
-    fontFamily: 'Outfit_600SemiBold',
-  },
-  recommendedMain: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 24,
-  },
-  recommendedTitle: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontFamily: 'Outfit_700Bold',
-    marginBottom: 2,
-  },
-  recommendedSubtitle: {
-    color: '#94969a',
-    fontSize: 13,
-    fontFamily: 'Outfit_500Medium',
-  },
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 20,
-    marginBottom: 24,
-  },
-  statItem: {
-    flexDirection: 'column',
-  },
-  statLabel: {
-    fontSize: 9,
-    fontFamily: 'Outfit_700Bold',
-    color: '#5f6166',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  statValueContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  statValue: {
-    fontSize: 15,
-    fontFamily: 'Outfit_600SemiBold',
-    color: '#FFFFFF',
-  },
-  statDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: '#2a2c32',
-  },
-  startButton: {
-    backgroundColor: '#5e6ad2',
+    paddingVertical: 15,
+    borderRadius: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    gap: 8,
+    marginTop: 25,
+    marginBottom: 10,
     shadowColor: '#5e6ad2',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 2,
   },
-  startButtonText: {
-    color: '#FFFFFF',
+  globalConfigBtnText: {
+    color: '#ECECEC',
     fontFamily: 'Outfit_700Bold',
-    fontSize: 15,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 15,
-  },
-  gridItem: {
-    width: (width - 55) / 2, // 2 columns with padding/gap math
-    backgroundColor: '#15171b',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#2a2c32',
-  },
-  gridIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  gridTitle: {
-    color: '#ececec',
-    fontSize: 15,
-    fontFamily: 'Outfit_700Bold',
-    marginBottom: 12,
-  },
-  gridStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  gridDue: {
-    color: '#94969a',
-    fontSize: 11,
-    fontFamily: 'Outfit_500Medium',
-  },
-  gridTime: {
-    color: '#5f6166',
-    fontSize: 11,
-    fontFamily: 'monospace',
-  },
-  gridButton: {
-    backgroundColor: '#2a2c32',
-    height: 32,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  gridButtonText: {
-    color: '#94969a',
-    fontSize: 11,
-    fontFamily: 'Outfit_600SemiBold',
-  },
-  activityCard: {
-    backgroundColor: '#15171b',
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#2a2c32',
-  },
-  activityHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  activityValue: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontFamily: 'Outfit_700Bold',
-  },
-  activityGoalLabel: {
-    color: '#5f6166',
-    fontSize: 9,
-    fontFamily: 'Outfit_700Bold',
-    letterSpacing: 1,
-  },
-  chart: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 4,
-    height: 40,
-  },
-  chartBar: {
-    width: 8,
-    backgroundColor: '#2a2c32',
-    borderRadius: 2,
-  },
-  activityFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#2a2c32',
-  },
-  footerLabel: {
-    color: '#5f6166',
-    fontSize: 10,
-    fontFamily: 'Outfit_700Bold',
+    fontSize: 13,
     letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  footerValue: {
-    fontSize: 16,
-    fontFamily: 'Outfit_700Bold',
   }
 });

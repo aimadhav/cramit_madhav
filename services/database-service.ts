@@ -8,7 +8,7 @@ export class DatabaseService {
   
   private static async addToSyncQueue(
     operation: 'CREATE' | 'UPDATE' | 'DELETE' | 'REVIEW',
-    entityType: 'deck' | 'card_status' | 'review',
+    entityType: 'deck' | 'card_status' | 'review' | 'active_chapter',
     entityId: string,
     payload: any,
     tx?: any
@@ -151,11 +151,16 @@ export class DatabaseService {
           ? (typeof fc.back_content === 'string' ? fc.back_content : JSON.stringify(fc.back_content))
           : fc.backContent || JSON.stringify([{ type: contentType, value: fc.back }]);
 
+        const tags = fc.tags_json 
+          ? (typeof fc.tags_json === 'string' ? fc.tags_json : JSON.stringify(fc.tags_json))
+          : JSON.stringify(fc.tags || []);
+
         return {
           ...fc,
           frontContent,
           backContent,
-          mediaUrls
+          mediaUrls,
+          tags
         };
       }));
       processedFlashcards.push(...processedChunk);
@@ -204,6 +209,7 @@ export class DatabaseService {
             backContent: fc.backContent,
             startingStability: fc.starting_stability || fc.startingStability || 0,
             mediaUrls: JSON.stringify(fc.mediaUrls),
+            tags: fc.tags || '[]',
             createdAt: fc.createdAt || fc.created_at || now,
             updatedAt: fc.updatedAt || fc.updated_at || now,
             deletedAt: null
@@ -214,6 +220,7 @@ export class DatabaseService {
               backContent: fc.backContent,
               startingStability: fc.starting_stability || fc.startingStability || 0,
               mediaUrls: JSON.stringify(fc.mediaUrls),
+              tags: fc.tags || '[]',
               updatedAt: now,
             }
           });
@@ -252,6 +259,11 @@ export class DatabaseService {
     const now = Date.now();
     const reviewId = Crypto.randomUUID();
 
+    const isLeft = reviewData.rating === 1;
+    const leftAdd = isLeft ? 1 : 0;
+    const rightAdd = isLeft ? 0 : 1;
+    const direction = isLeft ? 'left' : 'right';
+
     await db.transaction(async (tx) => {
       await tx.insert(schema.reviews).values({
         id: reviewId,
@@ -279,6 +291,9 @@ export class DatabaseService {
         repetitions: reviewData.newStatus.repetitions,
         due_date: reviewData.newStatus.dueDate,
         lastReviewed: now,
+        leftSwipes: leftAdd,
+        rightSwipes: rightAdd,
+        lastSwipeDirection: direction,
         updatedAt: now,
         createdAt: now,
         deletedAt: null
@@ -291,6 +306,9 @@ export class DatabaseService {
           repetitions: reviewData.newStatus.repetitions,
           due_date: reviewData.newStatus.dueDate,
           lastReviewed: now,
+          leftSwipes: sql`coalesce(${schema.userFlashcardStatus.leftSwipes}, 0) + ${leftAdd}`,
+          rightSwipes: sql`coalesce(${schema.userFlashcardStatus.rightSwipes}, 0) + ${rightAdd}`,
+          lastSwipeDirection: direction,
           updatedAt: now,
         }
       });
@@ -351,6 +369,61 @@ export class DatabaseService {
 
       await this.addToSyncQueue('UPDATE', 'card_status', cardId, { notes }, tx);
     });
+  }
+
+  static async addActiveChapter(userId: string, deckId: string, subject: string) {
+    const now = Date.now();
+    const id = Crypto.randomUUID();
+    
+    await db.transaction(async (tx) => {
+      await tx.insert(schema.userActiveChapters).values({
+        id,
+        userId,
+        deckId,
+        subject,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: [schema.userActiveChapters.userId, schema.userActiveChapters.deckId],
+        set: {
+          status: 'active',
+          updatedAt: now,
+        }
+      });
+
+      await this.addToSyncQueue('CREATE', 'active_chapter', deckId, { subject, status: 'active' }, tx);
+    });
+  }
+
+  static async completeActiveChapter(userId: string, deckId: string) {
+    const now = Date.now();
+    
+    await db.transaction(async (tx) => {
+      await tx.update(schema.userActiveChapters)
+        .set({ status: 'completed', updatedAt: now })
+        .where(
+          and(
+            eq(schema.userActiveChapters.userId, userId),
+            eq(schema.userActiveChapters.deckId, deckId)
+          )
+        );
+
+      await this.addToSyncQueue('UPDATE', 'active_chapter', deckId, { status: 'completed' }, tx);
+    });
+  }
+
+  static async getActiveChapterIds(userId: string, subject: string): Promise<string[]> {
+    const results = await db.select({ deckId: schema.userActiveChapters.deckId })
+      .from(schema.userActiveChapters)
+      .where(
+        and(
+          eq(schema.userActiveChapters.userId, userId),
+          eq(schema.userActiveChapters.subject, subject),
+          eq(schema.userActiveChapters.status, 'active')
+        )
+      );
+    return results.map(r => r.deckId);
   }
 
   static async getDebugCardData(userId: string) {
