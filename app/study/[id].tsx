@@ -146,7 +146,7 @@ export default function StudySessionScreen() {
 
   // Sync progress when session finishes
   useEffect(() => {
-    if (isSessionComplete && !isTempDeck) {
+    if (isSessionComplete && !isTempDeck && !isCramMode) {
       syncSessionProgress();
 
       // Query backlog count and completed chapters for congratulations screen prompts
