@@ -23,7 +23,7 @@ interface FlashcardState {
   loadDecks: () => Promise<void>;
   loadDeckWithCards: (deckId: string) => Promise<void>;
   startStudySession: (deckId: string, isCramMode?: boolean, customQueue?: string[]) => Promise<void>;
-  rateCard: (cardId: string, rating: DifficultyRating, options?: { updateFSRS?: boolean }) => Promise<void>;
+  rateCard: (cardId: string, rating: DifficultyRating, options?: { updateFSRS?: boolean, responseTimeMs?: number }) => Promise<void>;
   getNextCard: () => void;
   toggleBookmark: (cardId: string) => Promise<void>;
   syncSessionProgress: () => Promise<void>;
@@ -207,7 +207,7 @@ export const useFlashcardStore = create<FlashcardState>()(
         }
       },
 
-      rateCard: async (cardId: string, rating: DifficultyRating, options?: { updateFSRS?: boolean }) => {
+      rateCard: async (cardId: string, rating: DifficultyRating, options?: { updateFSRS?: boolean, responseTimeMs?: number }) => {
         const { StudyService } = require('@/services/study-service');
         const { SyncService } = require('@/services/sync-service');
         const { useUserStore } = require('./user-store');
@@ -230,6 +230,7 @@ export const useFlashcardStore = create<FlashcardState>()(
             status: card,
             rating,
             userId,
+            responseTimeMs: options?.responseTimeMs,
           });
 
           // BATCH SYNC LOGIC: Only push if queue is >= 3 items

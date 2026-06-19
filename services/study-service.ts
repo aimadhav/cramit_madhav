@@ -254,8 +254,9 @@ export class StudyService {
     status: any; // The current user_flashcard_status
     rating: DifficultyRating;
     userId: string;
+    responseTimeMs?: number;
   }) {
-    const { card, status, rating, userId } = params;
+    const { card, status, rating, userId, responseTimeMs } = params;
 
     // 1. Prepare card object for FSRS utility
     const fsrsInput: any = {
@@ -274,6 +275,7 @@ export class StudyService {
       flashcardId: card.id,
       userId,
       rating: this.ratingToNumber(rating),
+      responseTimeMs,
       newStatus: {
         ...fsrsResult,
         previousStability: fsrsInput.stability,

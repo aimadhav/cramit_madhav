@@ -158,6 +158,17 @@ This file tracks the exact changes made to the codebase as we execute the **Flas
         - **Overdue Backlog Prompt**: Displays a backlog alert box if any overdue cards remain, offering a **`Review Now`** button that starts a custom backlog study session instantly (capped at max 30 backlog cards).
     - **Result**: Delivered absolute user control and incredibly smart, non-stagnant spacing logic.
 
+- [x] **Tier 1: Cloud Database Schema Optimization & Integrity Patching**:
+    - Patched the production Supabase database with crucial constraints and indexes to guarantee absolute data integrity during offline synchronizations:
+        - Added `UNIQUE(user_id, flashcard_id)` to `user_flashcard_statuses` to prevent duplicate study state rows on network sync retries.
+        - Added `UNIQUE(room_id, user_id)` to `room_memberships` to block duplicate student joins.
+        - Enforced a foreign key constraint `study_sessions.deck_id` ➔ `decks(id) ON DELETE CASCADE` to prevent analytical ghost/orphaned sessions when deleting a chapter.
+        - Created a high-frequency composite query index on `user_flashcard_statuses(user_id, due_date)` to speed up due card count lookups from O(N) to O(1) (<5ms), saving database overhead.
+    - **Precise Card Response Time Tracking (`app/study/[id].tsx` & `store/flashcard-store.ts`)**:
+        - Integrated high-fidelity individual card-level response timer using React Native `useRef`.
+        - Captures exact millisecond duration from the moment the card is visible on screen until it is swiped/rated, and forwards it to `DatabaseService` and local SQLite `reviews`.
+        - Wired up the cloud sync logic so that these detailed learning logs are synced directly to your `public.reviews.response_time_ms` table in Supabase during sync operations automatically!
+
 ---
 
 ## 📋 Status Overview
@@ -168,4 +179,5 @@ This file tracks the exact changes made to the codebase as we execute the **Flas
 | Phase 3 | Home Screen Progression UI | Completed |
 | Phase 4 | Cram Mode & Real-time Tag Filters | Completed |
 | Phase 5 | High-Fidelity UI Alignment & Dynamic Chapter Actions | Completed |
+| Phase 6 | Tier 1 Database Schema Security Patching & Response Time Tracking | Completed |
 

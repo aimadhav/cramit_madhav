@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { StyleSheet, View, Alert, Dimensions, ActivityIndicator } from "react-native";
 import { Text } from "@/components/AppText";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
@@ -71,6 +71,7 @@ export default function StudySessionScreen() {
   const [isInitializing, setIsInitializing] = useState(true);
   const [backlogCount, setBacklogCount] = useState(0);
   const [completedChapterName, setCompletedChapterName] = useState<string | null>(null);
+  const cardShownTimeRef = useRef<number>(Date.now());
   
   // Mock handling for temp decks
   const isTempDeck = id?.startsWith('temp_') || id?.startsWith('rec_');
@@ -222,13 +223,17 @@ export default function StudySessionScreen() {
       const existingNote = currentCard.notes || "";
       setNoteText(existingNote);
       setNoteMode(existingNote ? 'read' : 'edit');
+
+      // Reset the response timer for the newly visible card
+      cardShownTimeRef.current = Date.now();
     }
   }, [currentCard?.id, tempCurrentIndex]);
 
   // Handle rating a card
   const handleRateCard = useCallback(async (rating: DifficultyRating) => {
     if (!currentCard || isRating) return;
-    console.log('📱 [UI] Rating card:', currentCard.id, 'as', rating);
+    const responseTimeMs = Date.now() - cardShownTimeRef.current;
+    console.log('📱 [UI] Rating card:', currentCard.id, 'as', rating, 'Response time:', responseTimeMs);
 
     setIsRating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -239,7 +244,7 @@ export default function StudySessionScreen() {
       setIsRating(false);
     } else {
       try {
-        await rateCard(currentCard.id, rating, { updateFSRS: !isCramMode });
+        await rateCard(currentCard.id, rating, { updateFSRS: !isCramMode, responseTimeMs });
         getNextCardFromStore();
         setSwipeDirection(null);
         setIsRating(false);
