@@ -131,18 +131,6 @@ export default function TabLayout() {
           }
         }}
       />
-      <Tabs.Screen
-        name="search"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          href: null,
-        }}
-      />
     </Tabs>
   );
 }
