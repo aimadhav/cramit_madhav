@@ -8,7 +8,7 @@ export class StudyService {
   /**
    * Starts a study session and returns a queue of card IDs
    */
-  static async getSessionQueue(deckIdOrSubject: string, limit: number = 45) {
+  static async getSessionQueue(deckIdOrSubject: string, limit: number = 45, isCramMode: boolean = false) {
     const { useUserStore } = require('@/store/user-store');
     const { db } = require('@/db');
     const { eq, and, inArray, isNull } = require('drizzle-orm');
@@ -26,9 +26,19 @@ export class StudyService {
     );
 
     if (isSubject) {
-      activeDeckIds = await DatabaseService.getActiveChapterIds(userId, deckIdOrSubject);
+      if (isCramMode) {
+        // Cram mode pulls cards from ALL chapters of the subject
+        const subjectDecks = await db.select({ id: decks.id })
+          .from(decks)
+          .where(eq(decks.subject, deckIdOrSubject));
+        activeDeckIds = subjectDecks.map((d: any) => d.id);
+      } else {
+        // Main deck daily progression strictly filters by selected active chapters
+        activeDeckIds = await DatabaseService.getActiveChapterIds(userId, deckIdOrSubject);
+      }
+      
       if (activeDeckIds.length === 0) {
-        console.warn(`⚠️ [StudyService] No active chapters found for subject: ${deckIdOrSubject}`);
+        console.warn(`⚠️ [StudyService] No chapters found for subject: ${deckIdOrSubject}`);
         return [];
       }
     } else {
@@ -62,8 +72,10 @@ export class StudyService {
         cardsWithStatus.push(...reviewedCards);
       }
 
-      // Option 1: Fetch unreviewed new cards ONLY inside the active chapters
-      if (activeDeckIds.length > 0) {
+      // Option 1: Fetch unreviewed new cards. In Cram Mode, fetch from ALL chapters; otherwise strictly active chapters
+      const targetDeckIdsForNew = isCramMode ? subjectDeckIds : activeDeckIds;
+
+      if (targetDeckIdsForNew.length > 0) {
         const newCardsInActive = await db.select({
           card: flashcards,
           status: userFlashcardStatus
@@ -78,7 +90,7 @@ export class StudyService {
         )
         .where(
           and(
-            inArray(flashcards.deckId, activeDeckIds),
+            inArray(flashcards.deckId, targetDeckIdsForNew),
             isNull(userFlashcardStatus.id)
           )
         );

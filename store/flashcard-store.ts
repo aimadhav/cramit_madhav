@@ -185,7 +185,7 @@ export const useFlashcardStore = create<FlashcardState>()(
       },
 
       startStudySession: async (deckId: string, isCramMode: boolean = false, customQueue?: string[]) => {
-        const queue = customQueue || await StudyService.getSessionQueue(deckId);
+        const queue = customQueue || await StudyService.getSessionQueue(deckId, 45, isCramMode);
         if (queue.length > 0) {
           set({
             currentDeckId: deckId,
