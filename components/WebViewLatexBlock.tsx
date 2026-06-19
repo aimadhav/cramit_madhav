@@ -109,7 +109,7 @@ const WebViewLatexBlock: React.FC<WebViewLatexBlockProps> = ({ latex }) => {
         background-color: transparent; 
         color: ${colors.textDark}; 
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        font-size: 22px;
+        font-size: 18px;
         line-height: 1.45;
         visibility: hidden; 
         overflow-x: hidden;

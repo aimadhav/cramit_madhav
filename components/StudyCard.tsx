@@ -163,8 +163,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cardText: {
-    fontSize: 22,
-    fontFamily: 'Outfit_600SemiBold',
+    fontSize: 18,
+    fontFamily: 'Outfit_500Medium',
     color: '#FFFFFF',
     textAlign: 'center',
     lineHeight: 32,
