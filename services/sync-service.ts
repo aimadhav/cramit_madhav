@@ -11,6 +11,17 @@ export class SyncService {
    */
   static async pushChanges(userId: string) {
     if (this.isSyncing || !userId) return;
+
+    // Check internet connection status first to avoid failing tasks on network-less requests
+    const NetInfo = require('@react-native-community/netinfo');
+    const state = await NetInfo.fetch();
+    const isOnline = state.isConnected && state.isInternetReachable !== false;
+
+    if (!isOnline) {
+      console.log('📡 [SyncService] Device is offline. Postponing cloud pushes.');
+      return;
+    }
+
     this.isSyncing = true;
 
     try {
@@ -54,11 +65,25 @@ export class SyncService {
               .set({ status: 'synced', updatedAt: Date.now() })
               .where(eq(schema.syncQueue.id, task.id));
           } else {
-             // If it failed but it was a "Missing Record" error on Supabase,
-             // we mark it as synced to avoid blocking the queue.
-             await db.update(schema.syncQueue)
-              .set({ status: 'failed_on_server', updatedAt: Date.now() })
-              .where(eq(schema.syncQueue.id, task.id));
+             // Handle retry limit logic for transient network/server failures
+             const currentRetries = task.retryCount ?? 0;
+             if (currentRetries < 5) {
+               console.log(`📡 [SyncService] Task ${task.id} failed, incrementing retries (${currentRetries + 1}/5)`);
+               await db.update(schema.syncQueue)
+                 .set({ 
+                   retryCount: currentRetries + 1, 
+                   updatedAt: Date.now() 
+                 })
+                 .where(eq(schema.syncQueue.id, task.id));
+             } else {
+               console.warn(`📡 [SyncService] Task ${task.id} exceeded retry limit. Marking as failed.`);
+               await db.update(schema.syncQueue)
+                 .set({ 
+                   status: 'failed_on_server', 
+                   updatedAt: Date.now() 
+                 })
+                 .where(eq(schema.syncQueue.id, task.id));
+             }
           }
         } catch (e: any) {
           console.error(`❌ [SyncService] Task processing crash:`, e.message);
