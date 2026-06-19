@@ -279,6 +279,12 @@ export const useFlashcardStore = create<FlashcardState>()(
             c.id === cardId ? { ...c, isBookmarked: newState } : c
           )
         }));
+
+        // CRITICAL SYNC TRIGGER: Instantly push bookmark to Supabase in background!
+        if (userId !== 'local' && userId !== 'guest-user') {
+          const { SyncService } = require('@/services/sync-service');
+          SyncService.pushChanges(userId).catch((e: any) => console.warn('⚠️ [Store] Bookmark sync fail:', e));
+        }
       },
 
       syncSessionProgress: async () => {
@@ -312,6 +318,12 @@ export const useFlashcardStore = create<FlashcardState>()(
              c.id === cardId ? { ...c, notes: note } : c
            )
          }));
+
+         // CRITICAL SYNC TRIGGER: Instantly push note to Supabase in background!
+         if (userId !== 'local' && userId !== 'guest-user') {
+           const { SyncService } = require('@/services/sync-service');
+           SyncService.pushChanges(userId).catch((e: any) => console.warn('⚠️ [Store] Note sync fail:', e));
+         }
       },
 
       getCardsToStudyCount: (deckId: string) => {
