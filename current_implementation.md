@@ -168,6 +168,10 @@ This file tracks the exact changes made to the codebase as we execute the **Flas
         - Integrated high-fidelity individual card-level response timer using React Native `useRef`.
         - Captures exact millisecond duration from the moment the card is visible on screen until it is swiped/rated, and forwards it to `DatabaseService` and local SQLite `reviews`.
         - Wired up the cloud sync logic so that these detailed learning logs are synced directly to your `public.reviews.response_time_ms` table in Supabase during sync operations automatically!
+    - **On-Demand Progress Hydration (`services/sync-service.ts`)**:
+        - **The Culprit**: Clicking `"Load"` to download a chapter on-demand downloaded the static cards, but **never pulled the user's historical FSRS progress, bookmarks, or notes** for those cards. Thus, all cards appeared as blank, fresh 0-value items, even if they had studied them previously!
+        - **The Fix**: Patched `downloadDeckContent` in `sync-service.ts` to automatically trigger `pullStatuses(userId)` right after saving the card content. 
+        - **The Result**: Any existing bookmarks, notes, and FSRS intervals are instantly pulled and mirrored, ensuring your personal progress is immediately restored after downloading a deck!
 
 ---
 
@@ -179,5 +183,5 @@ This file tracks the exact changes made to the codebase as we execute the **Flas
 | Phase 3 | Home Screen Progression UI | Completed |
 | Phase 4 | Cram Mode & Real-time Tag Filters | Completed |
 | Phase 5 | High-Fidelity UI Alignment & Dynamic Chapter Actions | Completed |
-| Phase 6 | Tier 1 Database Schema Security Patching & Response Time Tracking | Completed |
+| Phase 6 | Tier 1 Schema Patching, Response Times, & On-Demand Sync | Completed |
 

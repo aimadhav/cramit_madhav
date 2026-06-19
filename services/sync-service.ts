@@ -380,6 +380,15 @@ export class SyncService {
       if (cards) {
         await DatabaseService.upsertDeck(deck, cards);
       }
+
+      // 4. Critical Sync Fix: Automatically pull user's historical progress and bookmarks
+      // for these cards so they don't show up with blank 0 values!
+      const { useUserStore } = require('@/store/user-store');
+      const userId = useUserStore.getState().user?.id;
+      if (userId && userId !== 'local' && userId !== 'guest-user') {
+        console.log(`📡 [SyncService] Pulling cloud statuses to match downloaded cards...`);
+        await this.pullStatuses(userId);
+      }
       
       return true;
     } catch (e: any) {
