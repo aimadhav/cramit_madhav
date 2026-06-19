@@ -173,6 +173,7 @@ export const useFlashcardStore = create<FlashcardState>()(
               mediaUrls: Array.isArray(mediaUrls) ? mediaUrls : [],
               tags: Array.isArray(tags) ? tags : [],
               ...status,
+              id: card.id, // CRITICAL FIX: Prevent status.id from overwriting the static card.id!
               dueDate: status?.due_date || card.createdAt,
               isBookmarked: !!status?.isBookmarked,
             };
