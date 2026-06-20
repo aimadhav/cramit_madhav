@@ -70,6 +70,7 @@ export default function DecksScreen() {
         )
       )
       .where(inArray(flashcards.deckId, chapIds));
+      
 
       setLocalSubjectCards(cards);
     } catch (e) {
@@ -208,6 +209,8 @@ export default function DecksScreen() {
         )
       )
       .where(inArray(flashcards.deckId, selectedChapters));
+        console.log('startingStability check:', cardsWithStatus[0]?.card.startingStability, typeof cardsWithStatus[0]?.card.startingStability)
+      
 
       if (cardsWithStatus.length === 0) {
         showCustomAlert("No Content", "The selected chapters do not have any cards yet.", "warning");
@@ -292,12 +295,12 @@ export default function DecksScreen() {
         return;
       }
 
+        
+
       // 3. Sort by FSRS stability ASC (weakest memory first, putting new cards last)
-      filtered.sort((a: any, b: any) => {
-        const stabA = a.status?.stability ?? 0;
-        const stabB = b.status?.stability ?? 0;
-        if (stabA === 0 && stabB > 0) return 1;
-        if (stabB === 0 && stabA > 0) return -1;
+          filtered.sort((a: any, b: any) => {
+        const stabA = a.status?.stability ?? a.card.startingStability ?? 999;
+        const stabB = b.status?.stability ?? b.card.startingStability ?? 999;
         return stabA - stabB;
       });
 
