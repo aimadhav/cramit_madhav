@@ -9,3 +9,5 @@ i wish to make a same version of app for dsa and os cn too so it should have the
 build things for testing and all.
 
 the sigin and signup should have google signup and if some one choose it he should be aked to choose whatare you prepareing for after that.
+
+the decks are not downloaded(deck not cards) unyil you go out of id and get in 

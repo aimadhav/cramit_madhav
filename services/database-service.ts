@@ -207,7 +207,7 @@ export class DatabaseService {
             deckId: deckId,
             frontContent: fc.frontContent,
             backContent: fc.backContent,
-            startingStability: fc.starting_stability || fc.startingStability || 0,
+            startingStability: fc.starting_stability != null ? parseFloat(fc.starting_stability) : (fc.startingStability ?? 0),
             mediaUrls: JSON.stringify(fc.mediaUrls),
             tags: fc.tags || '[]',
             createdAt: fc.createdAt || fc.created_at || now,
@@ -218,7 +218,7 @@ export class DatabaseService {
             set: {
               frontContent: fc.frontContent,
               backContent: fc.backContent,
-              startingStability: fc.starting_stability || fc.startingStability || 0,
+              startingStability: fc.starting_stability != null ? parseFloat(fc.starting_stability) : (fc.startingStability ?? 0),
               mediaUrls: JSON.stringify(fc.mediaUrls),
               tags: fc.tags || '[]',
               updatedAt: now,
