@@ -1,7 +1,7 @@
 import React from 'react';
-import { StyleSheet, View, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, } from 'react-native';
 import { Text } from './AppText';
-import { FunctionSquare, Lightbulb, Files, AlertCircle } from 'lucide-react-native';
+import { FunctionSquare, Lightbulb, Files, AlertCircle ,Bookmark} from 'lucide-react-native';
 import { MOCK_CONTENT_TYPES } from '@/constants/mockData';
 
 interface CramFiltersProps {
@@ -27,7 +27,7 @@ export const CramFilters: React.FC<CramFiltersProps> = ({
             >
               {type.label === 'Formulas' && <FunctionSquare size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
               {type.label === 'Concepts' && <Lightbulb size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
-              {type.label === 'PYQs' && <Files size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
+              {type.label === 'Bookmarks' && <Bookmark size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
               {type.label === 'Mistakes' && <AlertCircle size={14} color={isSelected ? '#0b0c0e' : '#94969A'} />}
               <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>{type.label}</Text>
             </TouchableOpacity>

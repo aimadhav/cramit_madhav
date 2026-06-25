@@ -61,7 +61,7 @@ export const MOCK_CURRICULUM = {
 export const MOCK_CONTENT_TYPES = [
   { id: "ct1", label: "Formulas", icon: "function-square", selected: false },
   { id: "ct2", label: "Concepts", icon: "lightbulb", selected: false },
-  { id: "ct3", label: "PYQs", icon: "file-text", selected: false },
+  { id: "ct3", label: "Bookmarks", icon: "Bookmark", selected: false },
   { id: "ct4", label: "Mistakes", icon: "alert-circle", selected: false },
 ];
 

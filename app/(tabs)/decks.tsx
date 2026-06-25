@@ -134,19 +134,27 @@ export default function DecksScreen() {
         }
       }
 
+      // if (selectedContentTypes.includes('ct3')) {
+      //   if (cardTags.includes('pyq') || cardTags.includes('pyqs')) {
+      //     matchesAtLeastOne = true;
+      //   } else {
+      //     try {
+      //       const frontText = String(c.card.frontContent).toLowerCase();
+      //       const backText = String(c.card.backContent).toLowerCase();
+      //       if (frontText.includes('pyq') || frontText.includes('pyq') || frontText.includes('question') || frontText.includes('question')) {
+      //         matchesAtLeastOne = true;
+      //       }
+      //     } catch {}
+      //   }
+      // }
+
       if (selectedContentTypes.includes('ct3')) {
-        if (cardTags.includes('pyq') || cardTags.includes('pyqs')) {
+        const isBookmarked = c.status?.isBookmarked || false;
+        if (isBookmarked) {
           matchesAtLeastOne = true;
-        } else {
-          try {
-            const frontText = String(c.card.frontContent).toLowerCase();
-            const backText = String(c.card.backContent).toLowerCase();
-            if (frontText.includes('pyq') || frontText.includes('pyq') || frontText.includes('question') || frontText.includes('question')) {
-              matchesAtLeastOne = true;
-            }
-          } catch {}
         }
       }
+
 
       if (selectedContentTypes.includes('ct4')) {
         const status = c.status;
@@ -264,19 +272,29 @@ export default function DecksScreen() {
           }
 
           // Filter PYQs (ct3) - Check tags first, then fallback to content keywords
+          // if (selectedContentTypes.includes('ct3')) {
+          //   if (cardTags.includes('pyq') || cardTags.includes('pyqs')) {
+          //     matchesAtLeastOne = true;
+          //   } else {
+          //     try {
+          //       const frontText = String(c.card.frontContent).toLowerCase();
+          //       const backText = String(c.card.backContent).toLowerCase();
+          //       if (frontText.includes('pyq') || backText.includes('pyq') || frontText.includes('question') || backText.includes('question')) {
+          //         matchesAtLeastOne = true;
+          //       }
+          //     } catch {}
+          //   }
+          // }
+
+
+          // Filter Bookmarks (ct3) - 
           if (selectedContentTypes.includes('ct3')) {
-            if (cardTags.includes('pyq') || cardTags.includes('pyqs')) {
+            const isBookmarked = c.status?.isBookmarked || false;
+            if (isBookmarked) {
               matchesAtLeastOne = true;
-            } else {
-              try {
-                const frontText = String(c.card.frontContent).toLowerCase();
-                const backText = String(c.card.backContent).toLowerCase();
-                if (frontText.includes('pyq') || backText.includes('pyq') || frontText.includes('question') || backText.includes('question')) {
-                  matchesAtLeastOne = true;
-                }
-              } catch {}
             }
           }
+
 
           // Filter Mistakes (ct4)
           if (selectedContentTypes.includes('ct4')) {
