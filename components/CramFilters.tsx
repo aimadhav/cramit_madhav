@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View, TouchableOpacity, } from 'react-native';
 import { Text } from './AppText';
 import { FunctionSquare, Lightbulb, Files, AlertCircle ,Bookmark} from 'lucide-react-native';
-import { MOCK_CONTENT_TYPES } from '@/constants/mockData';
+import { STUDY_CONTENT_TYPES } from '@/constants/studyFilters';
 
 interface CramFiltersProps {
   selectedContentTypes: string[];
@@ -17,7 +17,7 @@ export const CramFilters: React.FC<CramFiltersProps> = ({
     <View style={styles.configPanel}>
       <Text style={styles.stepLabel}>1. CHOOSE FILTERS (OPTIONAL)</Text>
       <View style={styles.chipsContainer}>
-        {MOCK_CONTENT_TYPES.map((type) => {
+        {STUDY_CONTENT_TYPES.map((type) => {
           const isSelected = selectedContentTypes.includes(type.id);
           return (
             <TouchableOpacity 

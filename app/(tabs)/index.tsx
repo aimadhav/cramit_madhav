@@ -18,12 +18,7 @@ import { CompletedChaptersBanner } from "@/components/CompletedChaptersBanner";
 import { TodayActivityCard } from "@/components/TodayActivityCard";
 import { RecommendedSubjectCard } from "@/components/RecommendedSubjectCard";
 import { OtherSubjectsGrid } from "@/components/OtherSubjectsGrid";
-
-const EXAM_SUBJECTS: Record<string, string[]> = {
-  'JEE': ['Physics', 'Chemistry', 'Mathematics'],
-  'NEET': ['Physics', 'Chemistry', 'Biology'],
-  'Computer Science': ['DSA', 'DBMS', 'Operating Systems', 'OOP', 'Computer Networks']
-};
+import { isSubjectAllowedForPrepFocus } from '@/constants/examSubjects';
 
 const getSubjectIcon = (subject: string, size: number = 18, color: string = "#5e6ad2") => {
   if (!subject) return <BookOpen size={size} color={color} />;
@@ -99,8 +94,13 @@ export default function HomeScreen() {
   };
 
   const userId = user?.id || 'local';
-  const userFocus = user?.prepFocus || 'JEE';
-  const subjects = useMemo(() => EXAM_SUBJECTS[userFocus] || EXAM_SUBJECTS['JEE'], [userFocus]);
+  const userFocus = user?.prepFocus || null;
+  const subjects = useMemo(() => {
+    return Array.from(new Set(decks
+      .filter((deck) => isSubjectAllowedForPrepFocus(deck.subject, userFocus))
+      .map((deck) => deck.subject!.trim())
+      .filter(Boolean)));
+  }, [decks, userFocus]);
 
   const loadActiveChapters = async () => {
     try {
@@ -297,7 +297,7 @@ export default function HomeScreen() {
         return hasActiveB - hasActiveA;
       }
 
-      // 3. Fallback to default focus array order (Physics, Chemistry, Maths, etc.)
+      // 3. Preserve the order supplied by the database.
       return 0;
     });
   }, [decks, subjects, activeChapters, subjectStatsMap]);
@@ -439,7 +439,6 @@ export default function HomeScreen() {
         {/* Modular Header Component */}
         <HomeHeader 
           userName={user?.name || 'Scholar'} 
-          userFocus={userFocus} 
           streakDays={user?.streakDays || 0} 
         />
 
@@ -451,7 +450,6 @@ export default function HomeScreen() {
         <RecommendedSubjectCard 
           topSubject={topSubject}
           isLaunchingSession={isLaunchingSession}
-          userFocus={userFocus}
           onStartSession={handleStartSession}
           onConfigureChapters={openConfigModal}
           onShowActiveChaptersInfo={handleShowActiveChaptersInfo}

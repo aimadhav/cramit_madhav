@@ -19,7 +19,6 @@ interface SubjectStats {
 interface RecommendedSubjectCardProps {
   topSubject: SubjectStats | null;
   isLaunchingSession: boolean;
-  userFocus: string;
   onStartSession: (subject: string, isBacklog?: boolean) => Promise<void>;
   onConfigureChapters: (subject: string, currentlyActive: string[]) => void;
   onShowActiveChaptersInfo: (subjectName: string, activeIds: string[]) => void;
@@ -29,7 +28,6 @@ interface RecommendedSubjectCardProps {
 export const RecommendedSubjectCard: React.FC<RecommendedSubjectCardProps> = ({
   topSubject,
   isLaunchingSession,
-  userFocus,
   onStartSession,
   onConfigureChapters,
   onShowActiveChaptersInfo,
@@ -39,7 +37,7 @@ export const RecommendedSubjectCard: React.FC<RecommendedSubjectCardProps> = ({
     return (
       <View style={styles.recommendedCard}>
          <Text style={styles.recommendedTitle}>No Decks Found</Text>
-         <Text style={styles.recommendedSubtitle}>Check back later or subscribe to decks for {userFocus}.</Text>
+         <Text style={styles.recommendedSubtitle}>Check back later for available decks.</Text>
       </View>
     );
   }

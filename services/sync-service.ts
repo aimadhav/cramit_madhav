@@ -2,6 +2,11 @@ import { db } from '@/db';
 import * as schema from '@/db/schema';
 import { supabase } from '@/lib/supabase';
 import { eq, asc, and } from 'drizzle-orm';
+import { mirrorUserStatuses, mirrorUserActiveChapters } from './sync-pull';
+import { mirrorPublicDecks } from './sync-decks';
+import { downloadDeckContent as downloadDeckContentHelper } from './sync-download';
+import { cacheDeckImages as cacheDeckImagesHelper } from './sync-cache';
+import { processSyncQueue } from './sync-queue';
 
 export class SyncService {
   private static isSyncing = false;
@@ -25,70 +30,7 @@ export class SyncService {
     this.isSyncing = true;
 
     try {
-      const tasks = await db.query.syncQueue.findMany({
-        where: eq(schema.syncQueue.status, 'pending'),
-        orderBy: [asc(schema.syncQueue.createdAt)],
-        limit: 50,
-      });
-
-      if (tasks.length === 0) return;
-
-      console.log(`📡 [SyncService] Pushing ${tasks.length} changes to cloud...`);
-
-      for (const task of tasks) {
-        // SKIP LOCAL TEMP CARDS (Prevent Foreign Key Violations)
-        if (task.entityId.startsWith('temp_')) {
-           await db.update(schema.syncQueue)
-              .set({ status: 'synced', updatedAt: Date.now() })
-              .where(eq(schema.syncQueue.id, task.id));
-           continue;
-        }
-
-        try {
-          const payload = JSON.parse(task.payload);
-          let success = false;
-
-          switch (task.entityType) {
-            case 'card_status':
-              success = await this.syncCardStatus(userId, task.entityId, payload);
-              break;
-            case 'active_chapter':
-              success = await this.syncActiveChapter(userId, task.entityId, payload);
-              break;
-            case 'deck':
-              success = true;
-              break;
-          }
-
-          if (success) {
-            await db.update(schema.syncQueue)
-              .set({ status: 'synced', updatedAt: Date.now() })
-              .where(eq(schema.syncQueue.id, task.id));
-          } else {
-             // Handle retry limit logic for transient network/server failures
-             const currentRetries = task.retryCount ?? 0;
-             if (currentRetries < 5) {
-               console.log(`📡 [SyncService] Task ${task.id} failed, incrementing retries (${currentRetries + 1}/5)`);
-               await db.update(schema.syncQueue)
-                 .set({ 
-                   retryCount: currentRetries + 1, 
-                   updatedAt: Date.now() 
-                 })
-                 .where(eq(schema.syncQueue.id, task.id));
-             } else {
-               console.warn(`📡 [SyncService] Task ${task.id} exceeded retry limit. Marking as failed.`);
-               await db.update(schema.syncQueue)
-                 .set({ 
-                   status: 'failed_on_server', 
-                   updatedAt: Date.now() 
-                 })
-                 .where(eq(schema.syncQueue.id, task.id));
-             }
-          }
-        } catch (e: any) {
-          console.error(`❌ [SyncService] Task processing crash:`, e.message);
-        }
-      }
+      await processSyncQueue(userId, this.syncCardStatus.bind(this), this.syncActiveChapter.bind(this));
     } finally {
       this.isSyncing = false;
     }
@@ -234,85 +176,12 @@ export class SyncService {
   static async pullStatuses(userId: string) {
     console.log('📡 [SyncService] Pulling progress for user:', userId);
     try {
-      const { supabase } = require('@/lib/supabase');
-      const { db } = require('@/db');
-      const { userFlashcardStatus, userActiveChapters } = require('@/db/schema');
+      await mirrorUserStatuses(userId);
 
-      // Fetch cloud status
-      const { data, error } = await supabase
-        .from('user_flashcard_statuses')
-        .select('*')
-        .eq('user_id', userId);
-
-      if (error) throw error;
-
-      if (data) {
-        console.log(`📡 [SyncService] Found ${data.length} cloud statuses. Mirroring to SQLite...`);
-        for (const row of data) {
-          await db.insert(userFlashcardStatus).values({
-            id: row.id,
-            userId: row.user_id,
-            flashcardId: row.flashcard_id,
-            interval: row.interval,
-            stability: row.stability,
-            difficulty: row.difficulty,
-            repetitions: row.repetitions,
-            due_date: new Date(row.due_date).getTime(),
-            lastReviewed: row.last_reviewed ? new Date(row.last_reviewed).getTime() : null,
-            isBookmarked: row.is_bookmarked,
-            notes: row.notes,
-            leftSwipes: row.left_swipes ?? 0,
-            rightSwipes: row.right_swipes ?? 0,
-            lastSwipeDirection: row.last_swipe_direction ?? null,
-            createdAt: new Date(row.created_at).getTime(),
-            updatedAt: new Date(row.updated_at).getTime(),
-          }).onConflictDoUpdate({
-            target: [userFlashcardStatus.userId, userFlashcardStatus.flashcardId],
-            set: {
-              interval: row.interval,
-              stability: row.stability,
-              difficulty: row.difficulty,
-              repetitions: row.repetitions,
-              due_date: new Date(row.due_date).getTime(),
-              lastReviewed: row.last_reviewed ? new Date(row.last_reviewed).getTime() : null,
-              isBookmarked: row.is_bookmarked,
-              notes: row.notes,
-              leftSwipes: row.left_swipes ?? 0,
-              rightSwipes: row.right_swipes ?? 0,
-              lastSwipeDirection: row.last_swipe_direction ?? null,
-              updatedAt: Date.now()
-            }
-          });
-        }
-      }
-
-      // Fetch cloud user active chapters
-      const { data: activeChaptersData, error: activeChaptersError } = await supabase
-        .from('user_active_chapters')
-        .select('*')
-        .eq('user_id', userId);
-
-      if (activeChaptersError) {
+      try {
+        await mirrorUserActiveChapters(userId);
+      } catch (activeChaptersError: any) {
         console.warn('⚠️ [SyncService] Failed to pull user active chapters:', activeChaptersError.message);
-      } else if (activeChaptersData) {
-        console.log(`📡 [SyncService] Found ${activeChaptersData.length} cloud active chapters. Mirroring to SQLite...`);
-        for (const row of activeChaptersData) {
-          await db.insert(userActiveChapters).values({
-            id: row.id,
-            userId: row.user_id,
-            deckId: row.deck_id,
-            subject: row.subject,
-            status: row.status,
-            createdAt: new Date(row.created_at).getTime(),
-            updatedAt: new Date(row.updated_at).getTime(),
-          }).onConflictDoUpdate({
-            target: [userActiveChapters.userId, userActiveChapters.deckId],
-            set: {
-              status: row.status,
-              updatedAt: new Date(row.updated_at).getTime(),
-            }
-          });
-        }
       }
 
       return true;
@@ -328,35 +197,8 @@ export class SyncService {
   static async pullDecks() {
     console.log('📡 [SyncService] Refreshing Library index...');
     try {
-      const { supabase } = require('@/lib/supabase');
-      const { DatabaseService } = require('./database-service');
-
-      // Broaden search to ensure seeded decks are found
-      const { data, error } = await supabase.from('decks').select('*').eq('is_public', true);
-      if (error) throw error;
-
-      console.log(`📡 [SyncService] Cloud Scan: Found ${data?.length || 0} total decks in Supabase.`);
-
-      if (data && data.length > 0) {
-        let upsertedCount = 0;
-        for (const deck of data) {
-          // Add detailed logging
-          console.log(`📡 [SyncService] Found Deck -> Name: "${deck.name}", Category: "${deck.prep_category}", Public: ${deck.is_public}`);
-          
-          if (deck.is_public) {
-            console.log(`📡 [SyncService] Syncing metadata for: ${deck.name} (ID: ${deck.id})`);
-            // We ONLY sync metadata here. 
-            // The actual cards (Stage C) are downloaded on-demand when the user clicks "Start Revision"
-            await DatabaseService.upsertDeck(deck, []);
-            upsertedCount++;
-          } else {
-             console.log(`📡 [SyncService] SKIPPED: ${deck.name} is NOT public.`);
-          }
-        }
-        console.log(`📡 [SyncService] Successfully saved ${upsertedCount} decks to local SQLite.`);
-      } else {
-        console.log(`📡 [SyncService] Supabase returned 0 decks.`);
-      }
+      const { useUserStore } = require('@/store/user-store');
+      await mirrorPublicDecks(useUserStore.getState().user?.prepFocus);
       return true;
     } catch (e: any) {
       console.error('❌ [SyncService] pullDecks failed:', e.message);
@@ -368,58 +210,17 @@ export class SyncService {
    * STAGE C: Full atomic download of a specific deck (Cards + Images)
    */
   static async downloadDeckContent(deckId: string) {
-    console.log(`📡 [SyncService] Downloading full content for deck: ${deckId}`);
-    try {
-      const { supabase } = require('@/lib/supabase');
-      const { DatabaseService } = require('./database-service');
+    const success = await downloadDeckContentHelper(deckId);
 
-      // 1. Fetch Cards
-      console.log(`📡 [SyncService] Fetching flashcards for deck ${deckId}...`);
-      const { data: cards, error } = await supabase
-        .from('flashcards')
-        .select('*')
-        .eq('deck_id', deckId)
-        .eq('status', 'published');
-
-      if (error) {
-        console.error(`❌ [SyncService] Supabase error fetching cards:`, error.message);
-        throw error;
-      }
-      
-      console.log(`📡 [SyncService] Found ${cards?.length || 0} published cards for deck ${deckId}.`);
-
-      // 2. Fetch Deck Metadata to get the full object
-      const { data: deck, error: deckError } = await supabase
-        .from('decks')
-        .select('*')
-        .eq('id', deckId)
-        .eq('is_public', true)
-        .single();
-
-      if (deckError || !deck) {
-        console.error(`❌ [SyncService] Failed to fetch deck metadata for ${deckId}:`, deckError?.message);
-        return false;
-      }
-
-      // 3. Save to local SQLite (DatabaseService handles image downloading inside)
-      if (cards) {
-        await DatabaseService.upsertDeck(deck, cards);
-      }
-
-      // 4. Critical Sync Fix: Automatically pull user's historical progress and bookmarks
-      // for these cards so they don't show up with blank 0 values!
+    if (success) {
       const { useUserStore } = require('@/store/user-store');
       const userId = useUserStore.getState().user?.id;
       if (userId && userId !== 'local' && userId !== 'guest-user') {
-        console.log(`📡 [SyncService] Pulling cloud statuses to match downloaded cards...`);
         await this.pullStatuses(userId);
       }
-      
-      return true;
-    } catch (e: any) {
-      console.error(`❌ [SyncService] downloadDeckContent failed for ${deckId}:`, e.message);
-      return false;
     }
+
+    return success;
   }
 
   /**
@@ -429,59 +230,8 @@ export class SyncService {
   static async cacheDeckImages(deckId: string) {
     console.log(`📦 [SyncService] Starting background eager caching for deck: ${deckId}`);
     try {
-      const { db } = require('@/db');
-      const { flashcards } = require('@/db/schema');
-      const { eq } = require('drizzle-orm');
-      const { MediaService } = require('./media-service');
       const { useFlashcardStore } = require('@/store/flashcard-store');
-
-      // 1. Get all cards for this deck
-      const cards = await db.select().from(flashcards).where(eq(flashcards.deckId, deckId));
-      if (!cards || cards.length === 0) return;
-
-      let hasUpdates = false;
-
-      // 2. Scan and download in batches of cards
-      for (let i = 0; i < cards.length; i += 5) {
-        const cardBatch = cards.slice(i, i + 5);
-        
-        await Promise.all(cardBatch.map(async (card: any) => {
-          try {
-            const urls = card.mediaUrls ? JSON.parse(card.mediaUrls) : [];
-            if (!Array.isArray(urls) || urls.length === 0) return;
-
-            const remoteUrls = urls.filter(u => typeof u === 'string' && u.startsWith('http'));
-            if (remoteUrls.length === 0) return;
-
-            // Use the chunked downloader in MediaService to avoid overloading
-            const cachedResults = await MediaService.downloadImages(remoteUrls);
-            
-            // Re-map the original array, replacing http urls with their cached file:// counterparts if successful
-            let cardUpdated = false;
-            const updatedUrls = urls.map(u => {
-              if (typeof u === 'string' && u.startsWith('http')) {
-                // Find if this URL was successfully downloaded and cached
-                // MediaService.downloadImages preserves the order and returns local URIs or falls back to remote
-                const cachedIndex = remoteUrls.indexOf(u);
-                if (cachedIndex !== -1 && cachedResults[cachedIndex] && cachedResults[cachedIndex].startsWith('file://')) {
-                  cardUpdated = true;
-                  return cachedResults[cachedIndex];
-                }
-              }
-              return u;
-            });
-
-            if (cardUpdated) {
-              await db.update(flashcards)
-                .set({ mediaUrls: JSON.stringify(updatedUrls), updatedAt: Date.now() })
-                .where(eq(flashcards.id, card.id));
-              hasUpdates = true;
-            }
-          } catch (e) {
-            console.warn(`⚠️ [SyncService] Batch fail for card:`, e);
-          }
-        }));
-      }
+      const hasUpdates = await cacheDeckImagesHelper(deckId);
 
       // 3. If we made changes and the user is currently viewing this deck, refresh the store
       if (hasUpdates) {

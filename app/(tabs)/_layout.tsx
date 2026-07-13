@@ -1,9 +1,11 @@
 import React from "react";
-import { Tabs, useSegments, usePathname } from "expo-router";
+import { Tabs, usePathname } from "expo-router";
 import { Home, BookOpen, BarChart2 } from "lucide-react-native";
 import { View, StyleSheet, TouchableOpacity } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useThemeColors } from "@/hooks/useThemeColors";
+const TAB_BAR_CONTENT_HEIGHT = 64;
+const MIN_BOTTOM_SPACING = 8;
 
 // Custom Tab Bar Button for the Home Screen
 const HomeTabButton = (props: any) => {
@@ -49,8 +51,9 @@ const HomeTabButton = (props: any) => {
 
 
 export default function TabLayout() {
-  const colors = useThemeColors();
   const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  const bottomSpacing = Math.max(insets.bottom, MIN_BOTTOM_SPACING);
   
   // Home is active only if the exact active pathname is / or /index
   const isHomeActive = pathname === "/" || pathname === "/index";
@@ -65,12 +68,15 @@ export default function TabLayout() {
           position: 'absolute',
           backgroundColor: '#0b0c0e',
           borderTopColor: '#2a2c32',
-          height: 88,
-          paddingBottom: 30,
-          paddingTop: 10,
+          height: TAB_BAR_CONTENT_HEIGHT + bottomSpacing,
+          paddingBottom: bottomSpacing,
+          paddingTop: 8,
           borderTopWidth: 1,
           elevation: 0,
           overflow: 'visible', // Ensure popped button isn't clipped
+        },
+        tabBarItemStyle: {
+          height: TAB_BAR_CONTENT_HEIGHT,
         },
         tabBarLabelStyle: {
           fontFamily: 'Outfit_600SemiBold',

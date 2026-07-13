@@ -65,7 +65,7 @@ export const OtherSubjectsGrid: React.FC<OtherSubjectsGridProps> = ({
             iconColor = '#5e6ad2';
           }
 
-          const displayName = subj.subjectName === 'Mathematics' ? 'Maths' : subj.subjectName;
+          const displayName = subj.subjectName;
 
           return (
             <TouchableOpacity 

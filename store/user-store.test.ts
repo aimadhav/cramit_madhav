@@ -16,12 +16,14 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
   },
 }));
 
-// Mock flashcard-store and ensure it's available via require
-const mockFlashcardStore = {
-  getState: vi.fn(() => ({
-    clearStore: vi.fn(),
-  })),
-};
+// Hoist the mock because user-store imports flashcard-store statically.
+const { mockFlashcardStore } = vi.hoisted(() => ({
+  mockFlashcardStore: {
+    getState: vi.fn(() => ({
+      clearStore: vi.fn(),
+    })),
+  },
+}));
 vi.mock('./flashcard-store', () => ({
   useFlashcardStore: mockFlashcardStore,
 }));
@@ -41,6 +43,7 @@ global.localStorage = {
   removeItem: vi.fn(),
   clear: vi.fn(),
 } as any;
+(global as any).window = global;
 
 
 import { useUserStore, AppUser, OFFLINE_MODE_TOKEN } from './user-store';
@@ -121,4 +124,3 @@ describe('UserStore', () => {
     expect(state.user?.isLoggedIn).toBe(true);
   });
 });
-

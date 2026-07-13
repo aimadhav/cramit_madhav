@@ -76,7 +76,7 @@ export default function LoginScreen() {
       setIsLoading(true);
       await AuthService.signIn(email, password);
       Toast.show({ type: 'success', text1: 'Welcome back!' });
-      router.replace('/');
+      router.replace(useUserStore.getState().user?.prepFocus ? '/' : ('/onboarding' as any));
     } catch (e: any) {
       Alert.alert('Login Failed', e.message);
     } finally {
@@ -88,7 +88,9 @@ export default function LoginScreen() {
     try {
       setIsGoogleLoading(true);
       const result = await AuthService.signInWithGoogle();
-      if (result?.type === 'success') router.replace('/');
+      if (result?.type === 'success') {
+        router.replace(useUserStore.getState().user?.prepFocus ? '/' : ('/onboarding' as any));
+      }
       else if (result?.type === 'cancel') Toast.show({ type: 'info', text1: 'Cancelled' });
     } catch (e: any) {
       Alert.alert('Google Sign-In Error', e.message);

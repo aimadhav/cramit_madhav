@@ -118,11 +118,16 @@ function AppNavigatorAndDataHandler() {
       return;
     }
 
-    const currentSegment = segments[0] || null;
+    const routeSegments = segments as string[];
+    const currentSegment = routeSegments[0] || null;
+    const isOnboarding = routeSegments[0] === '(auth)' && routeSegments[1] === 'onboarding';
+    const isCloudSession = Boolean(sessionToken && sessionToken !== OFFLINE_MODE_TOKEN);
 
     if (sessionToken) {
-      // If we are logged in, make sure we are not in (auth)
-      if (currentSegment === '(auth)') {
+      // Cloud users without a preparation focus must complete onboarding first.
+      if (isCloudSession && !user?.prepFocus && !isOnboarding) {
+        router.replace('/onboarding' as any);
+      } else if (currentSegment === '(auth)' && !isOnboarding) {
         console.log('[AppLayout] Session exists, redirecting to home');
         router.replace('/');
       }

@@ -1,12 +1,13 @@
 {
   "expo": {
-    "name": "expo-app",
-    "slug": "expo-app",
+    "name": "Cramit",
+    "slug": "madhavjoshi",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
-    "userInterfaceStyle": "automatic",
+    "scheme": "cramit",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#07090d",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash-icon.png",
@@ -14,19 +15,38 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cramit.app",
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.new2.expoapp"
+      "package": "com.cramit.app",
+      "versionCode": 1
+    },
+    "androidNavigationBar": {
+      "backgroundColor": "#0b0c0e",
+      "barStyle": "light-content",
+      "enforceContrast": false
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-navigation-bar",
+        {
+          "backgroundColor": "#0b0c0e",
+          "barStyle": "light",
+          "borderColor": "#2a2c32",
+          "visibility": "visible",
+          "behavior": "inset-swipe",
+          "position": "relative"
+        }
+      ]
     ],
     "web": {
       "output": "server"
@@ -37,8 +57,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "39345d05-53fb-4dc5-ac77-89a997d4e914"
+        "projectId": "41905ad8-2918-49e2-ad5b-19084e6a1a84"
       }
-    }
+    },
+    "owner": "madhavcramits-team"
   }
 }

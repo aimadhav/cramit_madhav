@@ -5,11 +5,10 @@ import { Flame } from 'lucide-react-native';
 
 interface HomeHeaderProps {
   userName: string | null;
-  userFocus: string;
   streakDays: number;
 }
 
-export const HomeHeader: React.FC<HomeHeaderProps> = ({ userName, userFocus, streakDays }) => {
+export const HomeHeader: React.FC<HomeHeaderProps> = ({ userName, streakDays }) => {
   return (
     <View style={styles.header}>
       <View>

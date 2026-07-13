@@ -1,4 +1,3 @@
-const { PrismaClient } = require('@prisma/client');
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
@@ -11,7 +10,18 @@ if (!supabaseUrl || !supabaseServiceKey) {
 }
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
-const prisma = new PrismaClient();
+
+const baseUserRow = {
+  is_premium: false,
+  is_admin: false,
+  total_cards_studied: 0,
+  total_time_studied: 0,
+  streak_days: 0,
+  last_study_date: null,
+  role: 'student',
+  prep_focus: null,
+  phone: null,
+};
 
 async function main() {
   const email = 'beta@cramit.com';
@@ -33,12 +43,20 @@ async function main() {
     if (updateError) throw updateError;
     console.log('Password reset to password123');
 
-    await prisma.user.upsert({
-      where: { id: existingUser.id },
-      update: { email, name },
-      create: { id: existingUser.id, email, name }
-    });
-    console.log('Prisma user record verified.');
+    const { error: profileError } = await supabase
+      .from('users')
+      .upsert({
+        id: existingUser.id,
+        email,
+        name,
+        ...baseUserRow,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'id',
+      });
+
+    if (profileError) throw profileError;
+    console.log('Supabase user record verified.');
   } else {
     console.log('User not found. Creating new user...');
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -48,14 +66,25 @@ async function main() {
       user_metadata: { name }
     });
     if (authError) throw authError;
+
+    if (!authData.user) {
+      throw new Error('Auth user was not returned from Supabase.');
+    }
     
-    await prisma.user.create({
-      data: {
+    const { error: profileError } = await supabase
+      .from('users')
+      .upsert({
         id: authData.user.id,
         email: authData.user.email,
-        name: name,
-      }
-    });
+        name,
+        ...baseUserRow,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'id',
+      });
+
+    if (profileError) throw profileError;
     console.log('User created successfully.');
   }
 
@@ -69,6 +98,4 @@ main()
     console.error('❌ Script failed:', e.message);
     process.exit(1);
   })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .finally(() => {});

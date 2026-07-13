@@ -18,8 +18,7 @@ import { Gesture } from 'react-native-gesture-handler';
 
 import { useThemeColors } from "@/hooks/useThemeColors";
 import { useUserStore } from "@/store/user-store";
-import { DifficultyRating, Flashcard } from "@/types";
-import { MOCK_TEMP_CARDS } from "@/constants/mockData";
+import { DifficultyRating } from "@/types";
 
 import { StudyCompletion } from "@/components/StudyCompletion";
 import { StudyHeader } from "@/components/StudyHeader";
@@ -67,19 +66,15 @@ export default function StudySessionScreen() {
   const [noteText, setNoteText] = useState("");
   const [noteMode, setNoteMode] = useState<'read' | 'edit'>('edit');
   const [isNoteSaving, setIsNoteSaving] = useState(false);
-  const [bookmarkedCards, setBookmarkedCards] = useState<Record<string, boolean>>({});
   const [isInitializing, setIsInitializing] = useState(true);
   const [backlogCount, setBacklogCount] = useState(0);
   const [completedChapterName, setCompletedChapterName] = useState<string | null>(null);
   const cardShownTimeRef = useRef<number>(Date.now());
   
-  // Mock handling for temp decks
-  const isTempDeck = id?.startsWith('temp_') || id?.startsWith('rec_');
-  
-  // Start session on mount for real decks
+  // Start a session from the local database on mount.
   useEffect(() => {
     async function init() {
-      if (!isTempDeck && id) {
+      if (id) {
         const store = useFlashcardStore.getState();
         // If the store already has an active session pre-loaded for this ID/Subject, do not override it!
         if (store.currentDeckId === id && store.sessionQueue.length > 0) {
@@ -103,10 +98,7 @@ export default function StudySessionScreen() {
       }
     }
     init();
-  }, [id, isTempDeck, isCramMode]);
-
-  const tempCards = MOCK_TEMP_CARDS;
-  const [tempCurrentIndex, setTempCurrentIndex] = useState(0);
+  }, [id, isCramMode]);
 
   // Animation values
   const translateX = useSharedValue(0);
@@ -116,37 +108,26 @@ export default function StudySessionScreen() {
   
   // Get current card
   const currentCard = useMemo(() => {
-    if (isTempDeck) {
-      return (tempCurrentIndex < tempCards.length ? tempCards[tempCurrentIndex] : null) as Flashcard | null;
-    }
     if (!studyProgress || sessionQueue.length === 0) return null;
     if (studyProgress.currentCardIndex >= sessionQueue.length) return null;
     
-    // Always check for real cards first, then fallback to mock for quick prep
     const cardId = sessionQueue[studyProgress.currentCardIndex];
-    const realCard = flashcards.find(f => f.id === cardId);
-    
-    if (realCard) return realCard;
-    
-    // Fallback for Quick Prep mock cards
-    return (tempCards.find(f => f.id === cardId) || null) as Flashcard | null;
-  }, [isTempDeck, tempCurrentIndex, studyProgress, sessionQueue, flashcards]);
+    return flashcards.find(f => f.id === cardId) || null;
+  }, [studyProgress, sessionQueue, flashcards]);
   
   // Check if session is complete
-  const isSessionComplete = isTempDeck 
-    ? (tempCurrentIndex >= tempCards.length)
-    : (!currentCard && studyProgress && !isInitializing && studyProgress.cardsLeft === 0);
+  const isSessionComplete = !currentCard && !!studyProgress && !isInitializing && studyProgress.cardsLeft === 0;
 
   const isCurrentBookmarked = useMemo(() => {
     if (!currentCard) return false;
-    return isTempDeck ? !!bookmarkedCards[currentCard.id] : !!currentCard.isBookmarked;
-  }, [currentCard, isTempDeck, bookmarkedCards]);
+    return !!currentCard.isBookmarked;
+  }, [currentCard]);
 
   const hasNote = currentCard ? !!currentCard.notes : false;
 
   // Sync progress when session finishes
   useEffect(() => {
-    if (isSessionComplete && !isTempDeck && !isCramMode) {
+    if (isSessionComplete && !isCramMode) {
       syncSessionProgress();
 
       // Query backlog count and completed chapters for congratulations screen prompts
@@ -197,17 +178,15 @@ export default function StudySessionScreen() {
       }
       checkPostSessionStats();
     }
-  }, [isSessionComplete, isTempDeck]);
+  }, [isSessionComplete, isCramMode, syncSessionProgress, userId, id]);
   
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (!isTempDeck) {
-        const sessionDuration = Math.ceil((Date.now() - sessionStartTime) / 60000);
-        const cardsStudied = studyProgress?.cardsStudied || 0;
-        updateStudyStats(sessionDuration, cardsStudied);
-        endStudySession();
-      }
+      const sessionDuration = Math.ceil((Date.now() - sessionStartTime) / 60000);
+      const cardsStudied = studyProgress?.cardsStudied || 0;
+      updateStudyStats(sessionDuration, cardsStudied);
+      endStudySession();
     };
   }, []);
   
@@ -227,7 +206,7 @@ export default function StudySessionScreen() {
       // Reset the response timer for the newly visible card
       cardShownTimeRef.current = Date.now();
     }
-  }, [currentCard?.id, tempCurrentIndex]);
+  }, [currentCard?.id]);
 
   // Handle rating a card
   const handleRateCard = useCallback(async (rating: DifficultyRating) => {
@@ -238,44 +217,34 @@ export default function StudySessionScreen() {
     setIsRating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    if (isTempDeck) {
-      setTempCurrentIndex(prev => prev + 1);
+    try {
+      await rateCard(currentCard.id, rating, { updateFSRS: !isCramMode, responseTimeMs });
+      getNextCardFromStore();
       setSwipeDirection(null);
       setIsRating(false);
-    } else {
-      try {
-        await rateCard(currentCard.id, rating, { updateFSRS: !isCramMode, responseTimeMs });
-        getNextCardFromStore();
-        setSwipeDirection(null);
-        setIsRating(false);
-      } catch (error) {
-        console.error("Error rating card:", error);
-        setIsRating(false);
-      }
+    } catch (error) {
+      console.error("Error rating card:", error);
+      setIsRating(false);
     }
-  }, [currentCard, isRating, rateCard, getNextCardFromStore, isTempDeck, isCramMode]);
+  }, [currentCard, isRating, rateCard, getNextCardFromStore, isCramMode]);
   
   // Handle bookmark toggle
   const handleToggleBookmark = useCallback(async () => {
     if (!currentCard) return;
     console.log('📱 [UI] Toggle Bookmark clicked for card:', currentCard.id);
     try {
-      if (isTempDeck) {
-        setBookmarkedCards(prev => ({ ...prev, [currentCard.id]: !prev[currentCard.id] }));
-      } else {
-        await toggleBookmark(currentCard.id);
-      }
+      await toggleBookmark(currentCard.id);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (error) {
       Alert.alert("Error", "Failed to update bookmark.");
     }
-  }, [currentCard, toggleBookmark, isTempDeck]);
+  }, [currentCard, toggleBookmark]);
 
   // Handle exit
   const handleExit = useCallback(() => {
-    if (!isTempDeck) endStudySession();
+    endStudySession();
     router.back();
-  }, [endStudySession, router, isTempDeck]);
+  }, [endStudySession, router]);
 
   // Gesture handler for swipe
   const gesture = Gesture.Pan()
@@ -357,7 +326,7 @@ export default function StudySessionScreen() {
   const containsLatex = (text: string) => text.includes('$') || text.includes('\\');
 
   console.log('📱 [StudySessionScreen] Debug Stats:', {
-    currentCardId: !isTempDeck && studyProgress && sessionQueue.length > 0 && studyProgress.currentCardIndex < sessionQueue.length ? sessionQueue[studyProgress.currentCardIndex] : null,
+    currentCardId: studyProgress && sessionQueue.length > 0 && studyProgress.currentCardIndex < sessionQueue.length ? sessionQueue[studyProgress.currentCardIndex] : null,
     currentCard: currentCard ? { id: currentCard.id, front: currentCard.front?.substring(0, 30) } : null,
     cardsLeft: studyProgress?.cardsLeft,
     currentCardIndex: studyProgress?.currentCardIndex,
@@ -388,12 +357,8 @@ export default function StudySessionScreen() {
           {/* Header - Completely Hidden in Full View */}
           {!isFullView && (
             <StudyHeader
-              title={isTempDeck ? "Quick Prep Session" : (decks.find(d => d.id === id)?.name || "Study")}
-              progressPercent={
-                isTempDeck 
-                  ? (tempCurrentIndex / tempCards.length) * 100
-                  : ((studyProgress?.cardsStudied || 0) / ((studyProgress?.cardsStudied || 0) + (studyProgress?.cardsLeft || 0))) * 100
-              }
+              title={decks.find(d => d.id === id)?.name || "Study"}
+              progressPercent={((studyProgress?.cardsStudied || 0) / ((studyProgress?.cardsStudied || 0) + (studyProgress?.cardsLeft || 0))) * 100}
               onExit={handleExit}
             />
           )}
@@ -442,9 +407,7 @@ export default function StudySessionScreen() {
             onSaveNote={() => {
               if (currentCard) {
                 setIsNoteSaving(true);
-                if (!isTempDeck) {
-                  updateCardNote(currentCard.id, noteText);
-                }
+                updateCardNote(currentCard.id, noteText);
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 setTimeout(() => {
                   setIsNoteSaving(false);

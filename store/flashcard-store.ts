@@ -105,18 +105,15 @@ export const useFlashcardStore = create<FlashcardState>()(
         
         set({ isLoading: true, currentDeckId: deckId });
         try {
-          const knownSubjects = ['Physics', 'Chemistry', 'Mathematics', 'Biology', 'Chemistry', 'Maths', 'DSA', 'DBMS', 'Operating Systems', 'OOP', 'Computer Networks'];
-          const isSubject = knownSubjects.some(s => s.toLowerCase() === deckId.toLowerCase());
-
           let cardsWithStatus = [];
-          if (isSubject) {
+          const subjectDecks = get().decks.filter(d =>
+            d.subject && d.subject.toLowerCase() === deckId.toLowerCase()
+          );
+
+          if (subjectDecks.length > 0) {
             const { db } = require('@/db');
             const { eq, and, inArray } = require('drizzle-orm');
             const { flashcards, userFlashcardStatus } = require('@/db/schema');
-
-            const subjectDecks = get().decks.filter(d => 
-              d.subject && d.subject.toLowerCase() === deckId.toLowerCase()
-            );
 
             if (subjectDecks.length > 0) {
               const deckIds = subjectDecks.map((d: any) => d.id);
@@ -333,8 +330,12 @@ export const useFlashcardStore = create<FlashcardState>()(
 
       getDeckCompletionRate: (deckId: string) => {
         const deck = get().decks.find(d => d.id === deckId);
-        if (!deck || deck.cardCount === 0) return 0;
-        return 0; 
+        const totalCards = deck?.cardCount || 0;
+        if (totalCards === 0) return 0;
+
+        const dueCards = Math.max(0, (deck as any).dueCount || 0);
+        const completedCards = Math.max(0, totalCards - dueCards);
+        return Math.min(100, Math.round((completedCards / totalCards) * 100));
       },
 
       getTotalCardsStudied: () => {
@@ -393,5 +394,3 @@ export const useFlashcardStore = create<FlashcardState>()(
     }
   )
 );
-
-

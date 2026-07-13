@@ -12,12 +12,7 @@ import { CramFilters } from "@/components/CramFilters";
 import { CramChapterList } from "@/components/CramChapterList";
 import { CramActionFooter } from "@/components/CramActionFooter";
 import { UnifiedAlertModal } from "@/components/UnifiedAlertModal";
-
-const EXAM_SUBJECTS: Record<string, string[]> = {
-  'JEE': ['Physics', 'Chemistry', 'Mathematics'],
-  'NEET': ['Physics', 'Chemistry', 'Biology'],
-  'Computer Science': ['DSA', 'DBMS', 'Operating Systems', 'OOP', 'Computer Networks']
-};
+import { isSubjectAllowedForPrepFocus } from '@/constants/examSubjects';
 
 export default function DecksScreen() {
   const router = useRouter();
@@ -25,18 +20,27 @@ export default function DecksScreen() {
   const styles = React.useMemo(() => createStyles(colors), [colors]);
 
   const { user } = useUserStore();
-  const userFocus = user?.prepFocus || 'JEE';
-  const subjects = useMemo(() => EXAM_SUBJECTS[userFocus] || EXAM_SUBJECTS['JEE'], [userFocus]);
+  const decks = useFlashcardStore(state => state.decks);
+  const userFocus = user?.prepFocus || null;
+  const subjects = useMemo(() => {
+    return Array.from(new Set(decks
+      .filter((deck) => isSubjectAllowedForPrepFocus(deck.subject, userFocus))
+      .map((deck) => deck.subject!.trim())
+      .filter(Boolean)));
+  }, [decks, userFocus]);
 
-  const [selectedSubject, setSelectedSubject] = useState<string>(subjects[0] || 'Physics');
+  const [selectedSubject, setSelectedSubject] = useState<string>(subjects[0] || '');
   const [selectedContentTypes, setSelectedContentTypes] = useState<string[]>([]);
   const [selectedChapters, setSelectedChapters] = useState<string[]>([]);
   const [isLaunching, setIsLaunching] = useState(false);
   const [downloadingChapterId, setDownloadingChapterId] = useState<string | null>(null);
   const [localSubjectCards, setLocalSubjectCards] = useState<any[]>([]);
 
-  const decks = useFlashcardStore(state => state.decks);
   const userId = user?.id || 'local';
+
+  useEffect(() => {
+    setSelectedSubject((current) => subjects.includes(current) ? current : (subjects[0] || ''));
+  }, [subjects]);
 
   // Real SQLite chapters (decks) filtered for the selected subject
   const chapters = useMemo(() => {

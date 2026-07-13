@@ -19,19 +19,16 @@ export class StudyService {
 
     let activeDeckIds: string[] = [];
 
-    // Support both single deck/chapter ID and subject-based dynamic views
-    const knownSubjects = ['Physics', 'Chemistry', 'Mathematics', 'Biology', 'Chemistry', 'Maths', 'DSA', 'DBMS', 'Operating Systems', 'OOP', 'Computer Networks'];
-    const isSubject = knownSubjects.some(
-      s => s.toLowerCase() === deckIdOrSubject.toLowerCase()
-    );
+    // Support both a single deck/chapter ID and a subject-based dynamic view.
+    const matchingSubjectDecks = await db.select({ id: decks.id })
+      .from(decks)
+      .where(eq(sql`lower(${decks.subject})`, deckIdOrSubject.toLowerCase()));
+    const isSubject = matchingSubjectDecks.length > 0;
 
     if (isSubject) {
       if (isCramMode) {
         // Cram mode pulls cards from ALL chapters of the subject
-        const subjectDecks = await db.select({ id: decks.id })
-          .from(decks)
-          .where(eq(sql`lower(${decks.subject})`, deckIdOrSubject.toLowerCase()));
-        activeDeckIds = subjectDecks.map((d: any) => d.id);
+        activeDeckIds = matchingSubjectDecks.map((d: any) => d.id);
       } else {
         // Main deck daily progression strictly filters by selected active chapters
         activeDeckIds = await DatabaseService.getActiveChapterIds(userId, deckIdOrSubject);

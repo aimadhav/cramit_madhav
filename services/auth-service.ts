@@ -5,6 +5,15 @@ import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
 
 export class AuthService {
+  private static getAuthCodeFromUrl(url: string) {
+    const parsedUrl = new URL(url);
+    const queryCode = parsedUrl.searchParams.get('code');
+    if (queryCode) return queryCode;
+
+    const hashParams = new URLSearchParams(parsedUrl.hash.substring(1));
+    return hashParams.get('code');
+  }
+
   /**
    * Standard Email/Password Login
    */
@@ -27,15 +36,13 @@ export class AuthService {
    * Google OAuth Login
    */
   static async signInWithGoogle() {
-    // 1. Generate the Redirect URI
-    // For Expo Go, we use a simpler approach that works better with Supabase validation
+    // Native/EAS builds use one stable callback shared by both developers.
     const redirectUri = makeRedirectUri({
-      scheme: 'myapp',
+      native: 'cramit://auth/callback',
+      scheme: 'cramit',
       path: 'auth/callback',
     });
 
-    // If we are in Expo Go, the actual URI might look like exp://...
-    // But we want to tell Supabase to send it back to our custom scheme if possible
     console.log('🔗 [OAuth] Generated Redirect URI:', redirectUri);
 
     const { data, error } = await supabase.auth.signInWithOAuth({
@@ -54,35 +61,48 @@ export class AuthService {
 
     if (result.type === 'success' && result.url) {
       console.log('✅ [OAuth] Browser returned success.');
-      const url = new URL(result.url);
-      
-      // Some browsers return params in the hash (#) and others in the search (?)
-      // We parse both and merge them
-      const hashParams = new URLSearchParams(url.hash.substring(1));
-      const queryParams = new URLSearchParams(url.search);
-      
-      const access_token = hashParams.get('access_token') || queryParams.get('access_token');
-      const refresh_token = hashParams.get('refresh_token') || queryParams.get('refresh_token');
+      const authCode = this.getAuthCodeFromUrl(result.url);
 
-      if (!access_token) {
-        console.error('❌ [OAuth] Access token missing in return URL');
-        throw new Error('Could not retrieve tokens from Google.');
-      }
+      if (authCode) {
+        console.log('🚀 [OAuth] Exchanging auth code for session...');
+        const { data: sessionData, error: sessionError } = await supabase.auth.exchangeCodeForSession(authCode);
 
-      console.log('🚀 [OAuth] Setting Supabase session...');
-      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-        access_token,
-        refresh_token: refresh_token || '',
-      });
+        if (sessionError) {
+          console.error('❌ [OAuth] exchangeCodeForSession error:', sessionError.message);
+          throw sessionError;
+        }
 
-      if (sessionError) {
-        console.error('❌ [OAuth] setSession error:', sessionError.message);
-        throw sessionError;
-      }
-      
-      if (sessionData.user && sessionData.session) {
-        console.log('🎉 [OAuth] Session verified for:', sessionData.user.email);
-        await this.establishSession(sessionData.session, sessionData.user);
+        if (sessionData.user && sessionData.session) {
+          console.log('🎉 [OAuth] Session verified for:', sessionData.user.email);
+          await this.establishSession(sessionData.session, sessionData.user);
+        }
+      } else {
+        const url = new URL(result.url);
+        const hashParams = new URLSearchParams(url.hash.substring(1));
+        const queryParams = new URLSearchParams(url.search);
+        const access_token = hashParams.get('access_token') || queryParams.get('access_token');
+        const refresh_token = hashParams.get('refresh_token') || queryParams.get('refresh_token');
+
+        if (!access_token) {
+          console.error('❌ [OAuth] Access token missing in return URL');
+          throw new Error('Could not retrieve tokens from Google.');
+        }
+
+        console.log('🚀 [OAuth] Setting Supabase session...');
+        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+          access_token,
+          refresh_token: refresh_token || '',
+        });
+
+        if (sessionError) {
+          console.error('❌ [OAuth] setSession error:', sessionError.message);
+          throw sessionError;
+        }
+
+        if (sessionData.user && sessionData.session) {
+          console.log('🎉 [OAuth] Session verified for:', sessionData.user.email);
+          await this.establishSession(sessionData.session, sessionData.user);
+        }
       }
     } else {
       console.log('ℹ️ [OAuth] Browser session result:', result.type);
@@ -111,6 +131,28 @@ export class AuthService {
     return data;
   }
 
+  /** Save the user's preparation focus in Supabase auth metadata. */
+  static async updatePrepFocus(prepFocus: string) {
+    const { data, error } = await supabase.auth.updateUser({
+      data: { prep_focus: prepFocus },
+    });
+
+    if (error) throw error;
+
+    const { error: profileError } = await supabase
+      .from('users')
+      .update({
+        prep_focus: prepFocus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', data.user.id);
+
+    if (profileError) throw profileError;
+
+    useUserStore.getState().updateUser({ prepFocus });
+    return data.user;
+  }
+
   /**
    * Helper to map Supabase User to our AppUser type
    */
@@ -129,7 +171,7 @@ export class AuthService {
       lastStudyDate: null,
       ownedDecks: [],
       phone: user.phone || undefined,
-      role: user.user_metadata?.role || 'student', // Fallback, real sync handles it
+      role: user.app_metadata?.role || 'student', // Roles must not come from user-editable metadata
       prepFocus: user.user_metadata?.prep_focus || null,
     };
   }

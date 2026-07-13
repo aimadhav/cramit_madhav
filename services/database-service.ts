@@ -1,32 +1,22 @@
 import { db } from '@/db';
 import * as schema from '@/db/schema';
-import { eq, and, sql, desc, lte, isNull } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 import { MediaService } from './media-service';
+import { safeParseJsonArray, toStoredJson } from './database-content';
+import { buildCardsByDeck, buildDeckSummary } from './database-deck-summary';
+import { getDeckWithCards as getDeckWithCardsQuery } from './database-cards';
+import {
+  saveReview as saveReviewWrite,
+  toggleBookmark as toggleBookmarkWrite,
+  updateNote as updateNoteWrite,
+  addActiveChapter as addActiveChapterWrite,
+  completeActiveChapter as completeActiveChapterWrite,
+  getActiveChapterIds as getActiveChapterIdsWrite,
+} from './database-status-writes';
 
 export class DatabaseService {
   
-  private static async addToSyncQueue(
-    operation: 'CREATE' | 'UPDATE' | 'DELETE' | 'REVIEW',
-    entityType: 'deck' | 'card_status' | 'review' | 'active_chapter',
-    entityId: string,
-    payload: any,
-    tx?: any
-  ) {
-    const now = Date.now();
-    const executor = tx || db;
-    await executor.insert(schema.syncQueue).values({
-      id: Crypto.randomUUID(),
-      operation,
-      entityType,
-      entityId,
-      payload: JSON.stringify(payload),
-      status: 'pending',
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
-
   static async getAllDecks(userId: string) {
     const now = Date.now();
     
@@ -51,13 +41,7 @@ export class DatabaseService {
         .from(schema.userFlashcardStatus)
         .where(eq(schema.userFlashcardStatus.userId, userId));
 
-      // Build lookup maps for O(1) access
-      const cardsByDeck = new Map<string, any[]>();
-      allCards.forEach(card => {
-        const existing = cardsByDeck.get(card.deckId) || [];
-        existing.push(card);
-        cardsByDeck.set(card.deckId, existing);
-      });
+      const cardsByDeck = buildCardsByDeck(allCards);
 
       const reviewedCardIds = new Set(allStatusForUser.map(s => s.flashcardId));
       const dueCardIds = new Set(
@@ -66,29 +50,7 @@ export class DatabaseService {
           .map(s => s.flashcardId)
       );
 
-      const enhancedDecks = allDecks.map((deck) => {
-        const deckCards = cardsByDeck.get(deck.id) || [];
-        const totalCards = deckCards.length;
-
-        const dueInThisDeck = deckCards.filter(c => dueCardIds.has(c.id)).length;
-        const newInThisDeck = deckCards.filter(c => !reviewedCardIds.has(c.id)).length;
-
-        const finalDueCount = dueInThisDeck + newInThisDeck;
-
-        let tags = [];
-        try {
-          tags = JSON.parse(deck.tags || '[]');
-        } catch (e) {
-          tags = [];
-        }
-
-        return {
-          ...deck,
-          cardCount: totalCards,
-          dueCount: finalDueCount,
-          tags: tags,
-        };
-      });
+      const enhancedDecks = allDecks.map((deck) => buildDeckSummary(deck, now, cardsByDeck, reviewedCardIds, dueCardIds));
 
       return enhancedDecks;
     } catch (e: any) {
@@ -118,9 +80,9 @@ export class DatabaseService {
       if (localCover) coverImage = localCover;
     }
 
-    const tags = deck.tags_json 
-      ? (typeof deck.tags_json === 'string' ? JSON.parse(deck.tags_json) : deck.tags_json)
-      : (deck.tags || []);
+    const tags = deck.tags_json
+      ? safeParseJsonArray(deck.tags_json, [])
+      : safeParseJsonArray(deck.tags, []);
 
     // Process image downloads in chunks to avoid unbounded concurrency (rate-limiting/timeouts)
     const processedFlashcards: any[] = [];
@@ -129,13 +91,7 @@ export class DatabaseService {
     for (let i = 0; i < flashcards.length; i += chunkSize) {
       const chunk = flashcards.slice(i, i + chunkSize);
       const processedChunk = await Promise.all(chunk.map(async (fc) => {
-        let mediaUrls: string[] = [];
-        const rawMediaUrls = fc.media_urls_json ?? fc.mediaUrls ?? '[]';
-        try {
-          mediaUrls = typeof rawMediaUrls === 'string' ? JSON.parse(rawMediaUrls) : rawMediaUrls;
-        } catch {
-          mediaUrls = [];
-        }
+        let mediaUrls: string[] = safeParseJsonArray<string>(fc.media_urls_json ?? fc.mediaUrls, []);
 
         if (Array.isArray(mediaUrls) && mediaUrls.length > 0) {
           mediaUrls = await MediaService.downloadImages(mediaUrls);
@@ -143,12 +99,12 @@ export class DatabaseService {
 
         const contentType = fc.content_type || fc.contentType || 'text';
         
-        let frontContent = fc.front_content 
-          ? (typeof fc.front_content === 'string' ? fc.front_content : JSON.stringify(fc.front_content))
+        const frontContent = fc.front_content
+          ? toStoredJson(fc.front_content, fc.frontContent || JSON.stringify([{ type: contentType, value: fc.front }]))
           : fc.frontContent || JSON.stringify([{ type: contentType, value: fc.front }]);
-          
-        let backContent = fc.back_content
-          ? (typeof fc.back_content === 'string' ? fc.back_content : JSON.stringify(fc.back_content))
+
+        const backContent = fc.back_content
+          ? toStoredJson(fc.back_content, fc.backContent || JSON.stringify([{ type: contentType, value: fc.back }]))
           : fc.backContent || JSON.stringify([{ type: contentType, value: fc.back }]);
 
         const tags = fc.tags_json 
@@ -181,7 +137,7 @@ export class DatabaseService {
         isPublic: deck.is_public ?? true,
         prepCategory: deck.prep_category || deck.prepCategory || null,
         userId: deck.user_id || deck.userId || 'system',
-        tags: JSON.stringify(tags),
+        tags: toStoredJson(tags, '[]'),
         createdAt: deck.created_at || deck.createdAt || now,
         updatedAt: now,
         deletedAt: null
@@ -208,7 +164,7 @@ export class DatabaseService {
             frontContent: fc.frontContent,
             backContent: fc.backContent,
             startingStability: fc.starting_stability != null ? parseFloat(fc.starting_stability) : (fc.startingStability ?? 0),
-            mediaUrls: JSON.stringify(fc.mediaUrls),
+            mediaUrls: toStoredJson(fc.mediaUrls, '[]'),
             tags: fc.tags || '[]',
             createdAt: fc.createdAt || fc.created_at || now,
             updatedAt: fc.updatedAt || fc.updated_at || now,
@@ -219,7 +175,7 @@ export class DatabaseService {
               frontContent: fc.frontContent,
               backContent: fc.backContent,
               startingStability: fc.starting_stability != null ? parseFloat(fc.starting_stability) : (fc.startingStability ?? 0),
-              mediaUrls: JSON.stringify(fc.mediaUrls),
+              mediaUrls: toStoredJson(fc.mediaUrls, '[]'),
               tags: fc.tags || '[]',
               updatedAt: now,
             }
@@ -232,21 +188,7 @@ export class DatabaseService {
   }
 
   static async getDeckWithCards(deckId: string, userId: string) {
-    const cards = await db.select({
-      card: schema.flashcards,
-      status: schema.userFlashcardStatus
-    })
-    .from(schema.flashcards)
-    .leftJoin(
-      schema.userFlashcardStatus, 
-      and(
-        eq(schema.flashcards.id, schema.userFlashcardStatus.flashcardId),
-        eq(schema.userFlashcardStatus.userId, userId)
-      )
-    )
-    .where(eq(schema.flashcards.deckId, deckId));
-
-    return cards;
+    return getDeckWithCardsQuery(deckId, userId);
   }
 
   static async saveReview(reviewData: {
@@ -256,196 +198,27 @@ export class DatabaseService {
     newStatus: any;
     responseTimeMs?: number;
   }) {
-    const now = Date.now();
-    const reviewId = Crypto.randomUUID();
-
-    const isLeft = reviewData.rating === 1;
-    const leftAdd = isLeft ? 1 : 0;
-    const rightAdd = isLeft ? 0 : 1;
-    const direction = isLeft ? 'left' : 'right';
-
-    await db.transaction(async (tx) => {
-      await tx.insert(schema.reviews).values({
-        id: reviewId,
-        flashcardId: reviewData.flashcardId,
-        userId: reviewData.userId,
-        rating: reviewData.rating,
-        reviewedAt: now,
-        responseTimeMs: reviewData.responseTimeMs,
-        previousStability: reviewData.newStatus.previousStability,
-        newStability: reviewData.newStatus.stability,
-        previousDifficulty: reviewData.newStatus.previousDifficulty,
-        newDifficulty: reviewData.newStatus.difficulty,
-        createdAt: now,
-        updatedAt: now,
-        deletedAt: null
-      });
-
-      await tx.insert(schema.userFlashcardStatus).values({
-        id: Crypto.randomUUID(),
-        userId: reviewData.userId,
-        flashcardId: reviewData.flashcardId,
-        interval: reviewData.newStatus.interval,
-        stability: reviewData.newStatus.stability,
-        difficulty: reviewData.newStatus.difficulty,
-        repetitions: reviewData.newStatus.repetitions,
-        due_date: reviewData.newStatus.dueDate,
-        lastReviewed: now,
-        leftSwipes: leftAdd,
-        rightSwipes: rightAdd,
-        lastSwipeDirection: direction,
-        updatedAt: now,
-        createdAt: now,
-        deletedAt: null
-      }).onConflictDoUpdate({
-        target: [schema.userFlashcardStatus.userId, schema.userFlashcardStatus.flashcardId],
-        set: {
-          interval: reviewData.newStatus.interval,
-          stability: reviewData.newStatus.stability,
-          difficulty: reviewData.newStatus.difficulty,
-          repetitions: reviewData.newStatus.repetitions,
-          due_date: reviewData.newStatus.dueDate,
-          lastReviewed: now,
-          leftSwipes: sql`coalesce(${schema.userFlashcardStatus.leftSwipes}, 0) + ${leftAdd}`,
-          rightSwipes: sql`coalesce(${schema.userFlashcardStatus.rightSwipes}, 0) + ${rightAdd}`,
-          lastSwipeDirection: direction,
-          updatedAt: now,
-        }
-      });
-
-      await this.addToSyncQueue('REVIEW', 'card_status', reviewData.flashcardId, {
-        rating: reviewData.rating,
-        reviewedAt: now,
-        ...reviewData.newStatus
-      }, tx);
-    });
+    return saveReviewWrite(reviewData);
   }
 
   static async toggleBookmark(cardId: string, userId: string, isBookmarked: boolean) {
-    const now = Date.now();
-    
-    await db.transaction(async (tx) => {
-      await tx.insert(schema.userFlashcardStatus).values({
-        id: Crypto.randomUUID(),
-        userId,
-        flashcardId: cardId,
-        isBookmarked,
-        due_date: now,
-        createdAt: now,
-        updatedAt: now,
-        deletedAt: null
-      }).onConflictDoUpdate({
-        target: [schema.userFlashcardStatus.userId, schema.userFlashcardStatus.flashcardId],
-        set: {
-          isBookmarked,
-          updatedAt: now,
-        }
-      });
-
-      await this.addToSyncQueue('UPDATE', 'card_status', cardId, { isBookmarked }, tx);
-    });
+    return toggleBookmarkWrite(cardId, userId, isBookmarked);
   }
 
   static async updateNote(cardId: string, userId: string, notes: string) {
-    const now = Date.now();
-    
-    await db.transaction(async (tx) => {
-      await tx.insert(schema.userFlashcardStatus).values({
-        id: Crypto.randomUUID(),
-        userId,
-        flashcardId: cardId,
-        notes,
-        due_date: now,
-        createdAt: now,
-        updatedAt: now,
-        deletedAt: null
-      }).onConflictDoUpdate({
-        target: [schema.userFlashcardStatus.userId, schema.userFlashcardStatus.flashcardId],
-        set: {
-          notes,
-          updatedAt: now,
-        }
-      });
-
-      await this.addToSyncQueue('UPDATE', 'card_status', cardId, { notes }, tx);
-    });
+    return updateNoteWrite(cardId, userId, notes);
   }
 
   static async addActiveChapter(userId: string, deckId: string, subject: string) {
-    const now = Date.now();
-    const id = Crypto.randomUUID();
-    
-    await db.transaction(async (tx) => {
-      await tx.insert(schema.userActiveChapters).values({
-        id,
-        userId,
-        deckId,
-        subject,
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-      }).onConflictDoUpdate({
-        target: [schema.userActiveChapters.userId, schema.userActiveChapters.deckId],
-        set: {
-          status: 'active',
-          updatedAt: now,
-        }
-      });
-
-      await this.addToSyncQueue('CREATE', 'active_chapter', deckId, { subject, status: 'active' }, tx);
-    });
+    return addActiveChapterWrite(userId, deckId, subject);
   }
 
   static async completeActiveChapter(userId: string, deckId: string) {
-    const now = Date.now();
-    
-    await db.transaction(async (tx) => {
-      await tx.update(schema.userActiveChapters)
-        .set({ status: 'completed', updatedAt: now })
-        .where(
-          and(
-            eq(schema.userActiveChapters.userId, userId),
-            eq(schema.userActiveChapters.deckId, deckId)
-          )
-        );
-
-      await this.addToSyncQueue('UPDATE', 'active_chapter', deckId, { status: 'completed' }, tx);
-    });
+    return completeActiveChapterWrite(userId, deckId);
   }
 
   static async getActiveChapterIds(userId: string, subject: string): Promise<string[]> {
-    const results = await db.select({ deckId: schema.userActiveChapters.deckId })
-      .from(schema.userActiveChapters)
-      .where(
-        and(
-          eq(schema.userActiveChapters.userId, userId),
-          eq(schema.userActiveChapters.subject, subject),
-          eq(schema.userActiveChapters.status, 'active')
-        )
-      );
-    return results.map(r => r.deckId);
+    return getActiveChapterIdsWrite(userId, subject);
   }
 
-  static async getDebugCardData(userId: string) {
-    if (!__DEV__) return [];
-    
-    return await db.select({
-      id: schema.flashcards.id,
-      front: schema.flashcards.frontContent,
-      isBookmarked: schema.userFlashcardStatus.isBookmarked,
-      notes: schema.userFlashcardStatus.notes,
-      stability: schema.userFlashcardStatus.stability,
-      difficulty: schema.userFlashcardStatus.difficulty,
-      repetitions: schema.userFlashcardStatus.repetitions,
-      dueDate: schema.userFlashcardStatus.due_date,
-    })
-    .from(schema.flashcards)
-    .leftJoin(
-      schema.userFlashcardStatus,
-      and(
-        eq(schema.flashcards.id, schema.userFlashcardStatus.flashcardId),
-        eq(schema.userFlashcardStatus.userId, userId)
-      )
-    );
-  }
 }

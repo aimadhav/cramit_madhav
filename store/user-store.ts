@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store'; 
 import { Platform } from 'react-native';
 import { getSafeStorage } from '@/utils/safe-storage';
+import { useFlashcardStore } from './flashcard-store';
 
 export interface AppUser {
   id: string;
@@ -84,7 +85,6 @@ export const useUserStore = create<UserState>()(
         if (currentUser && currentUser.id !== userData.id) {
           console.log('🧹 [UserStore] New user ID detected, clearing flashcard store');
           try {
-            const { useFlashcardStore } = require('./flashcard-store');
             useFlashcardStore.getState().clearStore();
           } catch (e) {
             console.error('Failed to clear FlashcardStore during user switch:', e);
@@ -137,7 +137,6 @@ export const useUserStore = create<UserState>()(
         
         // Clear FlashcardStore as well!
         try {
-          const { useFlashcardStore } = require('./flashcard-store');
           useFlashcardStore.getState().clearStore();
         } catch (e) {
           console.error('Failed to clear FlashcardStore during logout:', e);
@@ -166,7 +165,6 @@ export const useUserStore = create<UserState>()(
         
         // Clear flashcard store for clean offline session
         try {
-          const { useFlashcardStore } = require('./flashcard-store');
           useFlashcardStore.getState().clearStore();
         } catch (e) {
           console.error('Failed to clear FlashcardStore during offline login:', e);
