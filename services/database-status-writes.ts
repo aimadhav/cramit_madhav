@@ -92,8 +92,10 @@ export async function saveReview(reviewData: {
     });
 
     await addToSyncQueue('REVIEW', 'card_status', reviewData.flashcardId, {
+      reviewId,
       rating: reviewData.rating,
       reviewedAt: now,
+      responseTimeMs: reviewData.responseTimeMs,
       ...reviewData.newStatus
     }, tx);
   });

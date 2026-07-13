@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import { Text } from './AppText';
-import { Info } from 'lucide-react-native';
+import { getSubjectAccentColor, SubjectIcon } from './SubjectIcon';
 
 const { width } = Dimensions.get('window');
 
@@ -22,7 +22,6 @@ interface OtherSubjectsGridProps {
   onStartSession: (subject: string) => Promise<void>;
   onConfigureChapters: (subject: string, currentlyActive: string[]) => void;
   onShowActiveChaptersInfo: (subjectName: string, activeIds: string[]) => void;
-  getSubjectIcon: (subject: string, size?: number, color?: string) => React.ReactNode;
 }
 
 export const OtherSubjectsGrid: React.FC<OtherSubjectsGridProps> = ({
@@ -30,7 +29,6 @@ export const OtherSubjectsGrid: React.FC<OtherSubjectsGridProps> = ({
   onStartSession,
   onConfigureChapters,
   onShowActiveChaptersInfo,
-  getSubjectIcon,
 }) => {
   if (otherSubjects.length === 0) return null;
 
@@ -42,28 +40,9 @@ export const OtherSubjectsGrid: React.FC<OtherSubjectsGridProps> = ({
           const hasActive = subj.activeIds.length > 0;
           const isComplete = subj.totalSession === 0;
 
-          let iconBg = '#1A1F1C'; 
-          let iconBorder = '#232925';
-          let iconColor = '#4CD964';
-
-          const sName = subj.subjectName.toLowerCase();
-          if (sName.includes('chem')) {
-            iconBg = '#1A1F1C';
-            iconBorder = '#232925';
-            iconColor = '#4CD964';
-          } else if (sName.includes('math')) {
-            iconBg = '#2A1A1A'; 
-            iconBorder = '#3C2323';
-            iconColor = '#FF5F57';
-          } else if (sName.includes('cs') || sName.includes('dsa') || sName.includes('os') || sName.includes('networks') || sName.includes('dbms') || sName.includes('oop')) {
-            iconBg = '#1A1C2D'; 
-            iconBorder = '#23253E';
-            iconColor = '#8E96FF';
-          } else {
-            iconBg = '#1A1B1F';
-            iconBorder = '#23242A';
-            iconColor = '#5e6ad2';
-          }
+          const iconColor = getSubjectAccentColor(subj.subjectName);
+          const iconBg = `${iconColor}14`;
+          const iconBorder = `${iconColor}33`;
 
           const displayName = subj.subjectName;
 
@@ -81,7 +60,7 @@ export const OtherSubjectsGrid: React.FC<OtherSubjectsGridProps> = ({
             >
               <View style={{ marginBottom: 12 }}>
                 <View style={[styles.gridIcon, { backgroundColor: iconBg, borderColor: iconBorder, marginBottom: 0 }]}>
-                  {getSubjectIcon(subj.subjectName, 18, iconColor)}
+                  <SubjectIcon subject={subj.subjectName} size={19} color={iconColor} />
                 </View>
               </View>
               

@@ -1,193 +1,174 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
-import { Text } from '@/components/AppText';
-import { useThemeColors } from '@/hooks/useThemeColors';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { BookOpen, Atom, FlaskConical, FunctionSquare, Heart, Hash, Cpu } from 'lucide-react-native';
-import { useRouter } from "expo-router";
-import { useUserStore } from '@/store/user-store';
-import { useFlashcardStore } from '@/store/flashcard-store';
-import { supabase } from '@/lib/supabase';
+import { useFocusEffect, useRouter } from 'expo-router';
 
-import { HeatmapGrid } from '@/components/HeatmapGrid';
-import { StatsHeader } from '@/components/StatsHeader';
-import { ClassesSection } from '@/components/ClassesSection';
-import { StatsSummaryCards } from '@/components/StatsSummaryCards';
-import { StatsStreakCard } from '@/components/StatsStreakCard';
-import { SubjectMasteryList } from '@/components/SubjectMasteryList';
+import { ClassesSection, JoinedClass } from '@/components/ClassesSection';
 import { JoinClassModal } from '@/components/JoinClassModal';
+import {
+  FocusInsightCard,
+  BacklogCard,
+  SecondaryStats,
+  StatsActivityChart,
+  StatsOverviewCard,
+  StatsRangeSelector,
+  SubjectPerformanceList,
+} from '@/components/StatsDashboard';
+import { StatsHeader } from '@/components/StatsHeader';
+import { Text } from '@/components/AppText';
 import { isSubjectAllowedForPrepFocus } from '@/constants/examSubjects';
-
-type JoinedRoom = {
-  id: string;
-  name: string;
-  role: string;
-  memberCount: number;
-};
-
-const getSubjectIcon = (subject: string) => {
-  const normalized = subject.toLowerCase();
-  if (normalized.includes('phys')) return Atom;
-  if (normalized.includes('chem')) return FlaskConical;
-  if (normalized.includes('math')) return FunctionSquare;
-  if (normalized.includes('bio')) return Heart;
-  if (normalized.includes('dsa') || normalized.includes('dbms') || normalized.includes('operating') || normalized.includes('oop') || normalized.includes('network')) return Cpu;
-  return BookOpen;
-};
-
-const getSubjectColor = (index: number) => ['#5e6ad2', '#3fb950', '#d25e5e', '#f59e0b', '#a855f7'][index % 5];
+import { supabase } from '@/lib/supabase';
+import { StatsService } from '@/services/stats-service';
+import { StudyService } from '@/services/study-service';
+import { useFlashcardStore } from '@/store/flashcard-store';
+import { OFFLINE_MODE_TOKEN, useUserStore } from '@/store/user-store';
+import type { StatsDataSource, StatsRange, StatsSnapshot } from '@/types/stats';
 
 export default function StatsScreen() {
   const router = useRouter();
-  const colors = useThemeColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const { user, logout } = useUserStore();
-  const { decks, getStreak, getDeckCompletionRate } = useFlashcardStore();
+  const user = useUserStore((state) => state.user);
+  const sessionToken = useUserStore((state) => state.sessionToken);
+  const logout = useUserStore((state) => state.logout);
+  const decks = useFlashcardStore((state) => state.decks);
+  const getStreak = useFlashcardStore((state) => state.getStreak);
+
+  const [range, setRange] = useState<StatsRange>(30);
+  const [snapshot, setSnapshot] = useState<StatsSnapshot | null>(null);
+  const [isStatsLoading, setIsStatsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const rangeRef = useRef<StatsRange>(30);
+  const sourceRef = useRef<StatsDataSource>('local');
 
   const [isJoinModalVisible, setIsJoinModalVisible] = useState(false);
   const [joinCode, setJoinCode] = useState('');
-  
-  // Real Local Stats State
-  const [localStats, setLocalStats] = useState({
-    totalReviews: 0,
-    uniqueCards: 0,
-    heatmap: Array.from({ length: 98 }, () => 0),
-  });
-  const [joinedRooms, setJoinedRooms] = useState<JoinedRoom[]>([]);
+  const [joinedRooms, setJoinedRooms] = useState<JoinedClass[]>([]);
+  const [classesLoading, setClassesLoading] = useState(true);
+  const [classesError, setClassesError] = useState(false);
   const [roomsRefreshKey, setRoomsRefreshKey] = useState(0);
 
+  const userId = user?.id || 'local';
+  const isCloudUser = Boolean(sessionToken && sessionToken !== OFFLINE_MODE_TOKEN && user?.id);
+  const availableSubjects = useMemo(() => Array.from(new Set(
+    decks
+      .filter((deck) => isSubjectAllowedForPrepFocus(deck.subject, user?.prepFocus))
+      .map((deck) => deck.subject?.trim())
+      .filter((subject): subject is string => Boolean(subject))
+  )), [decks, user?.prepFocus]);
+  const subjectsKey = availableSubjects.join('|');
+
+  const loadSnapshot = useCallback(async (source: StatsDataSource, selectedRange = rangeRef.current) => {
+    const result = await StatsService.getSnapshot({
+      userId,
+      range: selectedRange,
+      prepFocus: user?.prepFocus,
+      availableSubjects,
+      dataSource: source,
+    });
+    sourceRef.current = source;
+    setSnapshot(result);
+  }, [userId, user?.prepFocus, subjectsKey]);
+
+  const refreshStats = useCallback(async (showPullRefresh = false) => {
+    if (showPullRefresh) setIsRefreshing(true);
+    else setIsStatsLoading(true);
+
+    try {
+      const source = isCloudUser
+        ? await StatsService.refreshCloudHistory(userId)
+        : 'local';
+      await loadSnapshot(source);
+    } catch (error) {
+      console.error('[Stats] Failed to calculate analytics:', error);
+      await loadSnapshot('cached');
+    } finally {
+      setIsStatsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [isCloudUser, userId, loadSnapshot]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshStats();
+    }, [refreshStats])
+  );
+
   useEffect(() => {
-    let cancelled = false;
+    rangeRef.current = range;
+    if (!snapshot) return;
+    loadSnapshot(sourceRef.current, range).catch((error) => {
+      console.error('[Stats] Failed to switch analytics range:', error);
+    });
+  }, [range, loadSnapshot]);
 
-    const fetchJoinedRooms = async () => {
-      if (!user?.id) {
-        setJoinedRooms([]);
-        return;
-      }
+  const fetchJoinedRooms = useCallback(async () => {
+    if (!user?.id || !isCloudUser) {
+      setJoinedRooms([]);
+      setClassesLoading(false);
+      setClassesError(false);
+      return;
+    }
 
-      try {
-        const { data, error } = await supabase
+    setClassesLoading(true);
+    setClassesError(false);
+    try {
+      const { data, error } = await supabase
+        .from('room_memberships')
+        .select('room_id, role, rooms!inner(id, name)')
+        .eq('user_id', user.id);
+      if (error) throw error;
+
+      const memberships = (data ?? []) as Array<{
+        room_id: string;
+        role: string;
+        rooms: { id: string; name: string } | { id: string; name: string }[] | null;
+      }>;
+
+      const rooms = await Promise.all(memberships.map(async (membership) => {
+        const room = Array.isArray(membership.rooms) ? membership.rooms[0] : membership.rooms;
+        if (!room) return null;
+        const { count, error: countError } = await supabase
           .from('room_memberships')
-          .select('room_id, role, rooms!inner(id, name)')
-          .eq('user_id', user.id);
+          .select('user_id', { count: 'exact', head: true })
+          .eq('room_id', room.id);
+        if (countError) throw countError;
+        return {
+          id: room.id,
+          name: room.name,
+          role: membership.role,
+          memberCount: count ?? 0,
+        };
+      }));
 
-        if (error) throw error;
-
-        const memberships = (data ?? []) as Array<{
-          room_id: string;
-          role: string;
-          rooms: { id: string; name: string }[] | null;
-        }>;
-
-        const rooms = await Promise.all(
-          memberships
-            .filter((membership) => membership.rooms?.length)
-            .map(async (membership) => {
-              const room = membership.rooms![0];
-              const { count, error: countError } = await supabase
-                .from('room_memberships')
-                .select('user_id', { count: 'exact', head: true })
-                .eq('room_id', room.id);
-
-              if (countError) throw countError;
-
-              return {
-                id: room.id,
-                name: room.name,
-                role: membership.role,
-                memberCount: count ?? 0,
-              };
-            })
-        );
-
-        if (!cancelled) setJoinedRooms(rooms);
-      } catch (error) {
-        console.error('[Stats] Failed to load joined classes:', error);
-        if (!cancelled) setJoinedRooms([]);
-      }
-    };
-
-    fetchJoinedRooms();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id, roomsRefreshKey]);
+      setJoinedRooms(rooms.filter((room): room is JoinedClass => room !== null));
+    } catch (error) {
+      console.error('[Stats] Failed to load joined classes:', error);
+      setClassesError(true);
+    } finally {
+      setClassesLoading(false);
+    }
+  }, [user?.id, isCloudUser, roomsRefreshKey]);
 
   useEffect(() => {
-    const fetchLocalStats = async () => {
-      const { db, expoDb } = require('@/db');
-      const { reviews, userFlashcardStatus } = require('@/db/schema');
-      const { count, eq, and, gte } = require('drizzle-orm');
-      
-      try {
-        // Quick check if tables exist to prevent early crash
-   
-
-        const activeUserId = user?.id || 'local';
-        const revCount = await db.select({ value: count() }).from(reviews).where(eq(reviews.userId, activeUserId));
-        const cardCount = await db.select({ value: count() }).from(userFlashcardStatus).where(eq(userFlashcardStatus.userId, activeUserId));
-
-        const heatmapDays = 98;
-        const dayInMs = 24 * 60 * 60 * 1000;
-        const startOfWindow = new Date();
-        startOfWindow.setHours(0, 0, 0, 0);
-        startOfWindow.setTime(startOfWindow.getTime() - (heatmapDays - 1) * dayInMs);
-
-        const reviewRows = await db
-          .select({ reviewedAt: reviews.reviewedAt })
-          .from(reviews)
-          .where(
-            and(
-              eq(reviews.userId, activeUserId),
-              gte(reviews.reviewedAt, startOfWindow.getTime())
-            )
-          );
-
-        const reviewCounts = Array.from({ length: heatmapDays }, () => 0);
-        for (const review of reviewRows) {
-          const index = Math.floor((review.reviewedAt - startOfWindow.getTime()) / dayInMs);
-          if (index >= 0 && index < heatmapDays) reviewCounts[index] += 1;
-        }
-
-        const maxReviewsInDay = Math.max(...reviewCounts, 1);
-        const heatmap = reviewCounts.map((value) =>
-          value === 0 ? 0 : Math.min(4, Math.ceil((value / maxReviewsInDay) * 4))
-        );
-        
-        setLocalStats({
-          totalReviews: revCount[0]?.value || 0,
-          uniqueCards: cardCount[0]?.value || 0,
-          heatmap,
-        });
-      } catch (e) {
-        console.error('Stats calc failed:', e);
-      }
-    };
-    fetchLocalStats();
-  }, [user?.id]);
+    fetchJoinedRooms();
+  }, [fetchJoinedRooms]);
 
   const handleJoinRoom = async () => {
-    if (joinCode.length !== 6) {
+    if (joinCode.trim().length !== 6) {
       Alert.alert('Error', 'Join code must be 6 characters.');
       return;
     }
-    
-    try {
-      if (!user?.id) throw new Error('You must be signed in to join a class.');
 
-      const { data: joinedRooms, error } = await supabase.rpc('join_room_by_code', {
+    try {
+      if (!user?.id || !isCloudUser) throw new Error('You must be signed in to join a class.');
+      const { data: joinedData, error } = await supabase.rpc('join_room_by_code', {
         p_code: joinCode.trim(),
       });
-
       if (error) throw error;
-      const data = Array.isArray(joinedRooms) ? joinedRooms[0] : joinedRooms;
+      const data = Array.isArray(joinedData) ? joinedData[0] : joinedData;
       if (!data) throw new Error('Invalid room code');
 
       const { db } = require('@/db');
       const { rooms } = require('@/db/schema');
-      
-      // Save room locally
       await db.insert(rooms).values({
         id: data.room_id,
         code: data.code,
@@ -198,100 +179,85 @@ export default function StatsScreen() {
         updatedAt: Date.now(),
       }).onConflictDoUpdate({
         target: rooms.id,
-        set: { name: data.name, updatedAt: Date.now() }
+        set: { name: data.name, updatedAt: Date.now() },
       });
 
       Alert.alert('Success', `Joined ${data.name}!`);
       setIsJoinModalVisible(false);
       setJoinCode('');
       setRoomsRefreshKey((key) => key + 1);
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
+    } catch (error: any) {
+      Alert.alert('Error', error.message);
     }
   };
 
-  const stats = useMemo(() => {
-    const streak = getStreak();
-    const totalStudied = localStats.totalReviews;
-    const totalKnown = localStats.uniqueCards;
-    
-    const subjects = Array.from(new Set(
-      decks
-        .filter((deck) => isSubjectAllowedForPrepFocus(deck.subject, user?.prepFocus))
-        .map((deck) => deck.subject?.trim())
-        .filter(Boolean)
-    )).map((name, index) => ({
-      name: name as string,
-      icon: getSubjectIcon(name as string),
-      color: getSubjectColor(index),
-    }));
-
-    const masteryData = subjects.map(s => {
-      const subjectDecks = decks.filter(d => d.subject?.trim().toLowerCase() === s.name.toLowerCase());
-      let totalMastery = 0;
-      let totalDecksWithCards = 0;
-      
-      subjectDecks.forEach(d => {
-        if (d.cardCount > 0) {
-          totalMastery += getDeckCompletionRate(d.id);
-          totalDecksWithCards++;
-        }
-      });
-      
-      const avgMastery = totalDecksWithCards > 0 ? totalMastery / totalDecksWithCards : 0;
-      return { ...s, mastery: Math.round(avgMastery) };
-    });
-
-    return {
-      streak,
-      totalStudied,
-      totalKnown,
-      masteryData,
-      heatmap: localStats.heatmap,
-    };
-  }, [decks, user, getStreak, getDeckCompletionRate, localStats]);
+  const handleStartBacklog = async (subject: string) => {
+    try {
+      const queue = await StudyService.getBacklogQueue(subject, 30);
+      if (queue.length === 0) {
+        Alert.alert('All caught up', `There are no overdue ${subject} cards right now.`);
+        await loadSnapshot(sourceRef.current);
+        return;
+      }
+      await useFlashcardStore.getState().startStudySession(subject, false, queue);
+      router.push(`/study/${subject}`);
+    } catch (error) {
+      console.error('[Stats] Failed to start backlog session:', error);
+      Alert.alert('Session error', 'Could not start the backlog session. Please try again.');
+    }
+  };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-        
-        <StatsHeader 
-          streakDays={stats.streak} 
-          onSignOut={() => {
-            logout();
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => refreshStats(true)}
+            tintColor="#6c7bff"
+            colors={['#6c7bff']}
+            progressBackgroundColor="#15171B"
+          />
+        }
+      >
+        <StatsHeader
+          streakDays={getStreak()}
+          onSignOut={async () => {
+            await logout();
             router.replace('/login');
-          }} 
+          }}
         />
 
         <ClassesSection
           joinedRooms={joinedRooms}
+          isLoading={classesLoading}
+          error={classesError}
+          onRetry={fetchJoinedRooms}
           onJoinPress={() => setIsJoinModalVisible(true)}
           onRoomPress={(room) => {
-            if (room.role === 'teacher') {
-              router.push(`/teacher-portal/${room.id}`);
-            }
+            if (room.role === 'teacher') router.push(`/teacher-portal/${room.id}`);
           }}
         />
 
-        <StatsSummaryCards 
-          totalStudied={stats.totalStudied} 
-          totalKnown={stats.totalKnown} 
-        />
+        <StatsRangeSelector value={range} onChange={setRange} />
 
-        {/* Heatmap Section */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardSectionLabel}>ACTIVITY HEATMAP</Text>
-            <TouchableOpacity><Text style={styles.detailText}>Last 3 Months</Text></TouchableOpacity>
+        {snapshot ? (
+          <>
+            <StatsOverviewCard snapshot={snapshot} />
+            <FocusInsightCard snapshot={snapshot} />
+            <SecondaryStats snapshot={snapshot} />
+            <StatsActivityChart snapshot={snapshot} />
+            <BacklogCard snapshot={snapshot} onStartSubject={handleStartBacklog} />
+            <SubjectPerformanceList snapshot={snapshot} />
+          </>
+        ) : (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator color="#6c7bff" />
+            <Text style={styles.loadingText}>{isStatsLoading ? 'Building your progress view…' : 'No analytics available'}</Text>
           </View>
-          <HeatmapGrid heatmapData={stats.heatmap} />
-        </View>
-
-        <StatsStreakCard streak={stats.streak} />
-
-        <SubjectMasteryList masteryData={stats.masteryData} />
-
-        <View style={{ height: 40 }} />
+        )}
       </ScrollView>
 
       <JoinClassModal
@@ -305,75 +271,9 @@ export default function StatsScreen() {
   );
 }
 
-const createStyles = (colors: any) => StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#0B0C0E',
-  },
-  container: {
-    paddingHorizontal: 20,
-    paddingBottom: 100,
-  },
-  card: {
-    backgroundColor: '#15171B',
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#2A2C32',
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  cardSectionLabel: {
-    fontSize: 10,
-    fontFamily: 'Outfit_700Bold',
-    color: '#94969a',
-    letterSpacing: 1.5,
-  },
-  detailText: {
-    fontSize: 10,
-    fontFamily: 'Outfit_700Bold',
-    color: '#5e6ad2',
-  },
-});
-
-const stylesHeatmap = StyleSheet.create({
-  container: {
-    width: '100%',
-  },
-  grid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  column: {
-    gap: 6,
-  },
-  cell: {
-    width: 13,
-    height: 13,
-    borderRadius: 3,
-  },
-  legendRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
-  },
-  legendText: {
-    fontSize: 10,
-    color: '#94969a',
-    fontFamily: 'Outfit_700Bold',
-    letterSpacing: 0.5,
-  },
-  legendColors: {
-    flexDirection: 'row',
-    gap: 5,
-  }
+const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: '#0B0C0E' },
+  container: { paddingHorizontal: 20, paddingBottom: 112 },
+  loadingCard: { minHeight: 160, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: '#15171B', borderRadius: 21, borderWidth: 1, borderColor: '#2A2C32' },
+  loadingText: { color: '#858891', fontSize: 12, fontFamily: 'Outfit_500Medium' },
 });

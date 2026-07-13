@@ -2,7 +2,7 @@ import React, { useMemo, useEffect, useState } from "react";
 import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { BookOpen, Compass, FlaskConical, Hash, Heart, Code, Cpu, Settings2 } from "lucide-react-native";
+import { Settings2 } from "lucide-react-native";
 import { Text } from "@/components/AppText";
 
 import { useThemeColors } from "@/hooks/useThemeColors";
@@ -19,19 +19,6 @@ import { TodayActivityCard } from "@/components/TodayActivityCard";
 import { RecommendedSubjectCard } from "@/components/RecommendedSubjectCard";
 import { OtherSubjectsGrid } from "@/components/OtherSubjectsGrid";
 import { isSubjectAllowedForPrepFocus } from '@/constants/examSubjects';
-
-const getSubjectIcon = (subject: string, size: number = 18, color: string = "#5e6ad2") => {
-  if (!subject) return <BookOpen size={size} color={color} />;
-  const s = subject.toLowerCase();
-  if (s.includes('phys')) return <Compass size={size} color={color} />;
-  if (s.includes('chem')) return <FlaskConical size={size} color={color} />;
-  if (s.includes('math')) return <Hash size={size} color={color} />;
-  if (s.includes('bio')) return <Heart size={size} color={color} />;
-  if (s.includes('cs') || s.includes('dsa') || s.includes('os') || s.includes('network') || s.includes('dbms') || s.includes('oop')) {
-    return <Cpu size={size} color={color} />;
-  }
-  return <BookOpen size={size} color={color} />;
-};
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -453,7 +440,6 @@ export default function HomeScreen() {
           onStartSession={handleStartSession}
           onConfigureChapters={openConfigModal}
           onShowActiveChaptersInfo={handleShowActiveChaptersInfo}
-          getSubjectIcon={getSubjectIcon}
         />
 
         {/* Modular Other Subjects Grid Component (Smaller Boxes) */}
@@ -462,7 +448,6 @@ export default function HomeScreen() {
           onStartSession={handleStartSession}
           onConfigureChapters={openConfigModal}
           onShowActiveChaptersInfo={handleShowActiveChaptersInfo}
-          getSubjectIcon={getSubjectIcon}
         />
 
         {/* Modular Today's Activity Progress Card Component */}

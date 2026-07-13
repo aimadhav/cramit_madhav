@@ -2,6 +2,7 @@ import React from 'react';
 import { View, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Text } from './AppText';
 import { Play, Brain, Clock, CreditCard as Cards, Check, Plus, AlertCircle, Info } from 'lucide-react-native';
+import { getSubjectAccentColor, SubjectIcon } from './SubjectIcon';
 
 interface SubjectStats {
   subjectName: string;
@@ -22,7 +23,6 @@ interface RecommendedSubjectCardProps {
   onStartSession: (subject: string, isBacklog?: boolean) => Promise<void>;
   onConfigureChapters: (subject: string, currentlyActive: string[]) => void;
   onShowActiveChaptersInfo: (subjectName: string, activeIds: string[]) => void;
-  getSubjectIcon: (subject: string, size?: number, color?: string) => React.ReactNode;
 }
 
 export const RecommendedSubjectCard: React.FC<RecommendedSubjectCardProps> = ({
@@ -31,7 +31,6 @@ export const RecommendedSubjectCard: React.FC<RecommendedSubjectCardProps> = ({
   onStartSession,
   onConfigureChapters,
   onShowActiveChaptersInfo,
-  getSubjectIcon,
 }) => {
   if (!topSubject) {
     return (
@@ -44,6 +43,7 @@ export const RecommendedSubjectCard: React.FC<RecommendedSubjectCardProps> = ({
 
   const hasActiveChapters = topSubject.activeIds.length > 0;
   const isComplete = topSubject.totalSession === 0;
+  const subjectAccent = getSubjectAccentColor(topSubject.subjectName);
 
   return (
     <View style={styles.section}>
@@ -70,8 +70,8 @@ export const RecommendedSubjectCard: React.FC<RecommendedSubjectCardProps> = ({
           <View style={styles.recommendedMain}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
               <Text style={styles.recommendedTitle}>{topSubject.subjectName}</Text>
-              <View style={[styles.gridIcon, { backgroundColor: '#15171b', borderColor: '#2A2C32', width: 44, height: 44, borderRadius: 12, borderWidth: 1, justifyContent: 'center', alignItems: 'center' }]}>
-                {getSubjectIcon(topSubject.subjectName, 22, "#5e6ad2")}
+              <View style={[styles.gridIcon, { backgroundColor: `${subjectAccent}14`, borderColor: `${subjectAccent}33`, width: 44, height: 44, borderRadius: 12 }]}>
+                <SubjectIcon subject={topSubject.subjectName} size={23} color={subjectAccent} />
               </View>
             </View>
             {hasActiveChapters ? (

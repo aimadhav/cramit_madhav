@@ -7,6 +7,7 @@ import { mirrorPublicDecks } from './sync-decks';
 import { downloadDeckContent as downloadDeckContentHelper } from './sync-download';
 import { cacheDeckImages as cacheDeckImagesHelper } from './sync-cache';
 import { processSyncQueue } from './sync-queue';
+import { buildCloudReviewPayload } from './review-sync-utils';
 
 export class SyncService {
   private static isSyncing = false;
@@ -91,24 +92,17 @@ export class SyncService {
       // Sync the actual review log historical event to the 'reviews' table on Supabase (T2/T3 requirement)
       if (data && data.rating) {
         const Crypto = require('expo-crypto');
-        const supabaseReview = {
-          id: Crypto.randomUUID(),
-          flashcard_id: flashcardId,
-          user_id: userId,
-          rating: Number(data.rating),
-          reviewed_at: new Date(data.reviewedAt || now).toISOString(),
-          response_time_ms: data.responseTimeMs ? Number(data.responseTimeMs) : null,
-          previous_stability: data.previousStability ? Number(data.previousStability) : null,
-          new_stability: data.stability ? Number(data.stability) : null,
-          previous_difficulty: data.previousDifficulty ? Number(data.previousDifficulty) : null,
-          new_difficulty: data.difficulty ? Number(data.difficulty) : null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
+        const supabaseReview = buildCloudReviewPayload(
+          userId,
+          flashcardId,
+          data,
+          Crypto.randomUUID(),
+          now
+        );
 
         const { error: reviewError } = await supabase
           .from('reviews')
-          .insert(supabaseReview);
+          .upsert(supabaseReview, { onConflict: 'id' });
 
         if (reviewError) {
           console.warn(`⚠️ [Supabase Sync] Failed to insert historical review for ${flashcardId}:`, reviewError.message);
