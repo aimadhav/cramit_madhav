@@ -22,7 +22,7 @@ export const CramActionFooter: React.FC<CramActionFooterProps> = ({
         activeOpacity={0.8}
         onPress={onStartPress}
         style={[styles.startBtn, (!isReady || isLaunching) && styles.startBtnDisabled]}
-        disabled={isLaunching}
+        disabled={!isReady || isLaunching}
       >
         {isLaunching ? (
           <ActivityIndicator size="small" color="#FFFFFF" />

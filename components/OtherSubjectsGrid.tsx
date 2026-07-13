@@ -73,7 +73,7 @@ export const OtherSubjectsGrid: React.FC<OtherSubjectsGridProps> = ({
                 </View>
               ) : isComplete && hasActive ? (
                 <View style={styles.gridStats}>
-                  <Text style={[styles.gridDue, { color: '#5F6166' }]}>Waitlist</Text>
+                  <Text style={[styles.gridDue, { color: '#5F6166' }]}>Caught up</Text>
                   <Text style={[styles.gridTime, { color: '#5F6166' }]}>—</Text>
                 </View>
               ) : (

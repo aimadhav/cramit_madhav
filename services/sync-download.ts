@@ -35,7 +35,7 @@ export async function downloadDeckContent(deckId: string) {
 
     // DatabaseService handles image downloading and local persistence.
     if (cards) {
-      await DatabaseService.upsertDeck(deck, cards);
+      await DatabaseService.upsertDeck(deck, cards, { replaceCards: true });
     }
 
     // Keep this hook for the existing progress-pull flow.

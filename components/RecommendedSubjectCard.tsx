@@ -20,6 +20,9 @@ interface SubjectStats {
 interface RecommendedSubjectCardProps {
   topSubject: SubjectStats | null;
   isLaunchingSession: boolean;
+  isLoading?: boolean;
+  loadError?: string | null;
+  onRetry?: () => void;
   onStartSession: (subject: string, isBacklog?: boolean) => Promise<void>;
   onConfigureChapters: (subject: string, currentlyActive: string[]) => void;
   onShowActiveChaptersInfo: (subjectName: string, activeIds: string[]) => void;
@@ -28,15 +31,52 @@ interface RecommendedSubjectCardProps {
 export const RecommendedSubjectCard: React.FC<RecommendedSubjectCardProps> = ({
   topSubject,
   isLaunchingSession,
+  isLoading = false,
+  loadError = null,
+  onRetry,
   onStartSession,
   onConfigureChapters,
   onShowActiveChaptersInfo,
 }) => {
+  if (isLoading && !topSubject) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>RECOMMENDED NOW</Text>
+        <View style={[styles.recommendedCard, styles.stateCard]}>
+          <ActivityIndicator color="#6c7bff" />
+          <Text style={styles.recommendedSubtitle}>Loading your study content…</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (loadError && !topSubject) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>RECOMMENDED NOW</Text>
+        <View style={[styles.recommendedCard, styles.stateCard]}>
+          <AlertCircle size={22} color="#d2995e" />
+          <Text style={styles.recommendedTitle}>Content unavailable</Text>
+          <Text style={styles.recommendedSubtitle}>We couldn’t load your subjects. Your saved progress is safe.</Text>
+          {onRetry && (
+            <TouchableOpacity style={styles.retryButton} onPress={onRetry}>
+              <Text style={styles.retryButtonText}>Try again</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  }
+
   if (!topSubject) {
     return (
-      <View style={styles.recommendedCard}>
-         <Text style={styles.recommendedTitle}>No Decks Found</Text>
-         <Text style={styles.recommendedSubtitle}>Check back later for available decks.</Text>
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>RECOMMENDED NOW</Text>
+        <View style={[styles.recommendedCard, styles.stateCard]}>
+          <Brain size={22} color="#6c7bff" />
+          <Text style={styles.recommendedTitle}>No study content yet</Text>
+          <Text style={styles.recommendedSubtitle}>There aren’t any subjects available for your preparation focus yet.</Text>
+        </View>
       </View>
     );
   }
@@ -68,9 +108,9 @@ export const RecommendedSubjectCard: React.FC<RecommendedSubjectCardProps> = ({
           </View>
 
           <View style={styles.recommendedMain}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            <View style={styles.subjectTitleRow}>
               <Text style={styles.recommendedTitle}>{topSubject.subjectName}</Text>
-              <View style={[styles.gridIcon, { backgroundColor: `${subjectAccent}14`, borderColor: `${subjectAccent}33`, width: 44, height: 44, borderRadius: 12 }]}>
+              <View style={[styles.gridIcon, { backgroundColor: `${subjectAccent}14`, borderColor: `${subjectAccent}33` }]}>
                 <SubjectIcon subject={topSubject.subjectName} size={23} color={subjectAccent} />
               </View>
             </View>
@@ -157,6 +197,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2a2c32',
   },
+  stateCard: { minHeight: 170, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  retryButton: { marginTop: 5, backgroundColor: '#6c7bff', borderRadius: 12, paddingHorizontal: 18, paddingVertical: 10 },
+  retryButtonText: { color: '#FFFFFF', fontSize: 13, fontFamily: 'Outfit_700Bold' },
   recommendedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -193,7 +236,15 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     gap: 4,
   },
+  subjectTitleRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
   recommendedTitle: {
+    flex: 1,
+    flexShrink: 1,
     color: '#FFFFFF',
     fontSize: 22,
     fontFamily: 'Outfit_700Bold',
@@ -263,9 +314,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   gridIcon: {
-    width: 36,
-    height: 32,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    flexShrink: 0,
+    borderRadius: 12,
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',

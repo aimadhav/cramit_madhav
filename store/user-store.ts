@@ -34,11 +34,12 @@ interface UserState {
   error: string | null;
   themePreference: ThemePreference;
 
-  setSession: (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => void;
+  setSession: (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => Promise<void>;
   logout: () => Promise<void>;
+  clearLocalSession: () => Promise<void>;
   loginOffline: () => Promise<void>;
   updateUser: (userData: Partial<AppUser>) => void;
-  updateStudyStats: (studyTime: number, cardsStudied: number) => void;
+  updateStudyStats: (studyTime: number, cardsStudied: number) => Promise<void>;
   resetUserProgress: () => void;
   checkAuthStatus: () => Promise<void>;
   clearError: () => void;
@@ -62,6 +63,11 @@ const defaultUserInitialState: AppUser = {
   role: 'student',
   prepFocus: null,
 };
+
+function localCalendarDayNumber(timestamp: number) {
+  const date = new Date(timestamp);
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000);
+}
 
 export const TOKEN_STORAGE_KEY = 'sessionToken';
 export const REFRESH_TOKEN_STORAGE_KEY = 'sessionRefreshToken';
@@ -132,6 +138,33 @@ export const useUserStore = create<UserState>()(
         return Date.now() + FIVE_MINUTES >= state.tokenExpiry;
       },
 
+      clearLocalSession: async () => {
+        try {
+          useFlashcardStore.getState().clearStore();
+        } catch (error) {
+          console.error('Failed to clear FlashcardStore during session cleanup:', error);
+        }
+
+        set({
+          user: { ...defaultUserInitialState, isLoggedIn: false },
+          sessionToken: null,
+          tokenExpiry: null,
+          isLoading: false,
+          error: null,
+        });
+
+        if (typeof window === 'undefined') return;
+        if (Platform.OS === 'web') {
+          localStorage.removeItem(TOKEN_STORAGE_KEY);
+          localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+          localStorage.removeItem('tokenExpiry');
+        } else {
+          await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+          await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          await SecureStore.deleteItemAsync('tokenExpiry');
+        }
+      },
+
       logout: async () => {
         console.log('🚪 [UserStore] Logging out...');
         
@@ -145,6 +178,7 @@ export const useUserStore = create<UserState>()(
         set({ 
           user: { ...defaultUserInitialState, isLoggedIn: false }, 
           sessionToken: null, 
+          tokenExpiry: null,
           isLoading: false, 
           error: null 
         });
@@ -154,9 +188,11 @@ export const useUserStore = create<UserState>()(
         if (Platform.OS === 'web') {
           localStorage.removeItem(TOKEN_STORAGE_KEY);
           localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+          localStorage.removeItem('tokenExpiry');
         } else {
-        await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+          await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
           await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+          await SecureStore.deleteItemAsync('tokenExpiry');
         }
       },
       
@@ -191,38 +227,35 @@ export const useUserStore = create<UserState>()(
         set({ isLoading: true });
         try {
           let accessToken: string | null = null;
-          let refreshToken: string | null = null;
-
           if (Platform.OS === 'web') {
             accessToken = localStorage.getItem(TOKEN_STORAGE_KEY);
-            refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
           } else {
             accessToken = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
-            refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY);
           }
 
-          if (accessToken) {
-            const persistedUser = get().user; 
+          // Supabase owns cloud session restoration. This copied key only remembers
+          // that the user explicitly selected offline mode.
+          if (accessToken === OFFLINE_MODE_TOKEN) {
             set({ 
-              sessionToken: accessToken, 
-              user: persistedUser && persistedUser.id !== 'guest-user' && persistedUser.isLoggedIn 
-                    ? { ...persistedUser, isLoggedIn: true } 
-                    : { ...defaultUserInitialState, isLoggedIn: true }, 
+              sessionToken: OFFLINE_MODE_TOKEN,
+              user: { ...defaultUserInitialState, name: 'Offline User', isLoggedIn: true },
               isLoading: false 
             });
           } else {
-            set({ user: defaultUserInitialState, sessionToken: null, isLoading: false });
+            set({ user: defaultUserInitialState, sessionToken: null, tokenExpiry: null, isLoading: false });
             if (Platform.OS === 'web') {
               localStorage.removeItem(TOKEN_STORAGE_KEY);
               localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+              localStorage.removeItem('tokenExpiry');
             } else {
               await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
               await SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY);
+              await SecureStore.deleteItemAsync('tokenExpiry');
             }
           }
         } catch (e) {
           console.error("Failed to check auth status", e);
-          set({ user: defaultUserInitialState, sessionToken: null, isLoading: false, error: 'Auth check failed' });
+          set({ user: defaultUserInitialState, sessionToken: null, tokenExpiry: null, isLoading: false, error: 'Auth check failed' });
           if (Platform.OS === 'web') {
             localStorage.removeItem(TOKEN_STORAGE_KEY);
             localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
@@ -250,27 +283,32 @@ export const useUserStore = create<UserState>()(
         const currentUser = get().user;
         if (!currentUser || !currentUser.isLoggedIn) return;
 
+        const safeCardsStudied = Math.max(0, Math.floor(cardsStudied));
+        const safeStudyTime = Math.max(0, Math.floor(studyTime));
+
+        // Opening/closing a session without completing a card is not study activity.
+        if (safeCardsStudied === 0) return;
+
         const now = Date.now();
         let newStreakDays = currentUser.streakDays;
         const lastStudy = currentUser.lastStudyDate;
 
         if (lastStudy) {
-          const oneDay = 24 * 60 * 60 * 1000;
-          const diffDays = Math.round(Math.abs((now - lastStudy) / oneDay));
+          const diffDays = localCalendarDayNumber(now) - localCalendarDayNumber(lastStudy);
           if (diffDays === 1) {
             newStreakDays += 1;
           } else if (diffDays > 1) {
-            newStreakDays = 1; 
+            newStreakDays = 1;
           }
         } else {
-          newStreakDays = 1; 
+          newStreakDays = 1;
         }
         
         set(state => ({
           user: {
             ...state.user!,
-            totalCardsStudied: (state.user!.totalCardsStudied || 0) + cardsStudied,
-            totalTimeStudied: (state.user!.totalTimeStudied || 0) + studyTime,
+            totalCardsStudied: (state.user!.totalCardsStudied || 0) + safeCardsStudied,
+            totalTimeStudied: (state.user!.totalTimeStudied || 0) + safeStudyTime,
             streakDays: newStreakDays,
             lastStudyDate: now,
             updatedAt: now,
@@ -284,8 +322,8 @@ export const useUserStore = create<UserState>()(
             const { error } = await supabase
               .from('users')
               .update({
-                total_cards_studied: (currentUser.totalCardsStudied || 0) + cardsStudied,
-                total_time_studied: (currentUser.totalTimeStudied || 0) + studyTime,
+                total_cards_studied: (currentUser.totalCardsStudied || 0) + safeCardsStudied,
+                total_time_studied: (currentUser.totalTimeStudied || 0) + safeStudyTime,
                 streak_days: newStreakDays,
                 last_study_date: new Date(now).toISOString(),
                 updated_at: new Date().toISOString()

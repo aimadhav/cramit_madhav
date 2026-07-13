@@ -12,7 +12,9 @@ export const HomeHeader: React.FC<HomeHeaderProps> = ({ userName, streakDays }) 
   return (
     <View style={styles.header}>
       <View>
-        <Text style={styles.logoText}><Text style={{ color: '#5e6ad2' }}>✦</Text> Cramit.</Text>
+        <Text style={styles.logoText}>
+          <Text style={styles.logoMark}>✦</Text> Cramit<Text style={styles.logoMark}>.</Text>
+        </Text>
         <Text style={styles.welcomeSub}>Ready to revise, {userName || 'Scholar'}?</Text>
       </View>
       <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -34,9 +36,12 @@ const styles = StyleSheet.create({
     marginBottom: 25,
   },
   logoText: {
-    fontSize: 20,
+    fontSize: 24,
     fontFamily: 'Outfit_700Bold',
     color: '#ececec',
+  },
+  logoMark: {
+    color: '#5e6ad2',
   },
   welcomeSub: {
     fontSize: 12,

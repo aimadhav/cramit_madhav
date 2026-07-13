@@ -1,6 +1,6 @@
 import { db } from '@/db';
 import * as schema from '@/db/schema';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 
 type SyncCardStatusFn = (userId: string, flashcardId: string, data: any) => Promise<boolean>;
 type SyncActiveChapterFn = (userId: string, deckId: string, data: any) => Promise<boolean>;
@@ -11,7 +11,10 @@ export async function processSyncQueue(
   syncActiveChapter: SyncActiveChapterFn
 ) {
   const tasks = await db.query.syncQueue.findMany({
-    where: eq(schema.syncQueue.status, 'pending'),
+    where: and(
+      eq(schema.syncQueue.status, 'pending'),
+      eq(schema.syncQueue.userId, userId),
+    ),
     orderBy: [asc(schema.syncQueue.createdAt)],
     limit: 50,
   });
@@ -21,6 +24,11 @@ export async function processSyncQueue(
   console.log(`📡 [SyncService] Pushing ${tasks.length} changes to cloud...`);
 
   for (const task of tasks) {
+    const { useUserStore } = require('@/store/user-store');
+    if (useUserStore.getState().user?.id !== userId) {
+      console.warn('[SyncService] Account changed during sync; stopping safely.');
+      return;
+    }
     // SKIP LOCAL TEMP CARDS (Prevent Foreign Key Violations)
     if (task.entityId.startsWith('temp_')) {
       await db.update(schema.syncQueue)
@@ -70,6 +78,15 @@ export async function processSyncQueue(
         }
       }
     } catch (e: any) {
+      const currentRetries = task.retryCount ?? 0;
+      await db.update(schema.syncQueue)
+        .set({
+          retryCount: currentRetries + 1,
+          lastError: String(e?.message || 'Unknown sync error').slice(0, 500),
+          status: currentRetries + 1 >= 5 ? 'failed_on_server' : 'pending',
+          updatedAt: Date.now(),
+        })
+        .where(eq(schema.syncQueue.id, task.id));
       console.error(`❌ [SyncService] Task processing crash:`, e.message);
     }
   }

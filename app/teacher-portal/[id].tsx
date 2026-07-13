@@ -26,23 +26,27 @@ export default function TeacherPortalScreen() {
         // Fetch room info
         const { data: room, error: roomError } = await supabase
           .from('rooms')
-          .select('*')
+          .select('id, code, name, description')
           .eq('id', id)
           .single();
         
         if (roomError) throw roomError;
 
         // Fetch students in this room
-        const { data: memberships, error: memError } = await supabase
-          .from('room_memberships')
-          .select('user_id, role, users(id, email, name, streak_days, total_cards_studied, last_study_date)')
-          .eq('room_id', id);
+        const { data: studentStats, error: memError } = await supabase
+          .rpc('get_room_student_stats', { p_room_id: id });
 
         if (memError) throw memError;
 
-        const students = memberships
-          .filter(m => m.role === 'student')
-          .map(m => m.users);
+        const students = (studentStats ?? []).map((student: any) => ({
+          id: student.student_id,
+          email: student.email,
+          name: student.name,
+          streak_days: student.streak_days,
+          total_cards_studied: student.total_cards_studied,
+          total_time_studied: student.total_time_studied,
+          last_study_date: student.last_study_date,
+        }));
 
         setPortalData({ room, students });
       } catch (error: any) {

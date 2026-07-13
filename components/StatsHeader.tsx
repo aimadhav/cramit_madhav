@@ -13,7 +13,9 @@ export const StatsHeader: React.FC<StatsHeaderProps> = ({ streakDays, onSignOut 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.logoText}><Text style={styles.logoMark}>✦</Text> Cramit.</Text>
+        <Text style={styles.logoText}>
+          <Text style={styles.logoMark}>✦</Text> Cramit<Text style={styles.logoMark}>.</Text>
+        </Text>
         <View style={styles.actions}>
           <View style={styles.streakPill}>
             <Flame size={16} color="#d2995e" fill="#d2995e" />
@@ -42,7 +44,7 @@ export const StatsHeader: React.FC<StatsHeaderProps> = ({ streakDays, onSignOut 
 const styles = StyleSheet.create({
   container: { width: '100%' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, paddingBottom: 22 },
-  logoText: { fontSize: 20, fontFamily: 'Outfit_700Bold', color: '#ececec' },
+  logoText: { fontSize: 24, fontFamily: 'Outfit_700Bold', color: '#ececec' },
   logoMark: { color: '#6c7bff' },
   actions: { flexDirection: 'row', gap: 9 },
   streakPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#15171B', paddingHorizontal: 11, paddingVertical: 6, borderRadius: 18, borderWidth: 1, borderColor: '#2A2C32' },

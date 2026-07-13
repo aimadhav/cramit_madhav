@@ -1,36 +1,29 @@
+import { Outfit_400Regular, Outfit_500Medium, Outfit_600SemiBold, Outfit_700Bold, useFonts } from '@expo-google-fonts/outfit';
+import NetInfo from '@react-native-community/netinfo';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useState } from 'react';
-import 'react-native-reanimated';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { View } from 'react-native';
-import { OfflineStatusBar } from '../components/OfflineStatusBar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { 
-  useFonts, 
-  Outfit_400Regular, 
-  Outfit_500Medium, 
-  Outfit_600SemiBold, 
-  Outfit_700Bold 
-} from '@expo-google-fonts/outfit';
 
-import { useUserStore, OFFLINE_MODE_TOKEN } from '../store/user-store';
-import { useFlashcardStore } from '../store/flashcard-store';
-import NetInfo from '@react-native-community/netinfo';
+import { OfflineStatusBar } from '../components/OfflineStatusBar';
+import { DatabaseProvider } from '../db/DatabaseProvider';
 import { supabase } from '../lib/supabase';
-
-SplashScreen.preventAutoHideAsync();
-
+import { AuthService } from '../services/auth-service';
 import { SyncService } from '../services/sync-service';
+import { useFlashcardStore } from '../store/flashcard-store';
+import { OFFLINE_MODE_TOKEN, useUserStore } from '../store/user-store';
 
-// Main app navigator with data handling
+void SplashScreen.preventAutoHideAsync();
+
 function AppNavigatorAndDataHandler() {
   const segments = useSegments();
   const router = useRouter();
   const sessionToken = useUserStore((state) => state.sessionToken);
   const isLoadingAuth = useUserStore((state) => state.isLoading);
   const user = useUserStore((state) => state.user);
-  const setDecks = useFlashcardStore((state) => state.setDecks);
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -38,118 +31,93 @@ function AppNavigatorAndDataHandler() {
     return () => setIsMounted(false);
   }, []);
 
-  // Initialize SQLite Store when session changes
   useEffect(() => {
-    if (isMounted) {
-      console.log('🔄 [AppLayout] Auth state changed or mounted. Initializing SQLite Store...');
-      useFlashcardStore.getState().initializeStore();
-    }
+    if (isMounted) void useFlashcardStore.getState().initializeStore();
   }, [isMounted, sessionToken]);
 
-  // Auth State Listener (Supabase)
   useEffect(() => {
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log(`🔔 [AuthListener] Event: ${event}`);
-      
-      if (event === 'SIGNED_IN' && session) {
-        // Only update if the store doesn't already have this session
-        const currentToken = useUserStore.getState().sessionToken;
-        if (currentToken !== session.access_token && currentToken !== OFFLINE_MODE_TOKEN) {
-          const { AuthService } = require('../services/auth-service');
-          await AuthService.establishSession(session, session.user);
+    // This callback must remain synchronous. Awaiting another Supabase request
+    // here can deadlock behind the auth client's internal state lock.
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        if (useUserStore.getState().sessionToken !== OFFLINE_MODE_TOKEN) {
+          void useUserStore.getState().clearLocalSession();
         }
-      } else if (event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
-        if (!session && useUserStore.getState().sessionToken !== OFFLINE_MODE_TOKEN) {
-          useUserStore.getState().logout();
+        return;
+      }
+
+      if (event === 'TOKEN_REFRESHED' && session) {
+        const state = useUserStore.getState();
+        if (state.user?.id === session.user.id && state.sessionToken !== OFFLINE_MODE_TOKEN) {
+          void state.setSession(
+            state.user,
+            session.access_token,
+            session.refresh_token,
+            session.expires_at ? session.expires_at * 1000 : undefined,
+          );
         }
-      } else if (event === 'TOKEN_REFRESHED' && session) {
-        useUserStore.getState().setSession(
-          useUserStore.getState().user!, 
-          session.access_token, 
-          session.refresh_token
-        );
       }
     });
 
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
+    return () => authListener.subscription.unsubscribe();
   }, []);
 
-  // Sync offline data when cloud connectivity is restored
   useEffect(() => {
-    // We use a listener for network state changes
-    const unsubscribe = NetInfo.addEventListener(state => {
-      const { user, sessionToken } = useUserStore.getState();
-      
-      // REAL connectivity check:
-      // isConnected = connected to a network (Wi-Fi/Cellular)
-      // isInternetReachable = can actually reach the public internet (Supabase)
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const current = useUserStore.getState();
       const hasCloudAccess = state.isConnected && state.isInternetReachable !== false;
-
-      if (hasCloudAccess && sessionToken && user?.id) {
-        console.log('📡 [SyncEngine] Cloud access confirmed. Pushing local changes...');
-        SyncService.pushChanges(user.id);
+      if (
+        hasCloudAccess &&
+        current.sessionToken &&
+        current.sessionToken !== OFFLINE_MODE_TOKEN &&
+        current.user?.id
+      ) {
+        void SyncService.pushChanges(current.user.id);
       }
     });
+    return unsubscribe;
+  }, []);
 
-    return () => unsubscribe();
-  }, []); // Listener remains active for the app lifecycle
-
-  // Trigger sync immediately when user logs in if we have internet
   useEffect(() => {
-    if (sessionToken && user?.id) {
-      NetInfo.fetch().then(state => {
-        if (state.isConnected && state.isInternetReachable !== false) {
-          SyncService.pushChanges(user.id!);
-        }
-      });
-    }
+    if (!sessionToken || sessionToken === OFFLINE_MODE_TOKEN || !user?.id) return;
+    void NetInfo.fetch().then((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) {
+        void SyncService.pushChanges(user.id);
+      }
+    });
   }, [sessionToken, user?.id]);
 
-  // Update store when decks are fetched
   useEffect(() => {
-    // This is now handled by loadDecks in initializeStore
-  }, []);
-
-  // Navigation and data cleanup based on auth state
-  useEffect(() => {
-    if (!isMounted || isLoadingAuth) {
-      return;
-    }
+    if (!isMounted || isLoadingAuth) return;
 
     const routeSegments = segments as string[];
     const currentSegment = routeSegments[0] || null;
-    const isOnboarding = routeSegments[0] === '(auth)' && routeSegments[1] === 'onboarding';
+    const isOnboarding = currentSegment === '(auth)' && routeSegments[1] === 'onboarding';
+    const isAuthCallback = currentSegment === 'auth' && routeSegments[1] === 'callback';
     const isCloudSession = Boolean(sessionToken && sessionToken !== OFFLINE_MODE_TOKEN);
 
+    if (isAuthCallback) return;
+
     if (sessionToken) {
-      // Cloud users without a preparation focus must complete onboarding first.
       if (isCloudSession && !user?.prepFocus && !isOnboarding) {
         router.replace('/onboarding' as any);
       } else if (currentSegment === '(auth)' && !isOnboarding) {
-        console.log('[AppLayout] Session exists, redirecting to home');
         router.replace('/');
       }
-    } else {
-      // If no session token and not in auth flow, redirect to login
-      if (currentSegment !== '(auth)') {
-        console.log('[AppLayout] No session, clearing store and redirecting to login');
-        useFlashcardStore.getState().clearStore();
-        router.replace('/login');
-      }
+    } else if (currentSegment !== '(auth)') {
+      useFlashcardStore.getState().clearStore();
+      router.replace('/login');
     }
-  }, [sessionToken, segments, router, isLoadingAuth, isMounted]);
+  }, [sessionToken, user?.prepFocus, segments, router, isLoadingAuth, isMounted]);
 
   return (
     <Stack>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+      <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
     </Stack>
   );
 }
-
-import { DatabaseProvider } from '../db/DatabaseProvider';
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
@@ -158,7 +126,6 @@ export default function RootLayout() {
     Outfit_600SemiBold,
     Outfit_700Bold,
   });
-  const { checkAuthStatus } = useUserStore.getState();
   const [isAuthChecked, setIsAuthChecked] = useState(false);
 
   useEffect(() => {
@@ -166,27 +133,16 @@ export default function RootLayout() {
   }, [fontError]);
 
   useEffect(() => {
-    async function prepareAuth() {
-      try {
-        await checkAuthStatus();
-      } catch (e) {
-        console.error('[RootLayout] Auth check failed:', e);
-      } finally {
-        setIsAuthChecked(true);
-      }
-    }
-    prepareAuth();
-  }, [checkAuthStatus]);
+    void AuthService.restoreSession()
+      .catch((error) => console.error('[RootLayout] Session restore failed:', error))
+      .finally(() => setIsAuthChecked(true));
+  }, []);
 
   useEffect(() => {
-    if (fontsLoaded && isAuthChecked) {
-      SplashScreen.hideAsync();
-    }
+    if (fontsLoaded && isAuthChecked) void SplashScreen.hideAsync();
   }, [fontsLoaded, isAuthChecked]);
 
-  if (!fontsLoaded) {
-    return null;
-  }
+  if (!fontsLoaded) return null;
 
   return (
     <SafeAreaProvider>

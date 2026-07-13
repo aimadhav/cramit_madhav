@@ -123,4 +123,50 @@ describe('UserStore', () => {
     expect(state.user?.name).toBe('Offline User');
     expect(state.user?.isLoggedIn).toBe(true);
   });
+
+  it('does not add phantom time when no card was completed', async () => {
+    useUserStore.setState({
+      user: {
+        ...useUserStore.getState().user!,
+        id: 'student-1',
+        isLoggedIn: true,
+        totalCardsStudied: 10,
+        totalTimeStudied: 20,
+      },
+      sessionToken: null,
+    });
+
+    await useUserStore.getState().updateStudyStats(5, 0);
+
+    expect(useUserStore.getState().user).toMatchObject({
+      totalCardsStudied: 10,
+      totalTimeStudied: 20,
+    });
+  });
+
+  it('increments totals without incrementing the streak twice on the same local day', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 13, 20, 0, 0));
+    useUserStore.setState({
+      user: {
+        ...useUserStore.getState().user!,
+        id: 'student-1',
+        isLoggedIn: true,
+        totalCardsStudied: 10,
+        totalTimeStudied: 20,
+        streakDays: 4,
+        lastStudyDate: new Date(2026, 6, 13, 8, 0, 0).getTime(),
+      },
+      sessionToken: null,
+    });
+
+    await useUserStore.getState().updateStudyStats(3, 5);
+
+    expect(useUserStore.getState().user).toMatchObject({
+      totalCardsStudied: 15,
+      totalTimeStudied: 23,
+      streakDays: 4,
+    });
+    vi.useRealTimers();
+  });
 });

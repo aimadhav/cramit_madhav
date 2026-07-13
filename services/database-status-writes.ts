@@ -9,6 +9,7 @@ async function addToSyncQueue(
   operation: 'CREATE' | 'UPDATE' | 'DELETE' | 'REVIEW',
   entityType: 'deck' | 'card_status' | 'review' | 'active_chapter',
   entityId: string,
+  userId: string,
   payload: any,
   tx?: Tx
 ) {
@@ -17,6 +18,7 @@ async function addToSyncQueue(
 
   await executor.insert(schema.syncQueue).values({
     id: Crypto.randomUUID(),
+    userId,
     operation,
     entityType,
     entityId,
@@ -91,7 +93,7 @@ export async function saveReview(reviewData: {
       }
     });
 
-    await addToSyncQueue('REVIEW', 'card_status', reviewData.flashcardId, {
+    await addToSyncQueue('REVIEW', 'card_status', reviewData.flashcardId, reviewData.userId, {
       reviewId,
       rating: reviewData.rating,
       reviewedAt: now,
@@ -122,7 +124,7 @@ export async function toggleBookmark(cardId: string, userId: string, isBookmarke
       }
     });
 
-    await addToSyncQueue('UPDATE', 'card_status', cardId, { isBookmarked }, tx);
+    await addToSyncQueue('UPDATE', 'card_status', cardId, userId, { isBookmarked }, tx);
   });
 }
 
@@ -147,7 +149,7 @@ export async function updateNote(cardId: string, userId: string, notes: string) 
       }
     });
 
-    await addToSyncQueue('UPDATE', 'card_status', cardId, { notes }, tx);
+    await addToSyncQueue('UPDATE', 'card_status', cardId, userId, { notes }, tx);
   });
 }
 
@@ -172,7 +174,7 @@ export async function addActiveChapter(userId: string, deckId: string, subject: 
       }
     });
 
-    await addToSyncQueue('CREATE', 'active_chapter', deckId, { subject, status: 'active' }, tx);
+    await addToSyncQueue('CREATE', 'active_chapter', deckId, userId, { subject, status: 'active' }, tx);
   });
 }
 
@@ -189,7 +191,7 @@ export async function completeActiveChapter(userId: string, deckId: string) {
         )
       );
 
-    await addToSyncQueue('UPDATE', 'active_chapter', deckId, { status: 'completed' }, tx);
+    await addToSyncQueue('UPDATE', 'active_chapter', deckId, userId, { status: 'completed' }, tx);
   });
 }
 

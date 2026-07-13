@@ -22,7 +22,7 @@ interface FlashcardState {
   initializeStore: () => Promise<void>;
   loadDecks: () => Promise<void>;
   loadDeckWithCards: (deckId: string) => Promise<void>;
-  startStudySession: (deckId: string, isCramMode?: boolean, customQueue?: string[]) => Promise<void>;
+  startStudySession: (deckId: string, isCramMode?: boolean, customQueue?: string[]) => Promise<boolean>;
   rateCard: (cardId: string, rating: DifficultyRating, options?: { updateFSRS?: boolean, responseTimeMs?: number }) => Promise<void>;
   getNextCard: () => void;
   toggleBookmark: (cardId: string) => Promise<void>;
@@ -63,10 +63,26 @@ export const useFlashcardStore = create<FlashcardState>()(
         set({ isLoading: true });
 
         try {
+          if (!__DEV__) {
+            const { db } = require('@/db');
+            const schema = require('@/db/schema');
+            const { inArray } = require('drizzle-orm');
+            const sampleDeckIds = defaultDecksData.decks.map((deck) => deck.id);
+            const sampleCardIds = defaultDecksData.decks.flatMap((deck) => deck.flashcards.map((card) => card.id));
+
+            await db.transaction(async (tx: any) => {
+              await tx.delete(schema.reviews).where(inArray(schema.reviews.flashcardId, sampleCardIds));
+              await tx.delete(schema.userFlashcardStatus).where(inArray(schema.userFlashcardStatus.flashcardId, sampleCardIds));
+              await tx.delete(schema.flashcards).where(inArray(schema.flashcards.id, sampleCardIds));
+              await tx.delete(schema.userActiveChapters).where(inArray(schema.userActiveChapters.deckId, sampleDeckIds));
+              await tx.delete(schema.decks).where(inArray(schema.decks.id, sampleDeckIds));
+            });
+          }
+
           const decks = await DatabaseService.getAllDecks(userId);
           
           // Only seed if we have 0 decks AND tables are confirmed to exist
-          if (decks.length === 0) {
+          if (__DEV__ && decks.length === 0) {
             console.log('📦 [FlashcardStore] SQLite empty. Attempting to seed default decks...');
             for (const deck of defaultDecksData.decks) {
               try {
@@ -82,11 +98,12 @@ export const useFlashcardStore = create<FlashcardState>()(
           }
           
           const refreshedDecks = await DatabaseService.getAllDecks(userId);
-          set({ decks: refreshedDecks as any });
+          set({ decks: refreshedDecks as any, error: null });
         } catch (error: any) {
           if (!error.message.includes('no such table')) {
             console.error('❌ [FlashcardStore] Initialization failed:', error);
           }
+          set({ error: 'Could not load study content.' });
         } finally {
           set({ isLoading: false });
         }
@@ -95,15 +112,24 @@ export const useFlashcardStore = create<FlashcardState>()(
       loadDecks: async () => {
         const { useUserStore } = require('./user-store');
         const userId = useUserStore.getState().user?.id || 'local';
-        const localDecks = await DatabaseService.getAllDecks(userId);
-        set({ decks: localDecks as any });
+        set({ isLoading: true });
+        try {
+          const localDecks = await DatabaseService.getAllDecks(userId);
+          set({ decks: localDecks as any, error: null });
+        } catch (error) {
+          console.error('[FlashcardStore] Failed to load decks:', error);
+          set({ error: 'Could not load study content.' });
+          throw error;
+        } finally {
+          set({ isLoading: false });
+        }
       },
 
       loadDeckWithCards: async (deckId: string) => {
         const { useUserStore } = require('./user-store');
         const userId = useUserStore.getState().user?.id || 'local';
         
-        set({ isLoading: true, currentDeckId: deckId });
+        set({ isLoading: true, currentDeckId: deckId, error: null });
         try {
           let cardsWithStatus = [];
           const subjectDecks = get().decks.filter(d =>
@@ -176,15 +202,31 @@ export const useFlashcardStore = create<FlashcardState>()(
             };
           });
 
-          set({ currentFlashcards: normalized as any, flashcards: normalized as any });
+          set({ currentFlashcards: normalized as any, flashcards: normalized as any, error: null });
+        } catch (error) {
+          set({ currentFlashcards: [], flashcards: [], error: 'Could not load cards for this session.' });
+          throw error;
         } finally {
           set({ isLoading: false });
         }
       },
 
       startStudySession: async (deckId: string, isCramMode: boolean = false, customQueue?: string[]) => {
+        // Clear any previous subject before doing asynchronous work. An empty or
+        // failed queue must never leave another subject's cards active.
+        set({
+          currentDeckId: deckId,
+          currentFlashcards: [],
+          flashcards: [],
+          sessionQueue: [],
+          studyProgress: null,
+          error: null,
+        });
+
         const queue = customQueue || await StudyService.getSessionQueue(deckId, 45, isCramMode);
-        if (queue.length > 0) {
+        if (queue.length === 0) return false;
+
+        try {
           set({
             currentDeckId: deckId,
             sessionQueue: queue,
@@ -196,12 +238,41 @@ export const useFlashcardStore = create<FlashcardState>()(
             },
           });
           await get().loadDeckWithCards(deckId);
+
+          // A queue can reference a card removed by a newer content sync. Keep
+          // valid cards and fail clearly if the whole queue is stale.
+          const availableIds = new Set(get().currentFlashcards.map((card) => card.id));
+          const validQueue = queue.filter((cardId) => availableIds.has(cardId));
+          if (validQueue.length === 0) {
+            throw new Error('The queued study cards are not available on this device.');
+          }
+          if (validQueue.length !== queue.length) {
+            set({
+              sessionQueue: validQueue,
+              studyProgress: {
+                deckId,
+                cardsLeft: validQueue.length,
+                cardsStudied: 0,
+                currentCardIndex: 0,
+              },
+            });
+          }
           
           // EAGER CACHING: Trigger background cache check for any missing/failed images
           const { SyncService } = require('@/services/sync-service');
           SyncService.cacheDeckImages(deckId).catch((e: any) => {
             console.warn('⚠️ [Store] Background cache priming failed:', e);
           });
+          return true;
+        } catch (error) {
+          set({
+            currentFlashcards: [],
+            flashcards: [],
+            sessionQueue: [],
+            studyProgress: null,
+            error: 'Could not load this study session.',
+          });
+          throw error;
         }
       },
 
@@ -211,7 +282,7 @@ export const useFlashcardStore = create<FlashcardState>()(
         const { useUserStore } = require('./user-store');
         const { db } = require('@/db');
         const { syncQueue } = require('@/db/schema');
-        const { count, eq } = require('drizzle-orm');
+        const { count, eq, and } = require('drizzle-orm');
 
         const user = useUserStore.getState().user;
         const userId = user?.id || 'local';
@@ -232,7 +303,10 @@ export const useFlashcardStore = create<FlashcardState>()(
           });
 
           // BATCH SYNC LOGIC: Only push if queue is >= 3 items
-          const pendingTasks = await db.select({ value: count() }).from(syncQueue).where(eq(syncQueue.status, 'pending'));
+          const pendingTasks = await db.select({ value: count() }).from(syncQueue).where(and(
+            eq(syncQueue.status, 'pending'),
+            eq(syncQueue.userId, userId),
+          ));
           const queueSize = pendingTasks[0]?.value || 0;
 
           if (queueSize >= 3) {

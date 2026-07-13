@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useState } from "react";
+import React, { useMemo, useEffect, useRef, useState } from "react";
 import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -10,6 +10,9 @@ import { useUserStore } from "@/store/user-store";
 import { useFlashcardStore } from "@/store/flashcard-store";
 import { DatabaseService } from "@/services/database-service";
 import { StudyService } from "@/services/study-service";
+import { StatsService } from "@/services/stats-service";
+import { buildTodayActivitySnapshot } from "@/services/stats-analytics";
+import type { TodayActivitySnapshot } from "@/types/stats";
 
 import { SubjectConfigModal } from "@/components/SubjectConfigModal";
 import { UnifiedAlertModal } from "@/components/UnifiedAlertModal";
@@ -26,7 +29,9 @@ export default function HomeScreen() {
   const colors = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { user } = useUserStore();
-  const { decks } = useFlashcardStore();
+  const decks = useFlashcardStore((state) => state.decks);
+  const decksLoading = useFlashcardStore((state) => state.isLoading);
+  const decksError = useFlashcardStore((state) => state.error);
 
   const [activeChapters, setActiveChapters] = useState<Record<string, string[]>>({});
   const [completedChapters, setCompletedChapters] = useState<any[]>([]);
@@ -41,6 +46,10 @@ export default function HomeScreen() {
   }>>({});
   const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
   const [isLaunchingSession, setIsLaunchingSession] = useState(false);
+  const [todayActivity, setTodayActivity] = useState<TodayActivitySnapshot>(() =>
+    buildTodayActivitySnapshot({ reviews: [] })
+  );
+  const activityRequestIdRef = useRef(0);
   
   // Chapter Config Modal State
   const [isConfigModalVisible, setIsChapterModalVisible] = useState(false);
@@ -82,6 +91,12 @@ export default function HomeScreen() {
 
   const userId = user?.id || 'local';
   const userFocus = user?.prepFocus || null;
+
+  useEffect(() => {
+    activityRequestIdRef.current += 1;
+    setTodayActivity(buildTodayActivitySnapshot({ reviews: [] }));
+  }, [userId]);
+
   const subjects = useMemo(() => {
     return Array.from(new Set(decks
       .filter((deck) => isSubjectAllowedForPrepFocus(deck.subject, userFocus))
@@ -219,6 +234,26 @@ export default function HomeScreen() {
     }
   };
 
+  const refreshTodayActivity = React.useCallback(async () => {
+    const requestId = ++activityRequestIdRef.current;
+    try {
+      // Render local review history immediately, including reviews that have not synced yet.
+      const localSnapshot = await StatsService.getTodayActivity({ userId, dataSource: 'local' });
+      if (requestId !== activityRequestIdRef.current) return;
+      setTodayActivity(localSnapshot);
+
+      // Then merge cross-device history when this is a cloud-backed account.
+      if (userId !== 'local' && userId !== 'guest-user') {
+        const dataSource = await StatsService.refreshCloudHistory(userId);
+        const refreshedSnapshot = await StatsService.getTodayActivity({ userId, dataSource });
+        if (requestId !== activityRequestIdRef.current) return;
+        setTodayActivity(refreshedSnapshot);
+      }
+    } catch (error) {
+      console.warn('[Home] Failed to refresh today activity; keeping the last local snapshot.', error);
+    }
+  }, [userId]);
+
   // Trigger sync on mount
   useEffect(() => {
     const { SyncService } = require('@/services/sync-service');
@@ -235,7 +270,8 @@ export default function HomeScreen() {
   useFocusEffect(
     React.useCallback(() => {
       loadActiveChapters();
-    }, [userId, userFocus, decks.length])
+      refreshTodayActivity();
+    }, [userId, userFocus, decks.length, refreshTodayActivity])
   );
 
   // Reactive Stats Mapper for each Subject
@@ -437,6 +473,9 @@ export default function HomeScreen() {
         <RecommendedSubjectCard 
           topSubject={topSubject}
           isLaunchingSession={isLaunchingSession}
+          isLoading={decksLoading || isFetchingMetadata}
+          loadError={decksError}
+          onRetry={() => void useFlashcardStore.getState().initializeStore()}
           onStartSession={handleStartSession}
           onConfigureChapters={openConfigModal}
           onShowActiveChaptersInfo={handleShowActiveChaptersInfo}
@@ -454,20 +493,21 @@ export default function HomeScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>TODAY'S ACTIVITY</Text>
           <TodayActivityCard 
-            totalCardsStudied={user?.totalCardsStudied || 0} 
-            totalTimeStudied={user?.totalTimeStudied || 0} 
+            snapshot={todayActivity}
             dailyGoal={45} 
           />
         </View>
 
         {/* Centralized Configuration Button at the bottom */}
-        <TouchableOpacity 
-          style={styles.globalConfigBtn}
-          onPress={() => openConfigModal(subjects[0], activeChapters[subjects[0]] || [])}
-        >
-          <Settings2 size={15} color="#5e6ad2" style={{ marginRight: 8 }} />
-          <Text style={styles.globalConfigBtnText}>CONFIGURE STUDY CHAPTERS</Text>
-        </TouchableOpacity>
+        {subjects.length > 0 && (
+          <TouchableOpacity
+            style={styles.globalConfigBtn}
+            onPress={() => openConfigModal(subjects[0], activeChapters[subjects[0]] || [])}
+          >
+            <Settings2 size={15} color="#5e6ad2" style={{ marginRight: 8 }} />
+            <Text style={styles.globalConfigBtnText}>CONFIGURE STUDY CHAPTERS</Text>
+          </TouchableOpacity>
+        )}
 
       </ScrollView>
 

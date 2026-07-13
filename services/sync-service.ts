@@ -18,6 +18,12 @@ export class SyncService {
   static async pushChanges(userId: string) {
     if (this.isSyncing || !userId) return;
 
+    const { useUserStore } = require('@/store/user-store');
+    const activeUser = useUserStore.getState();
+    if (activeUser.user?.id !== userId || !activeUser.sessionToken || activeUser.sessionToken === 'offline-mode-token') {
+      return;
+    }
+
     // Check internet connection status first to avoid failing tasks on network-less requests
     const NetInfo = require('@react-native-community/netinfo');
     const state = await NetInfo.fetch();
@@ -104,10 +110,9 @@ export class SyncService {
           .from('reviews')
           .upsert(supabaseReview, { onConflict: 'id' });
 
-        if (reviewError) {
+        if (reviewError != null) {
           console.warn(`⚠️ [Supabase Sync] Failed to insert historical review for ${flashcardId}:`, reviewError.message);
-          // We do NOT return false here because the card status synced successfully, 
-          // and we do not want to block the sync queue over a logging warning!
+          return false;
         }
       }
 
@@ -249,9 +254,12 @@ export class SyncService {
    */
   static async fullSync(userId: string) {
     if (this.isSyncing) return;
+    const { useUserStore } = require('@/store/user-store');
+    if (useUserStore.getState().user?.id !== userId) return;
     console.log('🔄 [SyncEngine] Starting Full Orchestration...');
     
     await this.pushChanges(userId);
+    if (useUserStore.getState().user?.id !== userId) return;
     await this.pullStatuses(userId);
     await this.pullDecks();
     

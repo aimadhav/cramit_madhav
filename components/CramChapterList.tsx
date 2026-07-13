@@ -50,8 +50,9 @@ export const CramChapterList: React.FC<CramChapterListProps> = ({
                   isSelected && styles.chapterRowSelected,
                   !isDownloaded && { opacity: 0.8 }
                 ]}
-                disabled={!isDownloaded}
-                onPress={() => onToggleChapter(chapter.id)}
+                onPress={() => {
+                  if (isDownloaded) onToggleChapter(chapter.id);
+                }}
               >
                 <View style={styles.chapterInfo}>
                   <Text style={styles.chapterName}>{chapter.name}</Text>

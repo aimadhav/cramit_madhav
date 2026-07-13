@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 
@@ -19,6 +19,7 @@ import { Text } from '@/components/AppText';
 import { isSubjectAllowedForPrepFocus } from '@/constants/examSubjects';
 import { supabase } from '@/lib/supabase';
 import { StatsService } from '@/services/stats-service';
+import { AuthService } from '@/services/auth-service';
 import { StudyService } from '@/services/study-service';
 import { useFlashcardStore } from '@/store/flashcard-store';
 import { OFFLINE_MODE_TOKEN, useUserStore } from '@/store/user-store';
@@ -28,7 +29,6 @@ export default function StatsScreen() {
   const router = useRouter();
   const user = useUserStore((state) => state.user);
   const sessionToken = useUserStore((state) => state.sessionToken);
-  const logout = useUserStore((state) => state.logout);
   const decks = useFlashcardStore((state) => state.decks);
   const getStreak = useFlashcardStore((state) => state.getStreak);
 
@@ -36,8 +36,10 @@ export default function StatsScreen() {
   const [snapshot, setSnapshot] = useState<StatsSnapshot | null>(null);
   const [isStatsLoading, setIsStatsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const rangeRef = useRef<StatsRange>(30);
   const sourceRef = useRef<StatsDataSource>('local');
+  const snapshotRequestIdRef = useRef(0);
 
   const [isJoinModalVisible, setIsJoinModalVisible] = useState(false);
   const [joinCode, setJoinCode] = useState('');
@@ -57,6 +59,7 @@ export default function StatsScreen() {
   const subjectsKey = availableSubjects.join('|');
 
   const loadSnapshot = useCallback(async (source: StatsDataSource, selectedRange = rangeRef.current) => {
+    const requestId = ++snapshotRequestIdRef.current;
     const result = await StatsService.getSnapshot({
       userId,
       range: selectedRange,
@@ -64,8 +67,10 @@ export default function StatsScreen() {
       availableSubjects,
       dataSource: source,
     });
+    if (requestId !== snapshotRequestIdRef.current) return;
     sourceRef.current = source;
     setSnapshot(result);
+    setStatsError(null);
   }, [userId, user?.prepFocus, subjectsKey]);
 
   const refreshStats = useCallback(async (showPullRefresh = false) => {
@@ -79,7 +84,12 @@ export default function StatsScreen() {
       await loadSnapshot(source);
     } catch (error) {
       console.error('[Stats] Failed to calculate analytics:', error);
-      await loadSnapshot('cached');
+      try {
+        await loadSnapshot('cached');
+      } catch (cachedError) {
+        console.error('[Stats] Cached analytics also failed:', cachedError);
+        setStatsError('Your progress could not be loaded right now.');
+      }
     } finally {
       setIsStatsLoading(false);
       setIsRefreshing(false);
@@ -97,6 +107,7 @@ export default function StatsScreen() {
     if (!snapshot) return;
     loadSnapshot(sourceRef.current, range).catch((error) => {
       console.error('[Stats] Failed to switch analytics range:', error);
+      setStatsError('This time range could not be loaded.');
     });
   }, [range, loadSnapshot]);
 
@@ -112,34 +123,22 @@ export default function StatsScreen() {
     setClassesError(false);
     try {
       const { data, error } = await supabase
-        .from('room_memberships')
-        .select('room_id, role, rooms!inner(id, name)')
-        .eq('user_id', user.id);
+        .rpc('get_my_rooms');
       if (error) throw error;
 
-      const memberships = (data ?? []) as Array<{
+      const rooms = (data ?? []) as Array<{
         room_id: string;
+        name: string;
         role: string;
-        rooms: { id: string; name: string } | { id: string; name: string }[] | null;
+        member_count: number;
       }>;
 
-      const rooms = await Promise.all(memberships.map(async (membership) => {
-        const room = Array.isArray(membership.rooms) ? membership.rooms[0] : membership.rooms;
-        if (!room) return null;
-        const { count, error: countError } = await supabase
-          .from('room_memberships')
-          .select('user_id', { count: 'exact', head: true })
-          .eq('room_id', room.id);
-        if (countError) throw countError;
-        return {
-          id: room.id,
-          name: room.name,
-          role: membership.role,
-          memberCount: count ?? 0,
-        };
-      }));
-
-      setJoinedRooms(rooms.filter((room): room is JoinedClass => room !== null));
+      setJoinedRooms(rooms.map((room) => ({
+        id: room.room_id,
+        name: room.name,
+        role: room.role,
+        memberCount: Number(room.member_count) || 0,
+      })));
     } catch (error) {
       console.error('[Stats] Failed to load joined classes:', error);
       setClassesError(true);
@@ -161,7 +160,7 @@ export default function StatsScreen() {
     try {
       if (!user?.id || !isCloudUser) throw new Error('You must be signed in to join a class.');
       const { data: joinedData, error } = await supabase.rpc('join_room_by_code', {
-        p_code: joinCode.trim(),
+        p_code: joinCode.trim().toUpperCase(),
       });
       if (error) throw error;
       const data = Array.isArray(joinedData) ? joinedData[0] : joinedData;
@@ -225,7 +224,7 @@ export default function StatsScreen() {
         <StatsHeader
           streakDays={getStreak()}
           onSignOut={async () => {
-            await logout();
+            await AuthService.signOut();
             router.replace('/login');
           }}
         />
@@ -235,6 +234,7 @@ export default function StatsScreen() {
           isLoading={classesLoading}
           error={classesError}
           onRetry={fetchJoinedRooms}
+          canJoin={isCloudUser}
           onJoinPress={() => setIsJoinModalVisible(true)}
           onRoomPress={(room) => {
             if (room.role === 'teacher') router.push(`/teacher-portal/${room.id}`);
@@ -252,6 +252,14 @@ export default function StatsScreen() {
             <BacklogCard snapshot={snapshot} onStartSubject={handleStartBacklog} />
             <SubjectPerformanceList snapshot={snapshot} />
           </>
+        ) : statsError ? (
+          <View style={styles.loadingCard}>
+            <Text style={styles.errorTitle}>Progress unavailable</Text>
+            <Text style={styles.loadingText}>{statsError}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={() => void refreshStats()}>
+              <Text style={styles.retryButtonText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           <View style={styles.loadingCard}>
             <ActivityIndicator color="#6c7bff" />
@@ -276,4 +284,7 @@ const styles = StyleSheet.create({
   container: { paddingHorizontal: 20, paddingBottom: 112 },
   loadingCard: { minHeight: 160, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: '#15171B', borderRadius: 21, borderWidth: 1, borderColor: '#2A2C32' },
   loadingText: { color: '#858891', fontSize: 12, fontFamily: 'Outfit_500Medium' },
+  errorTitle: { color: '#FFFFFF', fontSize: 17, fontFamily: 'Outfit_700Bold' },
+  retryButton: { backgroundColor: '#6c7bff', borderRadius: 12, paddingHorizontal: 18, paddingVertical: 10 },
+  retryButtonText: { color: '#FFFFFF', fontSize: 13, fontFamily: 'Outfit_700Bold' },
 });

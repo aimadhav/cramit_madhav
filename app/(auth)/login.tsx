@@ -99,9 +99,17 @@ export default function LoginScreen() {
     }
   };
 
-  const handleGuest = () => {
-    useUserStore.getState().loginOffline();
-    router.replace('/');
+  const handleGuest = async () => {
+    if (busy) return;
+    try {
+      setIsLoading(true);
+      await AuthService.continueOffline();
+      router.replace('/');
+    } catch (error: any) {
+      Alert.alert('Could not continue offline', error?.message || 'Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

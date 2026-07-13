@@ -7,6 +7,7 @@ import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-or
  */
 export const syncQueue = sqliteTable('sync_queue', {
   id: text('id').primaryKey(),
+  userId: text('user_id'),
   operation: text('operation').notNull(), // 'CREATE', 'UPDATE', 'DELETE', 'REVIEW'
   entityType: text('entity_type').notNull(), // 'deck', 'card_status', 'review'
   entityId: text('entity_id').notNull(),
@@ -16,7 +17,9 @@ export const syncQueue = sqliteTable('sync_queue', {
   lastError: text('last_error'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
-});
+}, (table) => ({
+  userStatusIdx: index('sync_queue_user_status_idx').on(table.userId, table.status),
+}));
 
 /**
  * Decks: Local storage for owned and downloaded decks (Issue 5 & 6)

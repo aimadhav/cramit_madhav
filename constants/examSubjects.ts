@@ -4,6 +4,29 @@ export const EXAM_SUBJECTS: Record<string, string[]> = {
   'Computer Science': ['DSA', 'DBMS', 'Operating Systems', 'OOP', 'Computer Networks'],
 };
 
+const PREP_FOCUS_ALIASES: Record<string, string> = {
+  cs: 'Computer Science',
+  'cs / tech': 'Computer Science',
+  'computer science': 'Computer Science',
+};
+
+const SUBJECT_ALIASES: Record<string, string[]> = {
+  Physics: ['Physics'],
+  Chemistry: ['Chemistry'],
+  Mathematics: ['Mathematics', 'Maths', 'Math'],
+  Biology: ['Biology'],
+  DSA: [
+    'DSA',
+    'Data Structures & Algorithms (DSA)',
+    'Data Structures and Algorithms',
+    'Data Structures & Algorithms',
+  ],
+  DBMS: ['DBMS', 'Database Management Systems'],
+  'Operating Systems': ['Operating Systems', 'OS'],
+  OOP: ['OOP', 'Object-Oriented Programming (OOP)', 'Object Oriented Programming'],
+  'Computer Networks': ['Computer Networks', 'CN'],
+};
+
 export const EXAM_OPTIONS = [
   {
     id: 'JEE',
@@ -30,12 +53,34 @@ export const EXAM_OPTIONS = [
 
 export function getSubjectsForPrepFocus(prepFocus?: string | null) {
   if (!prepFocus) return null;
-  return EXAM_SUBJECTS[prepFocus] || [];
+  const trimmed = prepFocus.trim();
+  const canonicalFocus = PREP_FOCUS_ALIASES[trimmed.toLowerCase()] || trimmed;
+  return EXAM_SUBJECTS[canonicalFocus] || [];
+}
+
+export function canonicalizeSubject(subject?: string | null) {
+  if (!subject) return null;
+  const trimmed = subject.trim();
+  const normalized = trimmed.toLowerCase();
+
+  for (const [canonical, aliases] of Object.entries(SUBJECT_ALIASES)) {
+    if (aliases.some((alias) => alias.toLowerCase() === normalized)) return canonical;
+  }
+
+  return trimmed;
+}
+
+export function getSubjectQueryValuesForPrepFocus(prepFocus?: string | null) {
+  const subjects = getSubjectsForPrepFocus(prepFocus);
+  if (subjects === null) return null;
+
+  return Array.from(new Set(subjects.flatMap((subject) => SUBJECT_ALIASES[subject] || [subject])));
 }
 
 export function isSubjectAllowedForPrepFocus(subject: string | null | undefined, prepFocus?: string | null) {
-  if (!subject) return false;
+  const canonicalSubject = canonicalizeSubject(subject);
+  if (!canonicalSubject) return false;
   const allowedSubjects = getSubjectsForPrepFocus(prepFocus);
   if (allowedSubjects === null) return true;
-  return allowedSubjects.some((allowed) => allowed.toLowerCase() === subject.trim().toLowerCase());
+  return allowedSubjects.includes(canonicalSubject);
 }

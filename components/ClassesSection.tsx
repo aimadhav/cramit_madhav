@@ -18,6 +18,7 @@ interface ClassesSectionProps {
   isLoading?: boolean;
   error?: boolean;
   onRetry?: () => void;
+  canJoin?: boolean;
 }
 
 export const ClassesSection: React.FC<ClassesSectionProps> = ({
@@ -27,15 +28,18 @@ export const ClassesSection: React.FC<ClassesSectionProps> = ({
   isLoading = false,
   error = false,
   onRetry,
+  canJoin = true,
 }) => {
   return (
     <View style={styles.container}>
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.cardSectionLabel}>YOUR CLASSES</Text>
-        <TouchableOpacity style={styles.joinButtonSmall} onPress={onJoinPress}>
-          <Plus size={14} color="#6c7bff" />
-          <Text style={styles.joinButtonTextSmall}>Join Class</Text>
-        </TouchableOpacity>
+        {canJoin && (
+          <TouchableOpacity style={styles.joinButtonSmall} onPress={onJoinPress}>
+            <Plus size={14} color="#6c7bff" />
+            <Text style={styles.joinButtonTextSmall}>Join Class</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {isLoading && joinedRooms.length === 0 ? (
@@ -63,13 +67,21 @@ export const ClassesSection: React.FC<ClassesSectionProps> = ({
               <View style={styles.roomCopy}>
                 <Text style={styles.roomName} numberOfLines={1}>{room.name}</Text>
                 <Text style={styles.roomInfo} numberOfLines={1}>
-                  {room.role === 'teacher' ? 'Teacher' : 'Student'} · {room.memberCount} members
+                  {room.role === 'teacher' ? 'Teacher' : 'Student'} · {room.memberCount} {room.memberCount === 1 ? 'student' : 'students'}
                 </Text>
               </View>
               {room.role === 'teacher' && <ChevronRight size={16} color="#94969a" />}
             </TouchableOpacity>
           ))}
         </ScrollView>
+      ) : !canJoin ? (
+        <View style={styles.emptyRoomCard}>
+          <Users size={20} color="#5F6166" />
+          <View style={styles.statusCopy}>
+            <Text style={styles.emptyRoomText}>Classes need an account</Text>
+            <Text style={styles.emptyRoomSubtext}>Sign in to join and sync a class</Text>
+          </View>
+        </View>
       ) : (
         <TouchableOpacity style={styles.emptyRoomCard} onPress={onJoinPress}>
           <Users size={20} color="#5F6166" />

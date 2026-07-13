@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { StyleSheet, View, Alert, Dimensions, ActivityIndicator } from "react-native";
+import { StyleSheet, View, Alert, Dimensions, ActivityIndicator, TouchableOpacity } from "react-native";
 import { Text } from "@/components/AppText";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useFlashcardStore } from "@/store/flashcard-store";
@@ -43,6 +43,7 @@ export default function StudySessionScreen() {
   const flashcards = useFlashcardStore(state => state.flashcards);
   const studyProgress = useFlashcardStore(state => state.studyProgress);
   const sessionQueue = useFlashcardStore(state => state.sessionQueue);
+  const currentDeckId = useFlashcardStore(state => state.currentDeckId);
   
   const getNextCardFromStore = useFlashcardStore(state => state.getNextCard);
   const startStudySession = useFlashcardStore(state => state.startStudySession);
@@ -58,7 +59,6 @@ export default function StudySessionScreen() {
   
   // Local state
   const [showBack, setShowBack] = useState(false);
-  const [sessionStartTime] = useState(Date.now());
   const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | 'up' | 'down' | null>(null);
   const [isRating, setIsRating] = useState(false);
   const [isFullView, setIsFullView] = useState(false);
@@ -67,13 +67,53 @@ export default function StudySessionScreen() {
   const [noteMode, setNoteMode] = useState<'read' | 'edit'>('edit');
   const [isNoteSaving, setIsNoteSaving] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
+  const [initAttempt, setInitAttempt] = useState(0);
   const [backlogCount, setBacklogCount] = useState(0);
   const [completedChapterName, setCompletedChapterName] = useState<string | null>(null);
   const cardShownTimeRef = useRef<number>(Date.now());
+  const ratingLockRef = useRef(false);
+  const latestStudyProgressRef = useRef(studyProgress);
+  const accountedCardsRef = useRef(0);
+  const accountingStartedAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    const previous = latestStudyProgressRef.current;
+    const isNewSession = !!studyProgress && (
+      previous?.deckId !== studyProgress.deckId ||
+      studyProgress.cardsStudied < (previous?.cardsStudied ?? 0) ||
+      studyProgress.cardsStudied < accountedCardsRef.current
+    );
+
+    if (isNewSession) {
+      accountedCardsRef.current = 0;
+      accountingStartedAtRef.current = Date.now();
+    }
+    latestStudyProgressRef.current = studyProgress;
+  }, [studyProgress]);
+
+  const flushStudyStats = useCallback(() => {
+    const progress = latestStudyProgressRef.current;
+    const cardsStudied = progress?.cardsStudied ?? 0;
+    const unaccountedCards = Math.max(0, cardsStudied - accountedCardsRef.current);
+
+    // Never add phantom study time for opening and closing an empty session.
+    if (unaccountedCards === 0) return;
+
+    const elapsedMinutes = Math.max(
+      1,
+      Math.ceil((Date.now() - accountingStartedAtRef.current) / 60_000)
+    );
+    accountedCardsRef.current = cardsStudied;
+    accountingStartedAtRef.current = Date.now();
+    void updateStudyStats(elapsedMinutes, unaccountedCards);
+  }, [updateStudyStats]);
   
   // Start a session from the local database on mount.
   useEffect(() => {
     async function init() {
+      setSessionLoadError(null);
+      setIsInitializing(true);
       if (id) {
         const store = useFlashcardStore.getState();
         // If the store already has an active session pre-loaded for this ID/Subject, do not override it!
@@ -89,16 +129,15 @@ export default function StudySessionScreen() {
           setIsInitializing(false);
         } catch (error) {
           console.error('📱 [UI] Error starting study session:', error);
-          Alert.alert("Error", "Could not load this study session.", [
-            { text: "OK", onPress: () => router.back() }
-          ]);
+          setSessionLoadError('Could not load this study session. Check your connection or try again.');
+          setIsInitializing(false);
         }
       } else {
         setIsInitializing(false);
       }
     }
     init();
-  }, [id, isCramMode]);
+  }, [id, isCramMode, initAttempt, startStudySession, router]);
 
   // Animation values
   const translateX = useSharedValue(0);
@@ -108,12 +147,12 @@ export default function StudySessionScreen() {
   
   // Get current card
   const currentCard = useMemo(() => {
-    if (!studyProgress || sessionQueue.length === 0) return null;
+    if (currentDeckId !== id || !studyProgress || sessionQueue.length === 0) return null;
     if (studyProgress.currentCardIndex >= sessionQueue.length) return null;
     
     const cardId = sessionQueue[studyProgress.currentCardIndex];
     return flashcards.find(f => f.id === cardId) || null;
-  }, [studyProgress, sessionQueue, flashcards]);
+  }, [currentDeckId, id, studyProgress, sessionQueue, flashcards]);
   
   // Check if session is complete
   const isSessionComplete = !currentCard && !!studyProgress && !isInitializing && studyProgress.cardsLeft === 0;
@@ -127,6 +166,10 @@ export default function StudySessionScreen() {
 
   // Sync progress when session finishes
   useEffect(() => {
+    if (isSessionComplete) {
+      flushStudyStats();
+    }
+
     if (isSessionComplete && !isCramMode) {
       syncSessionProgress();
 
@@ -178,17 +221,15 @@ export default function StudySessionScreen() {
       }
       checkPostSessionStats();
     }
-  }, [isSessionComplete, isCramMode, syncSessionProgress, userId, id]);
+  }, [isSessionComplete, isCramMode, syncSessionProgress, userId, id, flushStudyStats]);
   
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      const sessionDuration = Math.ceil((Date.now() - sessionStartTime) / 60000);
-      const cardsStudied = studyProgress?.cardsStudied || 0;
-      updateStudyStats(sessionDuration, cardsStudied);
+      flushStudyStats();
       endStudySession();
     };
-  }, []);
+  }, [endStudySession, flushStudyStats]);
   
   // Reset card position when card changes
   useEffect(() => {
@@ -210,7 +251,8 @@ export default function StudySessionScreen() {
 
   // Handle rating a card
   const handleRateCard = useCallback(async (rating: DifficultyRating) => {
-    if (!currentCard || isRating) return;
+    if (!currentCard || ratingLockRef.current) return;
+    ratingLockRef.current = true;
     const responseTimeMs = Date.now() - cardShownTimeRef.current;
     console.log('📱 [UI] Rating card:', currentCard.id, 'as', rating, 'Response time:', responseTimeMs);
 
@@ -221,12 +263,13 @@ export default function StudySessionScreen() {
       await rateCard(currentCard.id, rating, { updateFSRS: !isCramMode, responseTimeMs });
       getNextCardFromStore();
       setSwipeDirection(null);
-      setIsRating(false);
     } catch (error) {
       console.error("Error rating card:", error);
+    } finally {
       setIsRating(false);
+      ratingLockRef.current = false;
     }
-  }, [currentCard, isRating, rateCard, getNextCardFromStore, isCramMode]);
+  }, [currentCard, rateCard, getNextCardFromStore, isCramMode]);
   
   // Handle bookmark toggle
   const handleToggleBookmark = useCallback(async () => {
@@ -242,13 +285,14 @@ export default function StudySessionScreen() {
 
   // Handle exit
   const handleExit = useCallback(() => {
+    flushStudyStats();
     endStudySession();
     router.back();
-  }, [endStudySession, router]);
+  }, [endStudySession, flushStudyStats, router]);
 
   // Gesture handler for swipe
   const gesture = Gesture.Pan()
-    .enabled(!isFullView) 
+    .enabled(!isFullView && !isRating)
     .onUpdate((event) => {
       translateX.value = event.translationX;
       translateY.value = event.translationY * 0.2; 
@@ -310,6 +354,7 @@ export default function StudySessionScreen() {
 
   const handleStartBacklogSession = async () => {
     try {
+      flushStudyStats();
       const { StudyService } = require('@/services/study-service');
       const queue = await StudyService.getBacklogQueue(id, Math.min(30, backlogCount));
       await useFlashcardStore.getState().startStudySession(id, false, queue);
@@ -320,6 +365,7 @@ export default function StudySessionScreen() {
   };
 
   const handleAddChaptersRedirect = () => {
+    flushStudyStats();
     router.replace(`/(tabs)?openConfig=true&subject=${id}`);
   };
 
@@ -343,6 +389,17 @@ export default function StudySessionScreen() {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#5e6ad2" />
           <Text style={{ color: '#94969a', marginTop: 10 }}>Loading Session...</Text>
+        </View>
+      ) : sessionLoadError ? (
+        <View style={styles.loadingContainer}>
+          <Text style={styles.errorTitle}>Session unavailable</Text>
+          <Text style={styles.errorMessage}>{sessionLoadError}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => setInitAttempt((value) => value + 1)}>
+            <Text style={styles.retryButtonText}>Try again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Text style={styles.backLink}>Go back</Text>
+          </TouchableOpacity>
         </View>
       ) : isSessionComplete ? (
         <StudyCompletion 
@@ -436,6 +493,11 @@ const createStyles = (colors: any, insets: any) => StyleSheet.create({
     backgroundColor: '#000',
     padding: 30,
   },
+  errorTitle: { color: '#FFFFFF', fontSize: 22, fontFamily: 'Outfit_700Bold', textAlign: 'center' },
+  errorMessage: { color: '#94969a', fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 8, maxWidth: 330 },
+  retryButton: { marginTop: 24, minWidth: 150, minHeight: 50, borderRadius: 15, backgroundColor: '#5e6ad2', alignItems: 'center', justifyContent: 'center' },
+  retryButtonText: { color: '#FFFFFF', fontSize: 15, fontFamily: 'Outfit_700Bold' },
+  backLink: { color: '#94969a', fontSize: 14, fontFamily: 'Outfit_600SemiBold', marginTop: 18 },
   legend: {
     paddingBottom: 40,
     alignItems: 'center',

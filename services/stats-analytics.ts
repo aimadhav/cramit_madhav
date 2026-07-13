@@ -1,4 +1,8 @@
-import { getSubjectsForPrepFocus } from '@/constants/examSubjects';
+import {
+  canonicalizeSubject,
+  getSubjectsForPrepFocus,
+  isSubjectAllowedForPrepFocus,
+} from '@/constants/examSubjects';
 import type {
   StatsActivityBucket,
   StatsBacklogRow,
@@ -9,6 +13,7 @@ import type {
   StatsReviewRow,
   StatsSnapshot,
   SubjectPerformance,
+  TodayActivitySnapshot,
 } from '@/types/stats';
 
 export function startOfLocalDay(date: Date) {
@@ -18,6 +23,10 @@ export function startOfLocalDay(date: Date) {
 function addLocalDays(timestamp: number, days: number) {
   const date = new Date(timestamp);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days).getTime();
+}
+
+function isValidResponseTime(value: number | null): value is number {
+  return value !== null && value >= 250 && value <= 300_000;
 }
 
 function recallRate(rows: StatsReviewRow[]) {
@@ -33,7 +42,7 @@ function percentChange(current: number, previous: number) {
 function medianResponseTime(rows: StatsReviewRow[]) {
   const values = rows
     .map((row) => row.responseTimeMs)
-    .filter((value): value is number => value !== null && value >= 250 && value <= 300_000)
+    .filter(isValidResponseTime)
     .sort((a, b) => a - b);
 
   if (values.length < 3) return null;
@@ -41,6 +50,31 @@ function medianResponseTime(rows: StatsReviewRow[]) {
   return values.length % 2 === 0
     ? Math.round((values[middle - 1] + values[middle]) / 2)
     : values[middle];
+}
+
+export function buildTodayActivitySnapshot(args: {
+  reviews: StatsReviewRow[];
+  now?: Date;
+  dataSource?: StatsDataSource;
+}): TodayActivitySnapshot {
+  const now = args.now ?? new Date();
+  const today = startOfLocalDay(now);
+  const nextDay = addLocalDays(today, 1);
+  const periodStart = addLocalDays(today, -6);
+  const recentReviews = args.reviews.filter(
+    (row) => row.reviewedAt >= periodStart && row.reviewedAt < nextDay
+  );
+  const todayReviews = recentReviews.filter((row) => row.reviewedAt >= today);
+
+  return {
+    reviewsToday: todayReviews.length,
+    focusedReviewTimeMs: todayReviews
+      .map((row) => row.responseTimeMs)
+      .filter(isValidResponseTime)
+      .reduce((total, value) => total + value, 0),
+    activity: buildActivity(recentReviews, 7, periodStart),
+    dataSource: args.dataSource ?? 'local',
+  };
 }
 
 function buildActivity(rows: StatsReviewRow[], range: StatsRange, periodStart: number): StatsActivityBucket[] {
@@ -84,17 +118,13 @@ export function buildBacklogSummary(
   rows: StatsBacklogRow[],
   prepFocus?: string | null
 ): StatsBacklogSummary {
-  const allowed = getSubjectsForPrepFocus(prepFocus);
   const filtered = rows.filter((row) => {
-    if (!row.subject) return false;
-    if (allowed === null) return true;
-    return allowed.some((subject) => subject.toLowerCase() === row.subject!.trim().toLowerCase());
+    return isSubjectAllowedForPrepFocus(row.subject, prepFocus);
   });
   const counts = new Map<string, number>();
   for (const row of filtered) {
-    const name = row.subject!.trim();
-    const existingName = Array.from(counts.keys()).find((key) => key.toLowerCase() === name.toLowerCase());
-    counts.set(existingName || name, (counts.get(existingName || name) || 0) + 1);
+    const name = canonicalizeSubject(row.subject)!;
+    counts.set(name, (counts.get(name) || 0) + 1);
   }
 
   return {
@@ -111,11 +141,15 @@ function buildSubjects(
   availableSubjects: string[]
 ): SubjectPerformance[] {
   const allowed = getSubjectsForPrepFocus(prepFocus);
-  const names = allowed ?? Array.from(new Set([...availableSubjects, ...rows.map((row) => row.subject || '')].filter(Boolean)));
+  const names = allowed ?? Array.from(new Set(
+    [...availableSubjects, ...rows.map((row) => row.subject || '')]
+      .map(canonicalizeSubject)
+      .filter((name): name is string => Boolean(name))
+  ));
 
   return names
     .map((name) => {
-      const subjectRows = rows.filter((row) => row.subject?.trim().toLowerCase() === name.toLowerCase());
+      const subjectRows = rows.filter((row) => canonicalizeSubject(row.subject) === name);
       const enough = subjectRows.length >= 5;
       const rate = recallRate(subjectRows);
       return {

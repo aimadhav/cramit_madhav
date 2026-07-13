@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildBacklogSummary, buildStatsSnapshot, startOfLocalDay } from './stats-analytics';
+import { buildBacklogSummary, buildStatsSnapshot, buildTodayActivitySnapshot, startOfLocalDay } from './stats-analytics';
 import type { StatsReviewRow } from '@/types/stats';
 
 const now = new Date(2026, 6, 13, 12, 0, 0);
@@ -103,5 +103,27 @@ describe('stats analytics', () => {
       { name: 'Physics', count: 2 },
       { name: 'Chemistry', count: 1 },
     ]);
+  });
+
+  it('builds today activity from real local-day reviews and valid response times', () => {
+    const todayStart = startOfLocalDay(now);
+    const snapshot = buildTodayActivitySnapshot({
+      now,
+      dataSource: 'cached',
+      reviews: [
+        { ...review('today-a', 3, 0, 'Physics', 30_000), reviewedAt: todayStart },
+        { ...review('today-b', 1, 0, 'Physics', 45_000), reviewedAt: todayStart + 1_000 },
+        { ...review('too-fast', 3, 0, 'Physics', 100), reviewedAt: todayStart + 2_000 },
+        review('yesterday', 3, 1, 'Chemistry', 20_000),
+        review('outside-chart', 3, 7, 'Mathematics', 20_000),
+      ],
+    });
+
+    expect(snapshot.reviewsToday).toBe(3);
+    expect(snapshot.focusedReviewTimeMs).toBe(75_000);
+    expect(snapshot.activity).toHaveLength(7);
+    expect(snapshot.activity[6]?.count).toBe(3);
+    expect(snapshot.activity.reduce((total, bucket) => total + bucket.count, 0)).toBe(4);
+    expect(snapshot.dataSource).toBe('cached');
   });
 });

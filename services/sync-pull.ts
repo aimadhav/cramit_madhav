@@ -1,6 +1,7 @@
 import { db } from '@/db';
 import * as schema from '@/db/schema';
 import { supabase } from '@/lib/supabase';
+import { and, eq, inArray } from 'drizzle-orm';
 
 function parseDate(value: any, fallbackMillis: number) {
   if (!value) return new Date(fallbackMillis);
@@ -11,6 +12,14 @@ function parseDate(value: any, fallbackMillis: number) {
 
 export async function mirrorUserStatuses(userId: string) {
   const now = Date.now();
+  const pendingRows = await db.select({ entityId: schema.syncQueue.entityId })
+    .from(schema.syncQueue)
+    .where(and(
+      eq(schema.syncQueue.userId, userId),
+      eq(schema.syncQueue.entityType, 'card_status'),
+      inArray(schema.syncQueue.status, ['pending', 'failed_on_server']),
+    ));
+  const pendingCardIds = new Set(pendingRows.map((row) => row.entityId));
 
   const { data, error } = await supabase
     .from('user_flashcard_statuses')
@@ -22,6 +31,7 @@ export async function mirrorUserStatuses(userId: string) {
   if (data) {
     console.log(`📡 [SyncService] Found ${data.length} cloud statuses. Mirroring to SQLite...`);
     for (const row of data) {
+      if (pendingCardIds.has(row.flashcard_id)) continue;
       await db.insert(schema.userFlashcardStatus).values({
         id: row.id,
         userId: row.user_id,
@@ -61,6 +71,14 @@ export async function mirrorUserStatuses(userId: string) {
 }
 
 export async function mirrorUserActiveChapters(userId: string) {
+  const pendingRows = await db.select({ entityId: schema.syncQueue.entityId })
+    .from(schema.syncQueue)
+    .where(and(
+      eq(schema.syncQueue.userId, userId),
+      eq(schema.syncQueue.entityType, 'active_chapter'),
+      inArray(schema.syncQueue.status, ['pending', 'failed_on_server']),
+    ));
+  const pendingDeckIds = new Set(pendingRows.map((row) => row.entityId));
   const { data, error } = await supabase
     .from('user_active_chapters')
     .select('*')
@@ -73,6 +91,7 @@ export async function mirrorUserActiveChapters(userId: string) {
   if (data) {
     console.log(`📡 [SyncService] Found ${data.length} cloud active chapters. Mirroring to SQLite...`);
     for (const row of data) {
+      if (pendingDeckIds.has(row.deck_id)) continue;
       await db.insert(schema.userActiveChapters).values({
         id: row.id,
         userId: row.user_id,

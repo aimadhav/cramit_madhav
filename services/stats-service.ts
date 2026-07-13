@@ -4,9 +4,9 @@ import { and, eq, gte, isNotNull, isNull, lte } from 'drizzle-orm';
 import { db } from '@/db';
 import { decks, flashcards, reviews, userActiveChapters, userFlashcardStatus } from '@/db/schema';
 import { supabase } from '@/lib/supabase';
-import type { StatsDataSource, StatsRange, StatsReviewRow, StatsSnapshot } from '@/types/stats';
+import type { StatsDataSource, StatsRange, StatsReviewRow, StatsSnapshot, TodayActivitySnapshot } from '@/types/stats';
 import { collectPaginated, filterDuplicateCloudReviews, reviewSignature } from './review-sync-utils';
-import { buildStatsSnapshot, startOfLocalDay } from './stats-analytics';
+import { buildStatsSnapshot, buildTodayActivitySnapshot, startOfLocalDay } from './stats-analytics';
 import { SyncService } from './sync-service';
 
 const CLOUD_PAGE_SIZE = 1000;
@@ -170,6 +170,17 @@ export class StatsService {
       availableSubjects: args.availableSubjects,
       dataSource: args.dataSource,
       backlogRows,
+    });
+  }
+
+  static async getTodayActivity(args: {
+    userId: string;
+    dataSource?: StatsDataSource;
+  }): Promise<TodayActivitySnapshot> {
+    const reviewRows = await loadLocalReviewRows(args.userId);
+    return buildTodayActivitySnapshot({
+      reviews: reviewRows,
+      dataSource: args.dataSource,
     });
   }
 }

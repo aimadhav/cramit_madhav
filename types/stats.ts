@@ -64,3 +64,10 @@ export interface StatsSnapshot {
   subjects: SubjectPerformance[];
   focusInsight: StatsFocusInsight;
 }
+
+export interface TodayActivitySnapshot {
+  reviewsToday: number;
+  focusedReviewTimeMs: number;
+  activity: StatsActivityBucket[];
+  dataSource: StatsDataSource;
+}

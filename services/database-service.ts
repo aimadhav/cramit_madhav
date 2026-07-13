@@ -1,6 +1,7 @@
 import { db } from '@/db';
 import * as schema from '@/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { canonicalizeSubject } from '@/constants/examSubjects';
+import { eq, and, desc, inArray, notInArray } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 import { MediaService } from './media-service';
 import { safeParseJsonArray, toStoredJson } from './database-content';
@@ -62,14 +63,14 @@ export class DatabaseService {
     }
   }
 
-  static async upsertDeck(deck: any, flashcards: any[]) {
+  static async upsertDeck(deck: any, flashcards: any[], options?: { replaceCards?: boolean }) {
     const now = Date.now();
     const deckId = deck.id || Crypto.randomUUID();
     
     const name = deck.name || 'Untitled Deck';
     const description = deck.description || '';
     
-    let subject = deck.subject || deck.subjectName || null;
+    let subject = canonicalizeSubject(deck.subject || deck.subjectName);
     if (subject === 'subject') subject = null; 
 
     const chapter = deck.chapter || null;
@@ -153,8 +154,23 @@ export class DatabaseService {
           isPublic: deck.is_public ?? true,
           prepCategory: deck.prep_category || deck.prepCategory || null,
           updatedAt: now,
+          deletedAt: null,
         }
       });
+
+      if (options?.replaceCards) {
+        const incomingCardIds = processedFlashcards
+          .map((card) => card.id)
+          .filter((id): id is string => Boolean(id));
+        if (incomingCardIds.length > 0) {
+          await tx.delete(schema.flashcards).where(and(
+            eq(schema.flashcards.deckId, deckId),
+            notInArray(schema.flashcards.id, incomingCardIds),
+          ));
+        } else {
+          await tx.delete(schema.flashcards).where(eq(schema.flashcards.deckId, deckId));
+        }
+      }
 
       if (processedFlashcards.length > 0) {
         for (const fc of processedFlashcards) {
