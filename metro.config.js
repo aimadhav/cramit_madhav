@@ -6,6 +6,10 @@ const config = getSentryExpoConfig(__dirname, {
   includeWebReplay: false,
 });
 
+// Expo SDK 54 may still emit this removed Metro option. Keeping it produces
+// an EAS validation warning even though Metro ignores the value.
+if (config.watcher) delete config.watcher.unstable_workerThreads;
+
 // Opt-out of package.json:exports support as per Expo SDK 53 known issues
 // and Supabase recommendations for React Native.
 config.resolver = {
