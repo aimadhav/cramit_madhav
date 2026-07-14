@@ -24,8 +24,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#07090d"
       },
-      "package": "com.cramit.app",
-      "versionCode": 1
+      "package": "com.cramit.app"
     },
     "androidNavigationBar": {
       "backgroundColor": "#0b0c0e",
