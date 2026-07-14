@@ -9,6 +9,7 @@ function requireReleaseEnvironment(profile: string | undefined) {
     'EXPO_PUBLIC_SUPABASE_URL',
     'EXPO_PUBLIC_SUPABASE_ANON_KEY',
     'EXPO_PUBLIC_SENTRY_DSN',
+    'SENTRY_AUTH_TOKEN',
   ];
   const missing = required.filter((name) => !process.env[name]?.trim());
   if (missing.length > 0) {
