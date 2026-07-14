@@ -1,6 +1,8 @@
 import React from 'react';
-import { View, StyleSheet, Platform } from "react-native";
-import { Text } from "@/components/AppText";;
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
+
+import { Text } from '@/components/AppText';
+import { reportError } from '@/lib/monitoring';
 
 interface Props {
   children: React.ReactNode;
@@ -23,11 +25,13 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    
+    reportError(error, { componentStack: errorInfo.componentStack ?? undefined });
     if (this.props.onError) {
       this.props.onError(error, errorInfo);
     }
   }
+
+  reset = () => this.setState({ hasError: false, error: null });
 
   render() {
     if (this.state.hasError) {
@@ -35,12 +39,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
         <View style={styles.container}>
           <View style={styles.content}>
             <Text style={styles.title}>Something went wrong</Text>
-            <Text style={styles.subtitle}>{this.state.error?.message}</Text>
-            {Platform.OS !== 'web' && (
-              <Text style={styles.description}>
-                Please check your device logs for more details.
-              </Text>
-            )}
+            <Text style={styles.subtitle}>Your study data is safe. Try opening the screen again.</Text>
+            <TouchableOpacity accessibilityRole="button" style={styles.retryButton} onPress={this.reset}>
+              <Text style={styles.retryText}>Try again</Text>
+            </TouchableOpacity>
           </View>
         </View>
       );
@@ -53,7 +55,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#0A0B0F',
   },
   content: {
     flex: 1,
@@ -62,23 +64,20 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   title: {
-    fontSize: 36,
+    color: '#FFFFFF',
+    fontSize: 24,
     textAlign: 'center',
     fontWeight: 'bold',
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 14,
-    color: '#666',
+    color: '#9A9DA7',
     marginBottom: 12,
     textAlign: 'center',
   },
-  description: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 8,
-  },
+  retryButton: { marginTop: 18, borderRadius: 13, backgroundColor: '#5e6ad2', paddingHorizontal: 22, paddingVertical: 12 },
+  retryText: { color: '#FFFFFF', fontSize: 14, fontFamily: 'Outfit_700Bold' },
 }); 
 
 export default ErrorBoundary;

@@ -447,7 +447,7 @@ export default function StudySessionScreen() {
           {/* Legend - Hidden when in Full View */}
           {!isFullView && (
             <View style={styles.legend}>
-              <Text style={styles.legendText}>← Didn't Know • Easy →</Text>
+              <Text style={styles.legendText}>← Didn’t Know • Easy →</Text>
             </View>
           )}
     

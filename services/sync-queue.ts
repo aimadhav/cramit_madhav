@@ -1,6 +1,7 @@
 import { db } from '@/db';
 import * as schema from '@/db/schema';
 import { and, asc, eq } from 'drizzle-orm';
+import { reportError } from '@/lib/monitoring';
 
 type SyncCardStatusFn = (userId: string, flashcardId: string, data: any) => Promise<boolean>;
 type SyncActiveChapterFn = (userId: string, deckId: string, data: any) => Promise<boolean>;
@@ -69,6 +70,10 @@ export async function processSyncQueue(
             .where(eq(schema.syncQueue.id, task.id));
         } else {
           console.warn(`📡 [SyncService] Task ${task.id} exceeded retry limit. Marking as failed.`);
+          reportError(new Error('Sync task exceeded retry limit'), {
+            operation: 'sync-queue',
+            entityType: task.entityType,
+          });
           await db.update(schema.syncQueue)
             .set({
               status: 'failed_on_server',
@@ -88,6 +93,9 @@ export async function processSyncQueue(
         })
         .where(eq(schema.syncQueue.id, task.id));
       console.error(`❌ [SyncService] Task processing crash:`, e.message);
+      if (currentRetries + 1 >= 5) {
+        reportError(e, { operation: 'sync-queue-crash', entityType: task.entityType });
+      }
     }
   }
 }

@@ -491,7 +491,7 @@ export default function HomeScreen() {
 
         {/* Modular Today's Activity Progress Card Component */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>TODAY'S ACTIVITY</Text>
+          <Text style={styles.sectionLabel}>TODAY’S ACTIVITY</Text>
           <TodayActivityCard 
             snapshot={todayActivity}
             dailyGoal={45} 

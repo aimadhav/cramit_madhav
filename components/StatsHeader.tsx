@@ -1,15 +1,16 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
-import { Flame, LogOut } from 'lucide-react-native';
+import { Flame, LogOut, Settings } from 'lucide-react-native';
 
 import { Text } from './AppText';
 
 interface StatsHeaderProps {
   streakDays: number;
   onSignOut: () => void;
+  onOpenSettings: () => void;
 }
 
-export const StatsHeader: React.FC<StatsHeaderProps> = ({ streakDays, onSignOut }) => {
+export const StatsHeader: React.FC<StatsHeaderProps> = ({ streakDays, onSignOut, onOpenSettings }) => {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -21,6 +22,15 @@ export const StatsHeader: React.FC<StatsHeaderProps> = ({ streakDays, onSignOut 
             <Flame size={16} color="#d2995e" fill="#d2995e" />
             <Text style={styles.streakText}>{streakDays}</Text>
           </View>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Account and privacy settings"
+            style={styles.logoutButton}
+            activeOpacity={0.7}
+            onPress={onOpenSettings}
+          >
+            <Settings size={16} color="#A5A8B0" />
+          </TouchableOpacity>
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel="Sign out"

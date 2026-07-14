@@ -1,8 +1,10 @@
 import { makeRedirectUri } from 'expo-auth-session';
+import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 
 import { supabase } from '@/lib/supabase';
 import { AppUser, OFFLINE_MODE_TOKEN, useUserStore } from '@/store/user-store';
+import { setMonitoringUser } from '@/lib/monitoring';
 
 const PROFILE_FIELDS = 'id,email,name,phone,is_premium,total_cards_studied,total_time_studied,streak_days,last_study_date,created_at,updated_at,prep_focus';
 
@@ -21,6 +23,16 @@ export class AuthService {
 
     const hashParams = new URLSearchParams(parsedUrl.hash.substring(1));
     return hashParams.get('code');
+  }
+
+  private static getRedirectUri(path: string) {
+    const configuredScheme = Constants.expoConfig?.scheme;
+    const scheme = (Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme) || 'cramit';
+    return makeRedirectUri({
+      native: `${scheme}://${path}`,
+      scheme,
+      path,
+    });
   }
 
   static async restoreSession() {
@@ -55,11 +67,7 @@ export class AuthService {
   }
 
   static async signInWithGoogle() {
-    const redirectUri = makeRedirectUri({
-      native: 'cramit://auth/callback',
-      scheme: 'cramit',
-      path: 'auth/callback',
-    });
+    const redirectUri = this.getRedirectUri('auth/callback');
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -79,7 +87,7 @@ export class AuthService {
   /** Safe to call from both the deep-link route and the in-app browser result. */
   static async completeOAuthCallback(urlOrCode: string) {
     const code = this.getAuthCodeFromUrl(urlOrCode);
-    if (!code) throw new Error('Google sign-in did not return an authorization code.');
+    if (!code) throw new Error('Sign-in did not return an authorization code.');
 
     const existing = this.oauthCompletions.get(code);
     if (existing) return existing;
@@ -87,7 +95,7 @@ export class AuthService {
     const completion = (async () => {
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
       if (error) throw error;
-      if (!data.user || !data.session) throw new Error('Google sign-in did not create a session.');
+      if (!data.user || !data.session) throw new Error('Sign-in did not create a session.');
       await this.establishSession(data.session, data.user);
       return data.user;
     })();
@@ -104,11 +112,53 @@ export class AuthService {
     const { data, error } = await supabase.auth.signUp({
       email: email.trim().toLowerCase(),
       password,
-      options: { data: metadata },
+      options: {
+        data: metadata,
+        emailRedirectTo: this.getRedirectUri('auth/callback'),
+      },
     });
 
     if (error) throw error;
     return data;
+  }
+
+  static async requestPasswordReset(email: string) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+      redirectTo: this.getRedirectUri('auth/reset-password'),
+    });
+    if (error) throw error;
+  }
+
+  static async completeRecoveryCallback(params: {
+    code?: string;
+    accessToken?: string;
+    refreshToken?: string;
+  }) {
+    let session: any = null;
+    if (params.code) {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
+      if (error) throw error;
+      session = data.session;
+    } else if (params.accessToken && params.refreshToken) {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: params.accessToken,
+        refresh_token: params.refreshToken,
+      });
+      if (error) throw error;
+      session = data.session;
+    }
+
+    if (!session) {
+      const { data } = await supabase.auth.getSession();
+      session = data.session;
+    }
+    if (!session) throw new Error('This password reset link is invalid or has expired.');
+    await this.establishSession(session, session.user);
+  }
+
+  static async updatePassword(password: string) {
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
   }
 
   static async continueOffline() {
@@ -129,6 +179,7 @@ export class AuthService {
       // Global sign-out can fail while offline; local scope still removes the
       // persisted Supabase refresh token so the account cannot reappear on restart.
       try { await supabase.auth.signOut({ scope: 'local' }); } catch {}
+      setMonitoringUser(null);
       await useUserStore.getState().logout();
     }
   }
@@ -216,5 +267,6 @@ export class AuthService {
       session.refresh_token,
       session.expires_at ? session.expires_at * 1000 : undefined,
     );
+    setMonitoringUser(user.id);
   }
 }

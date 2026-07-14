@@ -84,7 +84,7 @@ export const useUserStore = create<UserState>()(
       themePreference: 'system',
 
       setSession: async (userData: AppUser, accessToken: string, refreshToken?: string, expiresAt?: number) => {
-        console.log('🔑 [UserStore] Setting active session for:', userData.email);
+        console.log('🔑 [UserStore] Setting active session');
         
         // Clear flashcard store if this is a new user login
         const currentUser = get().user;

@@ -7,14 +7,20 @@ import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
+import * as Sentry from '@sentry/react-native';
 
 import { OfflineStatusBar } from '../components/OfflineStatusBar';
+import ErrorBoundary from './error-boundary';
 import { DatabaseProvider } from '../db/DatabaseProvider';
 import { supabase } from '../lib/supabase';
 import { AuthService } from '../services/auth-service';
 import { SyncService } from '../services/sync-service';
 import { useFlashcardStore } from '../store/flashcard-store';
 import { OFFLINE_MODE_TOKEN, useUserStore } from '../store/user-store';
+import { initializeMonitoring, reportError, setMonitoringUser } from '../lib/monitoring';
+
+initializeMonitoring();
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -40,6 +46,7 @@ function AppNavigatorAndDataHandler() {
     // here can deadlock behind the auth client's internal state lock.
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
+        setMonitoringUser(null);
         if (useUserStore.getState().sessionToken !== OFFLINE_MODE_TOKEN) {
           void useUserStore.getState().clearLocalSession();
         }
@@ -94,9 +101,12 @@ function AppNavigatorAndDataHandler() {
     const currentSegment = routeSegments[0] || null;
     const isOnboarding = currentSegment === '(auth)' && routeSegments[1] === 'onboarding';
     const isAuthCallback = currentSegment === 'auth' && routeSegments[1] === 'callback';
+    const isPasswordRecovery = currentSegment === 'auth' && routeSegments[1] === 'reset-password';
     const isCloudSession = Boolean(sessionToken && sessionToken !== OFFLINE_MODE_TOKEN);
 
-    if (isAuthCallback) return;
+    // Both routes must be allowed to exchange their one-time Supabase code
+    // before the normal unauthenticated redirect is applied.
+    if (isAuthCallback || isPasswordRecovery) return;
 
     if (sessionToken) {
       if (isCloudSession && !user?.prepFocus && !isOnboarding) {
@@ -115,11 +125,13 @@ function AppNavigatorAndDataHandler() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
+      <Stack.Screen name="auth/reset-password" options={{ headerShown: false }} />
+      <Stack.Screen name="settings" options={{ headerShown: false }} />
     </Stack>
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     Outfit_400Regular,
     Outfit_500Medium,
@@ -134,7 +146,10 @@ export default function RootLayout() {
 
   useEffect(() => {
     void AuthService.restoreSession()
-      .catch((error) => console.error('[RootLayout] Session restore failed:', error))
+      .catch((error) => {
+        reportError(error, { operation: 'restore-session' });
+        console.error('[RootLayout] Session restore failed');
+      })
       .finally(() => setIsAuthChecked(true));
   }, []);
 
@@ -145,15 +160,20 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
-    <SafeAreaProvider>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <DatabaseProvider>
-          <View style={{ flex: 1 }}>
-            <OfflineStatusBar />
-            {isAuthChecked ? <AppNavigatorAndDataHandler /> : null}
-          </View>
-        </DatabaseProvider>
-      </GestureHandlerRootView>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <DatabaseProvider>
+            <View style={{ flex: 1 }}>
+              <OfflineStatusBar />
+              {isAuthChecked ? <AppNavigatorAndDataHandler /> : null}
+              <Toast />
+            </View>
+          </DatabaseProvider>
+        </GestureHandlerRootView>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
+
+export default Sentry.wrap(RootLayout);

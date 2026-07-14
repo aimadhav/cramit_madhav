@@ -169,6 +169,9 @@ export default function LoginScreen() {
           <View style={s.form}>
             <TextInput style={s.input} placeholder="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" placeholderTextColor={C.textMuted} autoFocus editable={!busy} />
             <TextInput style={s.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry placeholderTextColor={C.textMuted} editable={!busy} />
+            <TouchableOpacity onPress={() => router.push('/forgot-password')} style={s.forgotButton} disabled={busy}>
+              <Text style={s.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={[s.submitBtn, busy && s.disabled]} onPress={handleLogin} disabled={busy} activeOpacity={0.85}>
               {isLoading ? <ActivityIndicator color="#FFF" /> : <Text style={s.submitText}>Log In</Text>}
             </TouchableOpacity>
@@ -181,7 +184,7 @@ export default function LoginScreen() {
         {/* Security note */}
         <View style={s.secRow}>
           <Ionicons name="lock-closed" size={13} color={C.textMuted} />
-          <Text style={s.secText}>We use <Text style={s.secLink}>secure encryption</Text> to keep your data private.</Text>
+          <Text style={s.secText}>Your connection to Cramit is <Text style={s.secLink}>encrypted in transit</Text>.</Text>
         </View>
 
         {/* Footer */}
@@ -191,9 +194,9 @@ export default function LoginScreen() {
           <TouchableOpacity onPress={handleGuest}>
             <Text style={s.guestText}>Continue as Guest <Text>›</Text></Text>
           </TouchableOpacity>
-          <Text style={s.guestNote}>You can sign in anytime to back up your data.</Text>
+          <Text style={s.guestNote}>Guest progress stays only on this device and does not transfer to an account.</Text>
           <TouchableOpacity onPress={() => router.push('/signup')} style={{ marginTop: 14 }}>
-            <Text style={s.signupText}>Don't have an account? <Text style={s.signupBold}>Sign Up</Text></Text>
+            <Text style={s.signupText}>Don’t have an account? <Text style={s.signupBold}>Sign Up</Text></Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -236,6 +239,8 @@ const s = StyleSheet.create({
   submitText: { color: '#FFF', fontSize: 15, fontFamily: 'Outfit_700Bold' },
   backBtn: { alignItems: 'center', paddingVertical: 6 },
   backText: { color: C.textMuted, fontSize: 13 },
+  forgotButton: { alignSelf: 'flex-end', paddingVertical: 3 },
+  forgotText: { color: C.textLink, fontSize: 12, fontFamily: 'Outfit_600SemiBold' },
 
   disabled: { opacity: 0.6 },
 

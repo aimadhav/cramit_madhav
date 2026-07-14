@@ -59,7 +59,7 @@ export const useFlashcardStore = create<FlashcardState>()(
         const user = useUserStore.getState().user;
         const userId = user?.id || 'local';
         
-        console.log('📦 [FlashcardStore] Initializing for user:', user?.email || 'guest');
+        console.log(`📦 [FlashcardStore] Initializing ${user ? 'account' : 'guest'} library`);
         set({ isLoading: true });
 
         try {

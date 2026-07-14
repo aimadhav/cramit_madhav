@@ -13,7 +13,7 @@ export const StudySwipeHints: React.FC<StudySwipeHintsProps> = ({ swipeDirection
     <View style={styles.swipeHintContainer}>
       {swipeDirection === 'left' && (
         <View style={[styles.swipePill, styles.againPill]}>
-          <Text style={styles.swipePillText}>DIDN'T KNOW</Text>
+          <Text style={styles.swipePillText}>DIDN’T KNOW</Text>
         </View>
       )}
       {swipeDirection === 'right' && (

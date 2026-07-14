@@ -17,13 +17,13 @@ export default function OAuthCallbackScreen() {
     async function finishSignIn() {
       try {
         if (params.error_description) throw new Error(params.error_description);
-        if (!params.code) throw new Error('Google did not return a sign-in code.');
+        if (!params.code) throw new Error('The sign-in link did not return a valid code.');
 
         await AuthService.completeOAuthCallback(params.code);
         if (!active) return;
         router.replace(useUserStore.getState().user?.prepFocus ? '/' : ('/onboarding' as any));
       } catch (error: any) {
-        if (active) setErrorMessage(error?.message || 'Google sign-in could not be completed.');
+        if (active) setErrorMessage(error?.message || 'Sign-in could not be completed.');
       }
     }
 

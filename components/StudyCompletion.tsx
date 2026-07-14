@@ -23,7 +23,7 @@ export const StudyCompletion: React.FC<StudyCompletionProps> = ({
       <Text style={styles.celebrationEmoji}>🎯</Text>
       <Text style={styles.celebrationTitle}>Session Complete!</Text>
       <Text style={styles.celebrationSubtitle}>
-        Great job! You're making steady progress today.
+        Great job! You’re making steady progress today.
       </Text>
 
       {/* Chapter Completed Prompt */}
@@ -33,7 +33,7 @@ export const StudyCompletion: React.FC<StudyCompletionProps> = ({
           <View style={{ flex: 1, marginLeft: 10 }}>
             <Text style={styles.promptTitle}>Chapter Completed! 🎉</Text>
             <Text style={styles.promptSub}>
-              You've fully introduced all cards in "{completedChapterName}". Add a new chapter to keep learning new material!
+              You’ve fully introduced all cards in “{completedChapterName}”. Add a new chapter to keep learning new material!
             </Text>
           </View>
           <TouchableOpacity style={styles.promptBtn} onPress={onAddChapters}>

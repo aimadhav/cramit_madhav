@@ -53,7 +53,7 @@ export function StatsOverviewCard({ snapshot }: { snapshot: StatsSnapshot }) {
   const improved = (snapshot.recallChangePoints ?? 0) >= 0;
   const TrendIcon = improved ? ArrowUpRight : ArrowDownRight;
   const sourceLabel = snapshot.dataSource === 'cloud'
-    ? 'Synced'
+    ? 'Online data'
     : snapshot.dataSource === 'cached'
       ? 'Cached data'
       : 'On this device';

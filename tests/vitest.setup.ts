@@ -1,7 +1,17 @@
 import { vi } from 'vitest';
 
+Object.defineProperty(globalThis, '__DEV__', {
+  configurable: true,
+  value: true,
+  writable: true,
+});
+
 // Mock React Native
 vi.mock('react-native', () => ({
+  TurboModuleRegistry: {
+    get: vi.fn(),
+    getEnforcing: vi.fn(),
+  },
   Platform: {
     OS: 'ios',
     select: vi.fn((objs) => objs.ios),
@@ -12,6 +22,22 @@ vi.mock('react-native', () => ({
   Alert: {
     alert: vi.fn(),
   },
+}));
+
+vi.mock('expo-constants', () => ({
+  default: {
+    expoConfig: {
+      scheme: 'cramit',
+    },
+  },
+}));
+
+vi.mock('@sentry/react-native', () => ({
+  addBreadcrumb: vi.fn(),
+  captureException: vi.fn(),
+  init: vi.fn(),
+  setUser: vi.fn(),
+  wrap: vi.fn((component) => component),
 }));
 
 // Mock Expo SecureStore

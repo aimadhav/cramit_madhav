@@ -39,8 +39,8 @@ export default function SignupScreen() {
       Alert.alert('Error', 'Email and password are required.');
       return;
     }
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters.');
+    if (password.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters.');
       return;
     }
     try {
@@ -122,7 +122,7 @@ export default function SignupScreen() {
             <Ionicons name="lock-closed-outline" size={16} color={C.textMuted} style={s.icon} />
             <TextInput
               style={[s.input, { flex: 1 }]}
-              placeholder="Password (min. 6 characters)"
+              placeholder="Password (min. 8 characters)"
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!showPw}
@@ -151,7 +151,7 @@ export default function SignupScreen() {
         <View style={s.secRow}>
           <Ionicons name="lock-closed" size={12} color={C.textMuted} />
           <Text style={s.secText}>
-            We use <Text style={s.secLink}>secure encryption</Text> to keep your data private.
+            Your connection to Cramit is <Text style={s.secLink}>encrypted in transit</Text>.
           </Text>
         </View>
 

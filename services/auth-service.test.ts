@@ -170,6 +170,7 @@ describe('AuthService', () => {
         email: 'newuser@example.com',
         password: 'password123',
         options: {
+          emailRedirectTo: 'myapp://redirect',
           data: {
             name: 'John Doe',
           },

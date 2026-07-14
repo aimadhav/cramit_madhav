@@ -24,6 +24,7 @@ import { StudyService } from '@/services/study-service';
 import { useFlashcardStore } from '@/store/flashcard-store';
 import { OFFLINE_MODE_TOKEN, useUserStore } from '@/store/user-store';
 import type { StatsDataSource, StatsRange, StatsSnapshot } from '@/types/stats';
+import { reportError } from '@/lib/monitoring';
 
 export default function StatsScreen() {
   const router = useRouter();
@@ -83,11 +84,13 @@ export default function StatsScreen() {
         : 'local';
       await loadSnapshot(source);
     } catch (error) {
-      console.error('[Stats] Failed to calculate analytics:', error);
+      reportError(error, { operation: 'stats-refresh' });
+      console.error('[Stats] Failed to calculate analytics');
       try {
         await loadSnapshot('cached');
       } catch (cachedError) {
-        console.error('[Stats] Cached analytics also failed:', cachedError);
+        reportError(cachedError, { operation: 'stats-cached-fallback' });
+        console.error('[Stats] Cached analytics also failed');
         setStatsError('Your progress could not be loaded right now.');
       }
     } finally {
@@ -140,7 +143,8 @@ export default function StatsScreen() {
         memberCount: Number(room.member_count) || 0,
       })));
     } catch (error) {
-      console.error('[Stats] Failed to load joined classes:', error);
+      reportError(error, { operation: 'load-joined-classes' });
+      console.error('[Stats] Failed to load joined classes');
       setClassesError(true);
     } finally {
       setClassesLoading(false);
@@ -223,6 +227,7 @@ export default function StatsScreen() {
       >
         <StatsHeader
           streakDays={getStreak()}
+          onOpenSettings={() => router.push('/settings')}
           onSignOut={async () => {
             await AuthService.signOut();
             router.replace('/login');

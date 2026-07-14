@@ -11,6 +11,7 @@ import { buildCloudReviewPayload } from './review-sync-utils';
 
 export class SyncService {
   private static isSyncing = false;
+  private static retriedFailedUsers = new Set<string>();
 
   /**
    * Processes the local sync queue and pushes changes to Supabase
@@ -37,10 +38,24 @@ export class SyncService {
     this.isSyncing = true;
 
     try {
+      if (!this.retriedFailedUsers.has(userId)) {
+        await db.update(schema.syncQueue)
+          .set({ status: 'pending', retryCount: 0, lastError: null, updatedAt: Date.now() })
+          .where(and(
+            eq(schema.syncQueue.userId, userId),
+            eq(schema.syncQueue.status, 'failed_on_server'),
+          ));
+        this.retriedFailedUsers.add(userId);
+      }
       await processSyncQueue(userId, this.syncCardStatus.bind(this), this.syncActiveChapter.bind(this));
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  static async retryFailedChanges(userId: string) {
+    this.retriedFailedUsers.delete(userId);
+    await this.pushChanges(userId);
   }
 
   private static async syncCardStatus(userId: string, flashcardId: string, data: any) {

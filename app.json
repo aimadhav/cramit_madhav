@@ -46,7 +46,8 @@
           "behavior": "inset-swipe",
           "position": "relative"
         }
-      ]
+      ],
+      "@sentry/react-native"
     ],
     "web": {
       "output": "server"

@@ -18,7 +18,7 @@ function formatFocusedTime(milliseconds: number) {
 export const TodayActivityCard: React.FC<TodayActivityCardProps> = ({ snapshot, dailyGoal }) => {
   const chartMax = Math.max(dailyGoal, ...snapshot.activity.map((bucket) => bucket.count), 1);
   const sourceLabel = snapshot.dataSource === 'cloud'
-    ? 'SYNCED'
+    ? 'ONLINE'
     : snapshot.dataSource === 'cached'
       ? 'OFFLINE CACHE'
       : 'ON DEVICE';
