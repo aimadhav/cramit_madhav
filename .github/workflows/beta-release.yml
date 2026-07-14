@@ -1,0 +1,35 @@
+name: Publish Android beta release
+
+on:
+  push:
+    branches: [github-beta]
+    paths:
+      - .github/beta-release.json
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - id: manifest
+        shell: bash
+        run: |
+          echo "tag=$(jq -r .tag .github/beta-release.json)" >> "$GITHUB_OUTPUT"
+          echo "url=$(jq -r .artifactUrl .github/beta-release.json)" >> "$GITHUB_OUTPUT"
+      - name: Download verified EAS APK
+        shell: bash
+        run: curl --fail --location --retry 3 '${{ steps.manifest.outputs.url }}' --output Cramit-Beta.apk
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create '${{ steps.manifest.outputs.tag }}' Cramit-Beta.apk \
+            --repo '${{ github.repository }}' \
+            --title 'Cramit Android Beta' \
+            --notes 'Early Android beta for testing. Please report crashes and sync issues through the support link in the app.' \
+            --prerelease
