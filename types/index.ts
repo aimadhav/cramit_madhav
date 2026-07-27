@@ -11,6 +11,11 @@ export interface Flashcard {
   createdAt: number;
   updatedAt: number;
   startingStability?: number; // Added from creator
+  problemBundleId?: string | null;
+  cardRole?: 'parent' | 'child' | string | null;
+  childType?: string | null;
+  position?: number | null;
+  bundleOrder?: number | null;
   // Spaced repetition data
   interval: number; // Days until next review
   stability: number; // FSRS stability

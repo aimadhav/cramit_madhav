@@ -16,7 +16,9 @@
     "test:ui": "cross-env NODE_ENV=test vitest --ui",
     "start-web": "expo start --web --tunnel",
     "start-web-dev": "DEBUG=expo* expo start --web --tunnel",
-    "coverage": "cross-env NODE_ENV=test vitest run --coverage"
+    "coverage": "cross-env NODE_ENV=test vitest run --coverage",
+    "dsa:preview": "tsx scripts/dsa-a2z-preview.ts --summary --pretty",
+    "dsa:import": "tsx scripts/dsa-a2z-import.ts"
   },
   "dependencies": {
     "@expo-google-fonts/outfit": "^0.4.3",

@@ -56,6 +56,11 @@ export const decks = sqliteTable('decks', {
 export const flashcards = sqliteTable('flashcards', {
   id: text('id').primaryKey(),
   deckId: text('deck_id').notNull(),
+  problemBundleId: text('problem_bundle_id'),
+  cardRole: text('card_role'),
+  childType: text('child_type'),
+  position: integer('position'),
+  bundleOrder: integer('bundle_order'),
   
   // JSON structure for mixed content (text + latex + image)
   frontContent: text('front_content').notNull(), 

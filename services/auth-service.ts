@@ -9,6 +9,35 @@ const PROFILE_FIELDS = 'id,email,name,phone,is_premium,total_cards_studied,total
 export class AuthService {
   private static oauthCompletions = new Map<string, Promise<any>>();
 
+  private static async waitForStoreHydration() {
+    const persist = (useUserStore as any).persist;
+    if (!persist || persist.hasHydrated?.()) return;
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      let unsubscribe: (() => void) | undefined;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        unsubscribe?.();
+        resolve();
+      };
+      unsubscribe = persist.onFinishHydration?.(finish);
+      // Hydration normally completes immediately, but auth restoration should
+      // never hold the native splash forever if storage itself is unavailable.
+      setTimeout(finish, 1500);
+    });
+  }
+
+  private static async getSessionWithTimeout(timeoutMs = 5000) {
+    return Promise.race([
+      supabase.auth.getSession(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Supabase session restore timed out')), timeoutMs);
+      }),
+    ]);
+  }
+
   private static getAuthCodeFromUrl(urlOrCode: string) {
     if (!urlOrCode.includes('://') && !urlOrCode.includes('?')) return urlOrCode;
 
@@ -24,21 +53,54 @@ export class AuthService {
   }
 
   static async restoreSession() {
+    await this.waitForStoreHydration();
     await useUserStore.getState().checkAuthStatus();
     if (useUserStore.getState().sessionToken === OFFLINE_MODE_TOKEN) return;
 
-    const { data, error } = await supabase.auth.getSession();
-    if (error) {
+    const cachedState = useUserStore.getState();
+    const hasCachedCloudSession = Boolean(
+      cachedState.sessionToken &&
+      cachedState.user?.id &&
+      cachedState.user.id !== 'guest-user' &&
+      cachedState.user.isLoggedIn,
+    );
+
+    // Supabase may try to refresh an expired token inside getSession(). Do not
+    // make the splash screen wait for that request when the device is offline.
+    try {
+      const NetInfo = require('@react-native-community/netinfo').default;
+      const network = await NetInfo.fetch();
+      if (network.isConnected === false || network.isInternetReachable === false) {
+        if (hasCachedCloudSession) return;
+        await useUserStore.getState().clearLocalSession();
+        return;
+      }
+    } catch {
+      // Unknown connectivity: the bounded session request below is safe.
+    }
+
+    try {
+      const { data, error } = await this.getSessionWithTimeout();
+      if (error) throw error;
+
+      if (!data.session) {
+        if (hasCachedCloudSession) return;
+        await useUserStore.getState().clearLocalSession();
+        return;
+      }
+
+      await this.establishSession(data.session, data.session.user);
+    } catch (error) {
+      // Local cards and the cached profile remain usable when auth refresh is
+      // temporarily unavailable. A later network event can restore the cloud
+      // session and resume syncing.
+      if (hasCachedCloudSession) {
+        console.warn('[AuthService] Cloud session restore failed; continuing with cached local session.', error);
+        return;
+      }
       await useUserStore.getState().clearLocalSession();
       throw error;
     }
-
-    if (!data.session) {
-      await useUserStore.getState().clearLocalSession();
-      return;
-    }
-
-    await this.establishSession(data.session, data.session.user);
   }
 
   static async signIn(email: string, password: string) {
@@ -114,8 +176,11 @@ export class AuthService {
   static async continueOffline() {
     // Remove any previous cloud session before entering guest mode so a refresh
     // event cannot silently restore the previous account.
-    const { error } = await supabase.auth.signOut({ scope: 'local' });
-    if (error) throw error;
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch (error) {
+      console.warn('[AuthService] Could not clear the cloud session while offline.', error);
+    }
     await useUserStore.getState().loginOffline();
   }
 

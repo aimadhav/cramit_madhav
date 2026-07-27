@@ -22,6 +22,11 @@ export const migrations = [
 `CREATE TABLE \`flashcards\` (
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`deck_id\` text NOT NULL,
+	\`problem_bundle_id\` text,
+	\`card_role\` text,
+	\`child_type\` text,
+	\`position\` integer,
+	\`bundle_order\` integer,
 	\`front_content\` text NOT NULL,
 	\`back_content\` text NOT NULL,
 	\`starting_stability\` real DEFAULT 0,

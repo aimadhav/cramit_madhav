@@ -66,6 +66,8 @@ export class DatabaseService {
   static async upsertDeck(deck: any, flashcards: any[], options?: { replaceCards?: boolean }) {
     const now = Date.now();
     const deckId = deck.id || Crypto.randomUUID();
+    const contentSynced = options?.replaceCards === true;
+    const remoteVersion = Number(deck.version ?? 1);
     
     const name = deck.name || 'Untitled Deck';
     const description = deck.description || '';
@@ -124,6 +126,25 @@ export class DatabaseService {
     }
 
     await db.transaction(async (tx) => {
+      const deckUpdate: any = {
+        name,
+        description,
+        subject,
+        chapter,
+        coverImage,
+        isPublic: deck.is_public ?? true,
+        prepCategory: deck.prep_category || deck.prepCategory || null,
+        updatedAt: now,
+        deletedAt: null,
+      };
+
+      // Metadata refreshes must preserve the last locally synced content
+      // version. A replaceCards refresh advances it, including for empty decks.
+      if (contentSynced || processedFlashcards.length > 0) {
+        deckUpdate.isDownloaded = true;
+        deckUpdate.version = remoteVersion;
+      }
+
       await tx.insert(schema.decks).values({
         id: deckId,
         remoteId: deck.remote_id || deck.remoteId || null,
@@ -132,8 +153,8 @@ export class DatabaseService {
         subject,
         chapter,
         coverImage,
-        version: deck.version || 1,
-        isDownloaded: processedFlashcards.length > 0,
+        version: remoteVersion,
+        isDownloaded: contentSynced || processedFlashcards.length > 0,
         downloadedAt: now,
         isPublic: deck.is_public ?? true,
         prepCategory: deck.prep_category || deck.prepCategory || null,
@@ -144,18 +165,7 @@ export class DatabaseService {
         deletedAt: null
       }).onConflictDoUpdate({
         target: schema.decks.id,
-        set: {
-          name,
-          description,
-          subject,
-          chapter,
-          coverImage,
-          isDownloaded: processedFlashcards.length > 0,
-          isPublic: deck.is_public ?? true,
-          prepCategory: deck.prep_category || deck.prepCategory || null,
-          updatedAt: now,
-          deletedAt: null,
-        }
+        set: deckUpdate,
       });
 
       if (options?.replaceCards) {
@@ -177,6 +187,11 @@ export class DatabaseService {
           await tx.insert(schema.flashcards).values({
             id: fc.id || Crypto.randomUUID(),
             deckId: deckId,
+            problemBundleId: fc.problem_bundle_id || fc.problemBundleId || null,
+            cardRole: fc.card_role || fc.cardRole || null,
+            childType: fc.child_type || fc.childType || null,
+            position: fc.position == null ? null : Number(fc.position),
+            bundleOrder: fc.bundle_order == null && fc.bundleOrder == null ? null : Number(fc.bundle_order ?? fc.bundleOrder),
             frontContent: fc.frontContent,
             backContent: fc.backContent,
             startingStability: fc.starting_stability != null ? parseFloat(fc.starting_stability) : (fc.startingStability ?? 0),
@@ -190,6 +205,11 @@ export class DatabaseService {
             set: {
               frontContent: fc.frontContent,
               backContent: fc.backContent,
+              problemBundleId: fc.problem_bundle_id || fc.problemBundleId || null,
+              cardRole: fc.card_role || fc.cardRole || null,
+              childType: fc.child_type || fc.childType || null,
+              position: fc.position == null ? null : Number(fc.position),
+              bundleOrder: fc.bundle_order == null && fc.bundleOrder == null ? null : Number(fc.bundle_order ?? fc.bundleOrder),
               startingStability: fc.starting_stability != null ? parseFloat(fc.starting_stability) : (fc.startingStability ?? 0),
               mediaUrls: toStoredJson(fc.mediaUrls, '[]'),
               tags: fc.tags || '[]',

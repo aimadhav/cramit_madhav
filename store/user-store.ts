@@ -241,6 +241,15 @@ export const useUserStore = create<UserState>()(
               user: { ...defaultUserInitialState, name: 'Offline User', isLoggedIn: true },
               isLoading: false 
             });
+          } else if (accessToken) {
+            // Keep the last hydrated profile while Supabase restores the cloud
+            // session. This is important when the app is opened without a
+            // network connection: the local study library must not be treated
+            // as logged out just because the refresh request cannot run yet.
+            const tokenExpiry = Platform.OS === 'web'
+              ? Number(localStorage.getItem('tokenExpiry')) || null
+              : Number(await SecureStore.getItemAsync('tokenExpiry')) || null;
+            set({ sessionToken: accessToken, tokenExpiry, isLoading: false });
           } else {
             set({ user: defaultUserInitialState, sessionToken: null, tokenExpiry: null, isLoading: false });
             if (Platform.OS === 'web') {

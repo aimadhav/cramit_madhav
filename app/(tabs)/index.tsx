@@ -22,6 +22,7 @@ import { TodayActivityCard } from "@/components/TodayActivityCard";
 import { RecommendedSubjectCard } from "@/components/RecommendedSubjectCard";
 import { OtherSubjectsGrid } from "@/components/OtherSubjectsGrid";
 import { isSubjectAllowedForPrepFocus } from '@/constants/examSubjects';
+import { getRemainingDailyReviews } from '@/services/study-quota';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -189,9 +190,11 @@ export default function HomeScreen() {
         }
 
         const dailyTarget = 45;
-        const reservedNew = Math.min(5, actualNewInDb);
-        const dueCount = Math.min(actualDueInDb, dailyTarget - reservedNew);
-        const newCardsNeeded = Math.max(0, dailyTarget - dueCount);
+        const completedToday = await StudyService.getTodayReviewCount(sub, userId);
+        const remainingToday = getRemainingDailyReviews(completedToday, dailyTarget);
+        const reservedNew = Math.min(5, actualNewInDb, remainingToday);
+        const dueCount = Math.min(actualDueInDb, Math.max(0, remainingToday - reservedNew));
+        const newCardsNeeded = Math.max(0, remainingToday - dueCount);
         const newCount = Math.min(newCardsNeeded, actualNewInDb);
 
         // Find the first active chapter that still has unreviewed new cards
@@ -204,7 +207,7 @@ export default function HomeScreen() {
         statsMap[sub] = {
           dueCount,
           newCount,
-          totalSession: dueCount + newCount,
+          totalSession: Math.min(remainingToday, dueCount + newCount),
           backlogCount: Math.max(0, actualDueInDb - dueCount),
           totalCards,
           nextChapterName,
@@ -269,8 +272,16 @@ export default function HomeScreen() {
   // Refresh stats whenever home screen is refocused (e.g., returning from a study session)
   useFocusEffect(
     React.useCallback(() => {
+      let active = true;
+      const { SyncService } = require('@/services/sync-service');
+      void SyncService.pullDecks().then(() => {
+        if (active) void useFlashcardStore.getState().loadDecks();
+      });
       loadActiveChapters();
       refreshTodayActivity();
+      return () => {
+        active = false;
+      };
     }, [userId, userFocus, decks.length, refreshTodayActivity])
   );
 

@@ -2,8 +2,45 @@ import { DatabaseService } from './database-service';
 import { calculateNextReview } from '@/utils/spaced-repetition';
 import { DifficultyRating, Flashcard } from '@/types';
 import * as Crypto from 'expo-crypto';
+import { getRemainingDailyReviews } from './study-quota';
+
+function startOfLocalDay(timestamp: number) {
+  const date = new Date(timestamp);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function endOfLocalDay(timestamp: number) {
+  const date = new Date(timestamp);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime();
+}
 
 export class StudyService {
+
+  /** Number of real review events already completed for a subject today. */
+  static async getTodayReviewCount(subject: string, userId?: string, now = Date.now()) {
+    const { useUserStore } = require('@/store/user-store');
+    const { db } = require('@/db');
+    const { and, eq, gte, lt, sql } = require('drizzle-orm');
+    const { decks, flashcards, reviews } = require('@/db/schema');
+    const resolvedUserId = userId || useUserStore.getState().user?.id || 'local';
+
+    const rows = await db.select({ id: reviews.id })
+      .from(reviews)
+      .innerJoin(flashcards, eq(reviews.flashcardId, flashcards.id))
+      .innerJoin(decks, eq(flashcards.deckId, decks.id))
+      .where(and(
+        eq(reviews.userId, resolvedUserId),
+        eq(sql`lower(${decks.subject})`, subject.toLowerCase()),
+        gte(reviews.reviewedAt, startOfLocalDay(now)),
+        lt(reviews.reviewedAt, endOfLocalDay(now)),
+      ));
+
+    return rows.length;
+  }
+
+  static async getDailyRemaining(subject: string, userId?: string, now = Date.now()) {
+    return getRemainingDailyReviews(await this.getTodayReviewCount(subject, userId, now));
+  }
   
   /**
    * Starts a study session and returns a queue of card IDs
@@ -16,6 +53,14 @@ export class StudyService {
 
     const userId = useUserStore.getState().user?.id || 'local';
     const now = Date.now();
+
+    // A normal revision queue is capped by the remaining daily allowance. A
+    // cram queue intentionally bypasses this because it does not write review
+    // events or change FSRS progress.
+    const dailyRemaining = isCramMode
+      ? limit
+      : Math.min(limit, await this.getDailyRemaining(deckIdOrSubject, userId, now));
+    if (dailyRemaining <= 0) return [];
 
     let activeDeckIds: string[] = [];
 
@@ -126,20 +171,29 @@ export class StudyService {
     // Filter New Cards
     const newCards = cardsWithStatus.filter((c: any) => !c.status);
 
-    // Sort new cards sequentially by chapter deckId to ensure structured chapter progression
+    // Keep newly imported problem bundles together in source order. Each card
+    // still has its own FSRS status; this only controls the first-pass order.
     newCards.sort((a: any, b: any) => {
-      return String(a.card.deckId).localeCompare(String(b.card.deckId));
+      const deckOrder = String(a.card.deckId).localeCompare(String(b.card.deckId));
+      if (deckOrder !== 0) return deckOrder;
+      const bundleOrderA = a.card.bundleOrder ?? Number.MAX_SAFE_INTEGER;
+      const bundleOrderB = b.card.bundleOrder ?? Number.MAX_SAFE_INTEGER;
+      if (bundleOrderA !== bundleOrderB) return bundleOrderA - bundleOrderB;
+      const bundleA = a.card.problemBundleId || '';
+      const bundleB = b.card.problemBundleId || '';
+      if (bundleA !== bundleB) return String(bundleA).localeCompare(String(bundleB));
+      return (a.card.position ?? Number.MAX_SAFE_INTEGER) - (b.card.position ?? Number.MAX_SAFE_INTEGER);
     });
 
     // Smart Capping: Reserve exactly 5 slots for new cards to guarantee learning progression
     // so we don't stall due to backlogs.
-    const reservedNewCount = Math.min(5, newCards.length);
-    const maxDueCount = Math.min(dueCards.length, limit - reservedNewCount);
+    const reservedNewCount = Math.min(5, newCards.length, dailyRemaining);
+    const maxDueCount = Math.min(dueCards.length, dailyRemaining - reservedNewCount);
 
     const sortedDueCards = dueCards.sort((a: any, b: any) => (a.status?.due_date || 0) - (b.status?.due_date || 0));
     const slicedDueCards = sortedDueCards.slice(0, maxDueCount);
 
-    const newCardsNeeded = limit - slicedDueCards.length;
+    const newCardsNeeded = dailyRemaining - slicedDueCards.length;
     const slicedNewCards = newCards.slice(0, newCardsNeeded);
 
     const combined = [...slicedDueCards, ...slicedNewCards];

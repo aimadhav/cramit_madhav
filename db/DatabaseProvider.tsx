@@ -4,7 +4,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { expoDb } from './index';
 import { migrations } from './migrations/bundle';
 
-const CURRENT_DATABASE_VERSION = 1;
+const CURRENT_DATABASE_VERSION = 3;
 
 function isExpectedExistingSchemaError(error: any) {
   const message = String(error?.message || '').toLowerCase();
@@ -83,6 +83,36 @@ function migrateDatabase() {
       try { expoDb.execSync('ROLLBACK'); } catch {}
       throw error;
     }
+  }
+
+  // Fresh databases receive the latest bundle columns from the initial
+  // schema. Older beta databases may already have tables but lack some or
+  // all of these columns, so always inspect the schema before adding them.
+  if (currentVersion < 2) {
+    const flashcardColumns = getColumns('flashcards');
+    const bundleColumns = [
+      ['problem_bundle_id', 'text'],
+      ['card_role', 'text'],
+      ['child_type', 'text'],
+      ['position', 'integer'],
+      ['bundle_order', 'integer'],
+    ] as const;
+
+    for (const [column, type] of bundleColumns) {
+      if (!flashcardColumns.has(column)) {
+        expoDb.execSync(`ALTER TABLE flashcards ADD COLUMN ${column} ${type}`);
+      }
+    }
+    expoDb.execSync(`PRAGMA user_version = ${CURRENT_DATABASE_VERSION}`);
+  }
+
+  // v2 databases may have bundle metadata but not the source ordering field.
+  if (currentVersion < 3) {
+    const flashcardColumns = getColumns('flashcards');
+    if (!flashcardColumns.has('bundle_order')) {
+      expoDb.execSync('ALTER TABLE flashcards ADD COLUMN bundle_order integer');
+    }
+    expoDb.execSync(`PRAGMA user_version = ${CURRENT_DATABASE_VERSION}`);
   }
 
   const requiredSyncColumns = ['id', 'user_id', 'entity_type', 'entity_id', 'status'];

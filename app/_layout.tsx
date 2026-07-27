@@ -72,7 +72,18 @@ function AppNavigatorAndDataHandler() {
         current.sessionToken !== OFFLINE_MODE_TOKEN &&
         current.user?.id
       ) {
-        void SyncService.pushChanges(current.user.id);
+        // If the app was opened offline, Supabase may not have restored its
+        // in-memory session yet. Restore it once connectivity returns before
+        // attempting to upload the local queue.
+        void AuthService.restoreSession()
+          .then(() => {
+            const restored = useUserStore.getState();
+            if (restored.user?.id && restored.sessionToken && restored.sessionToken !== OFFLINE_MODE_TOKEN) {
+              return SyncService.fullSync(restored.user.id);
+            }
+            return undefined;
+          })
+          .catch((error) => console.warn('[RootLayout] Reconnect session restore failed:', error));
       }
     });
     return unsubscribe;
@@ -82,7 +93,7 @@ function AppNavigatorAndDataHandler() {
     if (!sessionToken || sessionToken === OFFLINE_MODE_TOKEN || !user?.id) return;
     void NetInfo.fetch().then((state) => {
       if (state.isConnected && state.isInternetReachable !== false) {
-        void SyncService.pushChanges(user.id);
+        void SyncService.fullSync(user.id);
       }
     });
   }, [sessionToken, user?.id]);

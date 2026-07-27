@@ -43,7 +43,18 @@ export const StudyCard: React.FC<StudyCardProps> = ({
         <View style={styles.cardInner}>
           <View style={styles.cardTopActions}>
             <View style={styles.topLeftActions}>
-              <Text style={styles.cardSideLabel}>{showBack ? 'EXPLANATION' : 'QUESTION'}</Text>
+              <View style={styles.cardLabelRow}>
+                <Text style={styles.cardSideLabel}>{showBack ? 'EXPLANATION' : 'QUESTION'}</Text>
+                {currentCard?.problemBundleId && (
+                  <View style={styles.bundleBadge}>
+                    <Text style={styles.bundleBadgeText}>
+                      {currentCard.cardRole === 'parent'
+                        ? 'PARENT'
+                        : `FOLLOW-UP ${currentCard.position ?? ''}`}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
             <View style={styles.topRightActions}>
               <TouchableOpacity 
@@ -110,7 +121,7 @@ const styles = StyleSheet.create({
     flex: 1,
     marginHorizontal: 10, 
     marginTop: 5, 
-    marginBottom: 35,
+    marginBottom: 14,
     borderRadius: 36, 
     backgroundColor: '#121212',
     borderWidth: 1,
@@ -139,6 +150,12 @@ const styles = StyleSheet.create({
   topLeftActions: {
     flex: 1,
   },
+  cardLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   topRightActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -149,6 +166,20 @@ const styles = StyleSheet.create({
     fontFamily: 'Outfit_700Bold',
     color: '#94969a',
     letterSpacing: 2,
+  },
+  bundleBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    backgroundColor: '#24253B',
+    borderWidth: 1,
+    borderColor: '#454778',
+  },
+  bundleBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Outfit_700Bold',
+    color: '#9A9DFF',
+    letterSpacing: 1,
   },
   actionIconButton: {
     padding: 6,

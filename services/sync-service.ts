@@ -196,8 +196,19 @@ export class SyncService {
   static async pullDecks() {
     console.log('📡 [SyncService] Refreshing Library index...');
     try {
+      const NetInfo = require('@react-native-community/netinfo');
+      const network = await NetInfo.fetch();
+      if (!network.isConnected || network.isInternetReachable === false) {
+        console.log('[SyncService] Offline; keeping cached deck content.');
+        return false;
+      }
+
       const { useUserStore } = require('@/store/user-store');
-      await mirrorPublicDecks(useUserStore.getState().user?.prepFocus);
+      const result = await mirrorPublicDecks(useUserStore.getState().user?.prepFocus);
+      for (const deckId of result?.staleDownloadedDeckIds || []) {
+        console.log(`[SyncService] Refreshing changed deck content: ${deckId}`);
+        await downloadDeckContentHelper(deckId);
+      }
       return true;
     } catch (e: any) {
       console.error('❌ [SyncService] pullDecks failed:', e.message);

@@ -22,7 +22,6 @@ import { DifficultyRating } from "@/types";
 
 import { StudyCompletion } from "@/components/StudyCompletion";
 import { StudyHeader } from "@/components/StudyHeader";
-import { StudySwipeHints } from "@/components/StudySwipeHints";
 import { StudyCard } from "@/components/StudyCard";
 import { StudyNoteModal } from "@/components/StudyNoteModal";
 import { NoCardsReady } from "@/components/NoCardsReady";
@@ -420,11 +419,6 @@ export default function StudySessionScreen() {
             />
           )}
           
-          {/* Swipe hints - Hidden in Full View */}
-          {!isFullView && (
-            <StudySwipeHints swipeDirection={swipeDirection} />
-          )}
-          
           {/* Card */}
           <StudyCard
             cardStyle={cardStyle}
@@ -445,7 +439,7 @@ export default function StudySessionScreen() {
           />
           
           {/* Legend - Hidden when in Full View */}
-          {!isFullView && (
+          {false && (
             <View style={styles.legend}>
               <Text style={styles.legendText}>← Didn't Know • Easy →</Text>
             </View>
@@ -498,13 +492,7 @@ const createStyles = (colors: any, insets: any) => StyleSheet.create({
   retryButton: { marginTop: 24, minWidth: 150, minHeight: 50, borderRadius: 15, backgroundColor: '#5e6ad2', alignItems: 'center', justifyContent: 'center' },
   retryButtonText: { color: '#FFFFFF', fontSize: 15, fontFamily: 'Outfit_700Bold' },
   backLink: { color: '#94969a', fontSize: 14, fontFamily: 'Outfit_600SemiBold', marginTop: 18 },
-  legend: {
-    paddingBottom: 40,
-    alignItems: 'center',
-  },
-  legendText: {
-    fontSize: 12,
-    color: '#94969a',
-    fontFamily: 'Outfit_500Medium',
-  },
+  // Kept only for the unreachable legacy JSX block below; it is not rendered.
+  legend: { paddingBottom: 0, alignItems: 'center' },
+  legendText: { fontSize: 12, color: 'transparent' },
 });
